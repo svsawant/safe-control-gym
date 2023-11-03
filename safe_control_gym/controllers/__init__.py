@@ -49,3 +49,7 @@ register(idx='rarl',
 register(idx='rap',
          entry_point='safe_control_gym.controllers.rarl.rap:RAP',
          config_entry_point='safe_control_gym.controllers.rarl:rap.yaml')
+
+register(idx='qlearning_mpc',
+         entry_point='safe_control_gym.controllers.mpc.qlearning_mpc:Qlearning_MPC',
+         config_entry_point='safe_control_gym.controllers.mpc:qlearning_mpc.yaml')
