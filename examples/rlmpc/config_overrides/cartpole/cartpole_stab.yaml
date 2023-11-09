@@ -8,10 +8,10 @@ task_config:
   # state initialization
   init_state:
     init_x: 0.1
-    init_x_dot: -1.5
-    init_theta: -0.175
-    init_theta_dot: 0.5
-  randomized_init: True
+    init_x_dot: -0.5
+    init_theta: -0.1
+    init_theta_dot: 0.0
+  randomized_init: False
   randomized_inertial_prop: False
   normalized_rl_action_space: True
 
@@ -56,16 +56,16 @@ task_config:
   constraints:
     - constraint_form: default_constraint
       constrained_variable: state
-      upper_bounds:
-        - 2
-        - 2
-        - 0.18
-        - 2
-      lower_bounds:
-        - -2
-        - -2
-        - -0.18
-        - -2
+      # upper_bounds:
+      #   - 20
+      #   - 20
+      #   - 0.58
+      #   - 20
+      # lower_bounds:
+      #   - -20
+      #   - -20
+      #   - -0.58
+      #   - -20
     - constraint_form: default_constraint
       constrained_variable: input
   done_on_out_of_bound: True

@@ -238,7 +238,7 @@ class Qlearning_MPC(BaseController):
         opti.minimize(cost)
         # Create solver (IPOPT solver in this version)
         # opts = {'ipopt.print_level': 0, 'ipopt.sb': 'yes', 'print_time': 0}
-        opts = {'expand': True}
+        opts = {'expand': True, 'ipopt.print_level': 0, 'print_time': 0}
         opti.solver('ipopt', opts)
         self.opti_dict = {
             'opti': opti,
@@ -298,7 +298,7 @@ class Qlearning_MPC(BaseController):
         self.results_dict['horizon_states'].append(deepcopy(self.x_prev))
         self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev))
         self.results_dict['goal_states'].append(deepcopy(goal_states))
-        self.results_dict['t_wall'].append(opti.stats()['t_wall_total'])
+        # self.results_dict['t_wall'].append(opti.stats()['t_wall_total'])
         # Take the first action from the solved action sequence.
         if u_val.ndim > 1:
             action = u_val[:, 0]
