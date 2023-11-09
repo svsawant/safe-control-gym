@@ -20,7 +20,7 @@ class Qlearning_MPC(BaseController):
             self,
             env_func,
             horizon: int = 5,
-            q_mpc: list = [1],
+            q_mpc: list = [2],
             r_mpc: list = [1],
             warmstart: bool = True,
             soft_constraints: bool = False,
