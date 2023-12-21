@@ -9,7 +9,7 @@ SYS='cartpole'
 TASK='stabilization'
 # TASK='tracking'
 
-ALGO='lqr'
+ALGO='mpc'
 # ALGO='ilqr'
 
 if [ "$SYS" == 'cartpole' ]; then
@@ -18,7 +18,7 @@ else
     SYS_NAME='quadrotor'
 fi
 
-python3 ./lqr_experiment.py \
+python3 ./ROA_cartpole_mpc.py \
     --task ${SYS_NAME} \
     --algo ${ALGO} \
     --overrides \

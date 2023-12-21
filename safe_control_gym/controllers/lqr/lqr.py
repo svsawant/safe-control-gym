@@ -28,8 +28,13 @@ class LQR(BaseController):
         super().__init__(env_func, **kwargs)
 
         self.env = env_func()
+        print(self.env.__dir__())
+        # print(self.env.constraints)
+        # print(self.env.num_constraints)
+        # exit()
         # Controller params.
         self.model = self.get_prior(self.env)
+
         self.discrete_dynamics = discrete_dynamics
         self.Q = get_cost_weight_matrix(q_lqr, self.model.nx)
         self.R = get_cost_weight_matrix(r_lqr, self.model.nu)

@@ -18,7 +18,7 @@ else
     SYS_NAME='quadrotor'
 fi
 
-python3 ./lqr_experiment.py \
+python3 ./ROA_cartpole_lqr.py \
     --task ${SYS_NAME} \
     --algo ${ALGO} \
     --overrides \
