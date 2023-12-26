@@ -49,6 +49,8 @@ class GridWorld(object):
     num_points: 1d array-like
         The number of points with which to grid each dimension.
 
+    NOTE: in original Lyapunov NN, the grid is defined in a normalized 
+          fashion (i.e. [-1, 1] for each dimension)
     """
 
     def __init__(self, limits, num_points):
