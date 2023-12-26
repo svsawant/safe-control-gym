@@ -96,9 +96,10 @@ class GridWorld(object):
 
         """
         if self._all_points is None:
-            mesh = np.meshgrid(*self.discrete_points, indexing='ij')
-            points = np.column_stack(col.ravel() for col in mesh)
-            self._all_points = points.astype(config.np_dtype)
+            # mesh = np.meshgrid(, indexing='ij')
+            mesh = np.stack(np.meshgrid(*self.discrete_points),-1).reshape(-1,4)
+            # each row of the mesh is a point in the stat space
+            self._all_points = mesh.astype(config.np_dtype)
 
         return self._all_points
 
