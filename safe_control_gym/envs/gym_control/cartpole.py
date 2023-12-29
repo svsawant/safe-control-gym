@@ -250,13 +250,14 @@ class CartPole(BenchmarkEnv):
         obs, rew, done, info = super().after_step(obs, rew, done, info)
         return obs, rew, done, info
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, init_state=None):
         '''(Re-)initializes the environment to start an episode.
 
         Mandatory to call at least once after __init__().
 
         Args:
             seed (int): An optional seed to reseed the environment.
+            init_state: manually set initial state
 
         Returns:
             obs (ndarray): The initial state of the environment.
@@ -308,9 +309,15 @@ class CartPole(BenchmarkEnv):
             mass=self.OVERRIDDEN_POLE_MASS,
             physicsClientId=self.PYB_CLIENT)
         # Randomize initial state.
-        init_values = {'init_x': self.INIT_X, 'init_x_dot': self.INIT_X_DOT, 'init_theta': self.INIT_THETA, 'init_theta_dot': self.INIT_THETA_DOT}
-        if self.RANDOMIZED_INIT:
-            init_values = self._randomize_values_by_info(init_values, self.INIT_STATE_RAND_INFO)
+        if init_state is None:
+            init_values = {'init_x': self.INIT_X, 'init_x_dot': self.INIT_X_DOT, 'init_theta': self.INIT_THETA, 'init_theta_dot': self.INIT_THETA_DOT}
+            if self.RANDOMIZED_INIT:
+                init_values = self._randomize_values_by_info(init_values, self.INIT_STATE_RAND_INFO)
+        elif init_state is not None:
+            # if manually set initial state, override init state randomization
+            init_values = init_state
+        # print('init values in class', init_values)
+        # exit()
         OVERRIDDEN_INIT_X = init_values['init_x']
         OVERRIDDEN_INIT_X_DOT = init_values['init_x_dot']
         OVERRIDDEN_INIT_THETA = init_values['init_theta']

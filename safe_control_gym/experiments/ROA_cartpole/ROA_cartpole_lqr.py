@@ -13,7 +13,10 @@ from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.experiments.base_experiment import BaseExperiment
 from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
-from lyapnov import GridWorld
+
+from safe_control_gym.experiments.ROA_cartpole.utilities import *
+
+from pprint import pprint
 
 def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     '''The main function running LQR and iLQR experiments.
@@ -37,31 +40,97 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
                        **config.task_config
                        )
     random_env = env_func(gui=False)
-    print(env_func.func.__dir__())
+    print('random env\n', random_env.__dir__())
+    print('random env.CTRL_STEPS', random_env.CTRL_STEPS)
+    print('random env.EPISODE_LEN_SEC', random_env.EPISODE_LEN_SEC)
+    print('\n')
+    # print('random env.constraints.constraints\n')
+    # print(random_env.constraints.state_constraints[0].lower_bounds)
+    # print(random_env.constraints.__dir__())
+    # print('\n')
+
     # exit()
     # Create controller.
     ctrl = make(config.algo,
                 env_func,
                 **config.algo_config
                 )
-    # print(ctrl.__dir__())
-    print(ctrl.model.__dir__())
-    # print(ctrl.model.pole_mass)
-    # print(ctrl.model.x_sym.shape[0])
-    # exit()
+
     all_trajs = defaultdict(list)
     n_episodes = 1 if n_episodes is None else n_episodes
     
-    # ctrl.
-    grids = gridding(ctrl.model.x_sym.shape[0], )
-    print(grids.__dir__())
-    exit()
+    # state constraints
+    state_constraints = np.vstack((random_env.constraints.state_constraints[0].lower_bounds,
+                                   random_env.constraints.state_constraints[0].upper_bounds)).T
+    # print('state constraints', state_constraints)
+    dim_state = ctrl.model.x_sym.shape[0] # state dimension
+    
+    grids = gridding(dim_state, state_constraints, num_states = 2)
+    # print(grids.__dir__())
+    # print(grids.all_points)
+    # print('grid.nindex', grids.nindex)
+    # print('grid.ndim', grids.ndim)
+    # exit()
+    # init state format
+    
     
     # Run the experiment.
+    # forward simulation all trajtories from all points in grids
+    roa = compute_roa(grids, env_func, ctrl, no_traj=True)
+    z = roa.reshape(grids.num_points)
+    print('num_points', grids.num_points)
+    ctrl.close()
+    random_env.close()
+    print('roa', z)
+    if save_data:
+        results = {'roa': roa, 'grids': grids, }
+                # 'trajs_data': all_trajs, 'metrics': metrics \
+        path_dir = os.path.dirname('./temp-data/')
+        os.makedirs(path_dir, exist_ok=True)
+        with open(f'./temp-data/{config.algo}_data_{config.task}_{config.task_config.task}.pkl', 'wb') as file:
+            pickle.dump(results, file)
+
+    # plot ROA of the 1st and 3rd state dimension
+    fig = plt.figure(figsize=(10, 10), dpi=100, frameon=False)
+    fig.subplots_adjust(wspace=0.35)
+    x_max = np.max(np.abs(grids.all_points), axis=0)
+    pos_max = x_max[0]
+    theta_max = x_max[2]
+    plot_limits = np.hstack((- np.rad2deg([pos_max, theta_max]), \
+                               np.rad2deg([pos_max, theta_max])))
+    # extract the 1st and 3rd state dimension of z
+    print('z.shape', z.shape)
+    z = z
+    print('\n')
+    print('z after extract', z)
+    print('z.shape', z.shape)
+    exit()
+
+
+    ax = plt.subplot(121)
+    alpha = 1
+    colors = [None] * 4
+    colors[0] = (0, 158/255, 115/255)       # ROA - bluish-green
+    colors[1] = (230/255, 159/255, 0)       # NN  - orange
+    colors[2] = (0, 114/255, 178/255)       # LQR - blue
+    colors[3] = (240/255, 228/255, 66/255)  # SOS - yellow
+
+    # True ROA
+    ax.contour(z.T, origin='lower', extent=plot_limits.ravel(), colors=(colors[0],), linewidths=1)
+    ax.imshow(z.T, origin='lower', extent=plot_limits.ravel(), cmap=binary_cmap(colors[0]), alpha=alpha)
+
+
+    exit()
+
     for _ in range(n_episodes):
+        # convert state point to 
         # Get initial state and create environments
-        init_state, _ = random_env.reset()
-        print(init_state)
+        init_state = grids.all_points[0]
+        init_state_dict = {'init_x': init_state[0], 'init_x_dot': init_state[1], \
+                           'init_theta': init_state[2], 'init_theta_dot': init_state[3]}
+        # init with states in grids
+        init_state, _ = random_env.reset(init_state=init_state_dict)
+        print('init state in script', init_state)
         static_env = env_func(gui=gui, randomized_init=False, init_state=init_state)
         static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
 
@@ -70,8 +139,13 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
         # experiment.launch_training() # no training here
 
         if n_steps is None:
+            # if n_steps is None, run # episode experiments
             trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1)
+            # print('trajs_data', trajs_data)
+            print('goal reached', trajs_data['info'][-1][1]['goal_reached'])
+            exit()
         else:
+            # if n_steps is not None, run # step experiments
             trajs_data, _ = experiment.run_evaluation(training=True, n_steps=n_steps)
 
         
@@ -90,32 +164,16 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     metrics = experiment.compute_metrics(all_trajs)
     all_trajs = dict(all_trajs)
 
-    if save_data:
-        results = {'trajs_data': all_trajs, 'metrics': metrics}
-        path_dir = os.path.dirname('./temp-data/')
-        os.makedirs(path_dir, exist_ok=True)
-        with open(f'./temp-data/{config.algo}_data_{config.task}_{config.task_config.task}.pkl', 'wb') as file:
-            pickle.dump(results, file)
+    # if save_data:
+    #     results = {'trajs_data': all_trajs, 'metrics': metrics}
+    #     path_dir = os.path.dirname('./temp-data/')
+    #     os.makedirs(path_dir, exist_ok=True)
+    #     with open(f'./temp-data/{config.algo}_data_{config.task}_{config.task_config.task}.pkl', 'wb') as file:
+    #         pickle.dump(results, file)
 
     print('FINAL METRICS - ' + ', '.join([f'{key}: {value}' for key, value in metrics.items()]))
 
-def gridding(state_dim, use_zero_threshold = True):
-    # Number of states along each dimension
-    num_states = 251
 
-    # State grid
-    grid_limits = np.array([[-1., 1.], ] * state_dim)
-    state_discretization = GridWorld(grid_limits, num_states)
-
-    # Discretization constant
-    if use_zero_threshold:
-        tau = 0.0
-    else:
-        tau = np.sum(state_discretization.unit_maxes) / 2
-
-    print('Grid size: {}'.format(state_discretization.nindex))
-    print('Discretization constant (tau): {}'.format(tau))
-    return state_discretization
 
 def post_analysis(state_stack, input_stack, env):
     '''Plots the input and states to determine iLQR's success.
@@ -140,7 +198,7 @@ def post_analysis(state_stack, input_stack, env):
         axs[k].plot(times, np.array(state_stack).transpose()[k, 0:plot_length], label='actual')
         axs[k].plot(times, reference.transpose()[k, 0:plot_length], color='r', label='desired')
         axs[k].set(ylabel=env.STATE_LABELS[k] + f'\n[{env.STATE_UNITS[k]}]')
-        axs[k].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+        axs[k].yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
         if k != model.nx - 1:
             axs[k].set_xticks([])
     axs[0].set_title('State Trajectories')
