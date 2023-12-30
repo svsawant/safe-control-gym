@@ -65,7 +65,7 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     # print('state constraints', state_constraints)
     dim_state = ctrl.model.x_sym.shape[0] # state dimension
     
-    grids = gridding(dim_state, state_constraints, num_states = 2)
+    grids = gridding(dim_state, state_constraints, num_states = 4)
     # print(grids.__dir__())
     # print(grids.all_points)
     # print('grid.nindex', grids.nindex)
@@ -77,11 +77,19 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     # Run the experiment.
     # forward simulation all trajtories from all points in grids
     roa = compute_roa(grids, env_func, ctrl, no_traj=True)
+    print('roa\n', roa)
+    print('grids.all_points\n', grids.all_points)
+
+    # concatenate all points in grids with roa
+    res = np.hstack(( roa.reshape(-1, 1), grids.all_points))
+    print('res\n', res)
+    exit()
     z = roa.reshape(grids.num_points)
     print('num_points', grids.num_points)
     ctrl.close()
     random_env.close()
     print('roa', z)
+    
     if save_data:
         results = {'roa': roa, 'grids': grids, }
                 # 'trajs_data': all_trajs, 'metrics': metrics \
@@ -101,9 +109,9 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     # extract the 1st and 3rd state dimension of z
     print('z.shape', z.shape)
     z = z
-    print('\n')
-    print('z after extract', z)
-    print('z.shape', z.shape)
+    # print('\n')
+    # print('z after extract', z)
+    # print('z.shape', z.shape)
     exit()
 
 

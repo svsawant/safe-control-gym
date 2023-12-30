@@ -63,6 +63,7 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
     #     trajectories = np.empty((nindex, ndim, horizon))
     for state_index in range(nindex):
         # for all initial state in the grid
+        print('state_index', state_index)
         init_state = grid.all_points[state_index]
         init_state_dict = {'init_x': init_state[0], 'init_x_dot': init_state[1], \
                             'init_theta': init_state[2], 'init_theta_dot': init_state[3]}
@@ -73,11 +74,16 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
         # Create experiment, train, and run evaluation
         experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
 
-        trajs_data, _ = experiment.run_evaluation(training=True, n_steps=100, verbose=False)
-        # print('trajs_data', trajs_data)
+        trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
+        print('obs\n', trajs_data['obs'])
+        print('trajs_data\n', trajs_data['info'][-1][-1])
+        print('\n')
+        print('trajs_data[\'info\']\n', trajs_data['info'][-1][-1]['goal_reached'])
+        # input('press enter to continue')
+        print('\n')
         # exit()
-        print('goal reached', trajs_data['info'][-1][1]['goal_reached'])
-        roa[state_index] = trajs_data['info'][-1][1]['goal_reached']
+        # print('goal reached', trajs_data['info'][-1][1]['goal_reached'])
+        roa[state_index] = trajs_data['info'][-1][-1]['goal_reached']
         # close environments
         static_env.close()
         static_train_env.close()
