@@ -281,3 +281,142 @@ class GridWorld(object):
                                                self.num_points - 1))
         return np.ravel_multi_index(np.atleast_2d(ijk_index),
                                     self.num_points)
+class LyapunovNN(torch.nn.Module):
+    # def __init__(self, dim_input, layer_dims, activations):
+    def __init__(self, input_dim, layer_dims, activations, eps=1e-6):
+        super(LyapunovNN, self).__init__()
+        # network layers
+        self.input_dim = input_dim
+        self.num_layers = len(layer_dims)
+        self.activations = activations
+        self.eps = eps
+        self.layers = [] # store layers in a list
+
+        if layer_dims[0] < input_dim:
+            raise ValueError('The first layer dimension must be at \
+                             least the input dimension!')
+
+        if np.all(np.diff(layer_dims) >= 0):
+            self.output_dims = layer_dims
+        else:
+            raise ValueError('Each layer must maintain or increase \
+                             the dimension of its input!')
+
+        self.hidden_dims = np.zeros(self.num_layers, dtype=int)
+        for i in range(self.num_layers):
+            if i == 0:
+                layer_input_dim = self.input_dim
+            else:
+                layer_input_dim = self.output_dims[i - 1]
+            self.hidden_dims[i] = np.ceil((layer_input_dim + 1) / 2).astype(int)
+
+    def forward(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.from_numpy(x).float()
+        for i in range(self.num_layers):
+            if i == 0:
+                layer_input_dim = self.input_dim
+            else:
+                layer_input_dim = self.output_dims[i - 1]
+            self.layers.append(\
+                        torch.nn.Linear(layer_input_dim, self.hidden_dims[i]))
+            W = self.layers[-1].weight
+            kernel = torch.matmul(W.T, W) + self.eps * torch.eye(W.shape[1])
+            dim_diff = self.output_dims[i] - layer_input_dim
+            if dim_diff > 0:
+                self.layers.append(torch.nn.Linear(layer_input_dim, dim_diff))
+                # print(kernel.shape, self.layers[-1].weight.shape)
+                kernel = torch.cat((kernel,self.layers[-1].weight), dim=0)
+            layer_output = torch.matmul(kernel, x)
+            x = self.activations[i](layer_output)
+        values = torch.sum(torch.square(x), dim=0)
+        return values
+
+
+
+class Lyapunov(object):
+    """A class for general Lyapunov functions.
+
+    Parameters
+    ----------
+    discretization : ndarray
+        A discrete grid on which to evaluate the Lyapunov function.
+    lyapunov_function : callable or instance of `DeterministicFunction`
+        The lyapunov function. Can be called with states and returns the
+        corresponding values of the Lyapunov function.
+    dynamics : a callable or an instance of `Function`
+        The dynamics model. Can be either a deterministic function or something
+        uncertain that includes error bounds.
+    lipschitz_dynamics : ndarray or float
+        The Lipschitz constant of the dynamics. Either globally, or locally
+        for each point in the discretization (within a radius given by the
+        discretization constant. This is the closed-loop Lipschitz constant
+        including the policy!
+    lipschitz_lyapunov : ndarray or float
+        The Lipschitz constant of the lyapunov function. Either globally, or
+        locally for each point in the discretization (within a radius given by
+        the discretization constant.
+    tau : float
+        The discretization constant.
+    policy : ndarray, optional
+        The control policy used at each state (Same number of rows as the
+        discretization).
+    initial_set : ndarray, optional
+        A boolean array of states that are known to be safe a priori.
+    adaptive : bool, optional
+        A boolean determining whether an adaptive discretization is used for
+        stability verification.
+
+    """
+
+    def __init__(self, discretization, lyapunov_function, dynamics,
+                 lipschitz_dynamics, lipschitz_lyapunov,
+                 tau, policy, initial_set=None, adaptive=False):
+        """Initialization, see `Lyapunov` for details."""
+        super(Lyapunov, self).__init__()
+
+        self.discretization = discretization
+        self.policy = policy
+
+        # Keep track of the safe sets
+        self.safe_set = np.zeros(np.prod(discretization.num_points),
+                                 dtype=bool)
+
+        self.initial_safe_set = initial_set
+        if initial_set is not None:
+            self.safe_set[initial_set] = True
+
+        # Discretization constant
+        self.tau = tau
+
+        # Make sure dynamics are of standard framework
+        self.dynamics = dynamics
+
+        # Make sure Lyapunov fits into standard framework
+        self.lyapunov_function = lyapunov_function
+
+        # Storage for graph
+        self._storage = dict()
+        # self.feed_dict = get_feed_dict(tf.get_default_graph())
+
+        # Lyapunov values
+        self.values = None
+
+        # self.c_max = tf.placeholder(config.dtype, shape=())
+        self.c_max = None
+        self.feed_dict[self.c_max] = 0.
+
+        self._lipschitz_dynamics = lipschitz_dynamics
+        self._lipschitz_lyapunov = lipschitz_lyapunov
+
+        self.update_values()
+
+        self.adaptive = adaptive
+
+        # Keep track of the refinement `N(x)` used around each state `x` in
+        # the adaptive discretization; `N(x) = 0` by convention if `x` is
+        # unsafe
+        self._refinement = np.zeros(discretization.nindex, dtype=int)
+        if initial_set is not None:
+            self._refinement[initial_set] = 1
+
