@@ -1,6 +1,9 @@
 
+import itertools
+
 import numpy as np
 from matplotlib.colors import ListedColormap
+
 from lyapnov import GridWorld
 from safe_control_gym.experiments.base_experiment import BaseExperiment
 
@@ -99,10 +102,6 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
     else:
         return roa, trajectories
     
-
-
-
-
 def binary_cmap(color='red', alpha=1.):
     """Construct a binary colormap."""
     if color == 'red':
@@ -115,3 +114,30 @@ def binary_cmap(color='red', alpha=1.):
         color_code = color
     transparent_code = (1., 1., 1., 0.)
     return ListedColormap([transparent_code, color_code])
+
+def batchify(arrays, batch_size):
+    """Yield the arrays in batches and in order.
+
+    The last batch might be smaller than batch_size.
+
+    Parameters
+    ----------
+    arrays : list of ndarray
+        The arrays that we want to convert to batches.
+    batch_size : int
+        The size of each individual batch.
+    """
+    if not isinstance(arrays, (list, tuple)):
+        arrays = (arrays,)
+
+    # Iterate over array in batches
+    for i, i_next in zip(itertools.count(start=0, step=batch_size),
+                         itertools.count(start=batch_size, step=batch_size)):
+
+        batches = [array[i:i_next] for array in arrays]
+
+        # Break if there are no points left
+        if batches[0].size:
+            yield i, batches
+        else:
+            break
