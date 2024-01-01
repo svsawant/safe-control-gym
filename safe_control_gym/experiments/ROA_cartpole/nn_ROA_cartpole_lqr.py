@@ -101,12 +101,13 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
         tau = np.sum(grids.unit_maxes) / 2
 
     # Set initial safe set as a ball around the origin (in normalized coordinates)
+    # cutoff_radius    =  2.0 
     cutoff_radius    = 0.1
     initial_safe_set = np.linalg.norm(grids.all_points, ord=2, axis=1) <= cutoff_radius
     
     
     ################# closed-loop dynamics Lipschitz constant ################
-    # TODO: check if this is correct
+    # TODO: check if this is correct (by Mingxuan)
     # # dynamics (linear approximation)
     L_dyn = lambda x: np.linalg.norm(ctrl.model.df_func(x, ctrl.select_action(x))[0], 1) + \
                          np.linalg.norm(ctrl.model.df_func(x, ctrl.select_action(x))[1], 1)
@@ -127,20 +128,71 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     
     # approximate local Lipschitz constant with gradient
     grad_lyapunov_function = \
-        lambda x: torch.autograd.grad(nn, x, torch.ones_like(x))[0]
+        lambda x: torch.autograd.grad(nn.forward(x), x, \
+                        torch.ones_like(nn.forward(x)), allow_unused=True)[0]
+    
+    # test grad_lyapunov_function with a random state
+    test_state = np.array([[1], [1], [1], [1]]).reshape(-1)
+    # convert test_state to torch tensor
+    test_state = torch.tensor(test_state, dtype=torch.float32, requires_grad=True)
+    print('test_state shape', test_state.shape)
+    res = grad_lyapunov_function(test_state)
+    print('grad_lyapunov_function', res)
+    print('grad_lyapunov_function shape', res.shape)
+    # exit()
+
     # L_v = lambda x: tf.norm(grad_lyapunov_function(x), ord=1, axis=1, keepdims=True)
-    L_v = lambda x: torch.norm(grad_lyapunov_function(x), p=1, dim=1, keepdim=True)
+    L_v = lambda x: torch.norm(grad_lyapunov_function(x), p=1, dim=0, keepdim=True)
     dynamics = lambda x, u: ctrl.model.fc_func(x, u)
     policy = lambda x: ctrl.select_action(x)
 
     # test dynamics with a random state and action
     print('dynamics\n', dynamics(np.array([[1], [1], [1], [1]]).reshape(-1), np.array([[1]])))
     # initialize Lyapunov class
-    lyapnov_nn = Lyapunov(grids, nn, \
+    lyapunov_nn = Lyapunov(grids, nn, \
                           dynamics, L_dyn, L_v, tau, policy, \
                           initial_safe_set)
-    lyapnov_nn.update_values()
-    
+    lyapunov_nn.update_values()
+    # print('lyapunov_nn.values', lyapunov_nn.values)
+    lyapunov_nn.update_safe_set()
+    print('lyapunov_nn.safe_set\n', lyapunov_nn.safe_set)
+    # concatenate all points in grids with roa as a sanity check
+    # res = np.hstack(( lyapunov_nn.safe_set.reshape(-1, 1), grids.all_points))
+    # import sys
+    # np.set_printoptions(threshold=sys.maxsize)
+    # print('res\n', res)
+    #########################################################################
+    # train the parameteric LYapunov candidate in order to expand the verifiable
+    # safe set toward the brute-force safe set
+    print('c_max', lyapunov_nn.c_max)
+    ############### initialization cell to restore parameters ###############
+    test_classfier_loss = []
+    test_decrease_loss   = []
+    roa_estimate         = np.copy(lyapunov_nn.safe_set)
+
+    grid              = lyapunov_nn.discretization
+    c_max             = [lyapunov_nn.c_max, ]
+    safe_set_fraction = [lyapunov_nn.safe_set.sum() / grid.nindex, ]
+    print('safe_set_fraction', safe_set_fraction)
+    ######################### traning hyperparameters #######################
+    outer_iters = 20
+    inner_iters = 10
+    horizon     = 100
+    test_size   = int(1e4)
+
+    # placeholder state
+    candidate_state = np.zeros((1, grid.ndim))
+    safe_level = 1.
+    lagrange_multiplier = 1000
+    #
+    level_multiplier = 1.3,
+    # level_multiplier = 1.1,
+    learning_rate = 5e-3,
+    batch_size    = int(1e3),
+
+    ############################# training loop #############################
+
+
     exit()
     z = roa.reshape(grids.num_points)
     print('num_points', grids.num_points)

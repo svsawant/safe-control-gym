@@ -1,14 +1,12 @@
 
-from collections import Sequence
+from collections.abc import Sequence
+import itertools
 
 import numpy as np
 import torch
 
-from utilities import batchify
+
 # Add the configuration settings
-
-
-
 class Configuration(object):
     """Configuration class."""
 
@@ -18,9 +16,11 @@ class Configuration(object):
 
         # Dtype for computations
         self.dtype = torch.float64
-
+        #######################################################################
         # Batch size for stability verification
-        self.gp_batch_size = 10000
+        # TODO: change this back to 10000 in the future (by Mingxuan)
+        self.gp_batch_size = 100 # originally 10000
+        #######################################################################
 
     @property
     def np_dtype(self):
@@ -429,6 +429,7 @@ class Lyapunov(object):
         for i in range(self.discretization.nindex):
             values[i] = self.lyapunov_function.forward(\
                              self.discretization.all_points[i]).squeeze()
+        self.values = values
 
     def update_safe_set(self, can_shrink=True, max_refinement=1,
                         safety_factor=1., parallel_iterations=1):
@@ -460,82 +461,111 @@ class Lyapunov(object):
         #                                name='verification_states')
         #     actions = self.policy(tf_states)
         #     next_states = self.dynamics(tf_states, actions)
-
+        # torch_states = lambda x: torch.tensor(x, dtype=config.dtype)
+        np_states = lambda x: np.array(x, dtype=config.dtype)
             # decrease = self.v_decrease_bound(tf_states, next_states)
         decrease = lambda x: self.v_decrease_bound(x, self.dynamics(x, self.policy(x)))
             # threshold = self.threshold(tf_states, self.tau)
         threshold = lambda x: self.threshold(x, self.tau)
             # tf_negative = tf.squeeze(tf.less(decrease, threshold), axis=1)
             # torch_negative = torch.squeeze(decrease < threshold, dim=1)
-        torch_negative = lambda x: torch.squeeze(decrease(x) < threshold(x), dim=1)
+        # torch_negative = lambda x: torch.squeeze(decrease(x) < threshold(x), dim=1)
+        np_negative = lambda x: np.squeeze(decrease(x) < threshold(x), axis=0)
         
         #     storage = [('states', tf_states), ('negative', tf_negative)]
 
         
         # Compute an integer n such that dv < threshold for tau / n
-        ratio = lambda x: safety_factor * threshold(x) / decrease(x)
-        # If dv = 0, check for nan values, and clip to n = 0
-        # tf_n_req = tf.where(tf.is_nan(ratio),
-        #                     tf.zeros_like(ratio), ratio)
-        torch_n_req = lambda x: torch.where(torch.isnan(ratio(x)),
-                                    torch.zeros_like(ratio(x)), ratio(x))
-        # Edge case: ratio = 1 should correspond to n = 2
-        # TODO
-        # If dv < 0, also clip to n = 0
-        # tf_n_req = tf.ceil(tf.maximum(tf_n_req, 0))
-        torch_n_req = lambda x: torch.ceil(torch.maximum(torch_n_req(x), 0))
-        dim = int(self.discretization.ndim)
-        lengths = self.discretization.unit_maxes.reshape((-1, 1))
+        # ratio = lambda x: safety_factor * threshold(x) / decrease(x)
+        # # If dv = 0, check for nan values, and clip to n = 0
+        # # tf_n_req = tf.where(tf.is_nan(ratio),
+        # #                     tf.zeros_like(ratio), ratio)
+        # torch_n_req = lambda x: torch.where(torch.isnan(ratio(x)),
+        #                             torch.zeros_like(ratio(x)), ratio(x))
+        # # Edge case: ratio = 1 should correspond to n = 2
+        # # TODO
+        # # If dv < 0, also clip to n = 0
+        # # tf_n_req = tf.ceil(tf.maximum(tf_n_req, 0))
+        # torch_n_req = lambda x: torch.ceil(torch.maximum(torch_n_req(x), 0))
+        # dim = int(self.discretization.ndim)
+        # lengths = self.discretization.unit_maxes.reshape((-1, 1))
 
-        def refined_safety_check(data):
-            """Verify decrease condition in a locally refined grid."""
-            # center = tf.reshape(data[:-1], [1, dim])
-            center = torch.reshape(data[:-1], [1, dim])
-            # n_req = tf.cast(data[-1], tf.int32)
-            n_req = torch.cast(data[-1], torch.int32)
+        # def refined_safety_check(data):
+        #     """Verify decrease condition in a locally refined grid."""
+        #     # convert data to torch tensor
+        #     data = torch.tensor(data, dtype=config.dtype)
+        #     # center = tf.reshape(data[:-1], [1, dim])
+        #     center = torch.reshape(data[:-1], [1, dim])
+        #     # n_req = tf.cast(data[-1], tf.int32)
+        #     n_req = torch.tensor(data[-1], dtype=torch.int32)
 
-            # start = tf.constant(-1., dtype=config.dtype)
-            start = torch.tensor(-1., dtype=config.dtype)
-            # spacing = tf.reshape(tf.linspace(start, 1., n_req),
-                                    # [1, -1])
-            spacing = torch.reshape(torch.linspace(start, 1., n_req),
-                                    [1, -1])
-            # border = (0.5 * (1 - 1 / n_req) * lengths *
-            #             tf.tile(spacing, [dim, 1]))
-            border = (0.5 * (1 - 1 / n_req) * lengths *
-                        torch.tile(spacing, [dim, 1]))
-            # mesh = tf.meshgrid(*tf.unstack(border), indexing='ij')
-            mesh = torch.stack(torch.meshgrid(*torch.unbind(border)), dim=-1)
-            # points = tf.stack([tf.reshape(col, [-1]) for col in mesh],
-                                # axis=1)
-            points = torch.stack([torch.reshape(col, [-1]) for col in mesh],
-                                dim=1)
-            points += center
 
-            refined_threshold = self.threshold(center,
-                                                self.tau / n_req)
-            # negative = tf.less(decrease, refined_threshold)
-            negative = decrease(points) < refined_threshold
+        #     # start = tf.constant(-1., dtype=config.dtype)
+        #     start = torch.tensor(-1., dtype=config.dtype)
+        #     # spacing = tf.reshape(tf.linspace(start, 1., n_req),
+        #                             # [1, -1])
+        #     spacing = torch.reshape(torch.linspace(start, 1., n_req),
+        #                             [1, -1])
+        #     # border = (0.5 * (1 - 1 / n_req) * lengths *
+        #     #             tf.tile(spacing, [dim, 1]))
+        #     border = (0.5 * (1 - 1 / n_req) * lengths *
+        #                 torch.tile(spacing, [dim, 1]))
+        #     # mesh = tf.meshgrid(*tf.unstack(border), indexing='ij')
+        #     mesh = torch.stack(torch.meshgrid(*torch.unbind(border)), dim=-1)
+        #     # points = tf.stack([tf.reshape(col, [-1]) for col in mesh],
+        #                         # axis=1)
+        #     points = torch.stack([torch.reshape(col, [-1]) for col in mesh],
+        #                         dim=1)
+        #     points += center
 
-            # refined_negative = tf.reduce_all(negative)
-            refined_negative = torch.all(negative)
-            return refined_negative
+        #     refined_threshold = self.threshold(center,
+        #                                         self.tau / n_req)
+        #     # negative = tf.less(decrease, refined_threshold)
+        #     negative = decrease(points) < refined_threshold
 
-        
-        
-        #         storage += [('n_req', tf_n_req), ('refinement', tf_refinement),
-        #                     ('refined_negative', tf_refined_negative)]
+        #     # refined_negative = tf.reduce_all(negative)
+        #     refined_negative = torch.all(negative)
+        #     return refined_negative
 
-        #     set_storage(self._storage, storage)
-        # else:
-        #     if self.adaptive:
-        #         (tf_states, tf_negative, tf_n_req, tf_refinement,
-        #          tf_refined_negative) = storage.values()
-        #     else:
-        #         tf_states, tf_negative = storage.values()
+        # # tf_refinement = tf.placeholder(tf.int32, [None, 1],
+        # #                                        'refinement')
+        # torch_refinement = lambda x: torch.tensor(x, dtype=torch.int32)
+        # # data = tf.concat([tf_states, tf.cast(tf_refinement,
+        # #                                         config.dtype)], axis=1)
+        # data = lambda x, y: torch.cat((x, y), dim=0) 
+        # # tf_refined_negative = tf.map_fn(refined_safety_check, data,
+        # #                                 tf.bool, parallel_iterations)
+        # # do refinement for all the state in grids
+        # torch_refined_negative = torch.zeros(self.discretization.nindex, dtype=torch.bool)
+        # for state_index in range(self.discretization.nindex):
+        #     # print('state_index\n', state_index)
+        #     # torch_refined_option = torch_refinement(self._refinement[state_index])
+        #     # candidate_state = torch_states(self.discretization.all_points[state_index])
+        #     # # print the size 
+        #     # print('candidate_state size\n', candidate_state.shape)
+        #     # print('torch_refined_option size\n', torch_refined_option.shape)
+        #     # # reshape the refined option from zero dim to one dim
+        #     # torch_refined_option = torch.reshape(torch_refined_option, [1]) 
+        #     # print('torch_refined_option size\n', torch_refined_option.shape)
+        #     # # match the size and concatenate
+        #     # cat_result = data(candidate_state, torch_refined_option)
+        #     # print('cat_result\n', cat_result)
+        #     torch_refined_negative[state_index] = refined_safety_check(\
+        #         data(torch_states(self.discretization.all_points[state_index]), \
+        #              torch_refinement(self._refinement[state_index]).reshape([1])))
+        # #         storage += [('n_req', tf_n_req), ('refinement', tf_refinement),
+        # #                     ('refined_negative', tf_refined_negative)]
 
-        # # Get relevant properties
-        # feed_dict = self.feed_dict
+        # #     set_storage(self._storage, storage)
+        # # else:
+        # #     if self.adaptive:
+        # #         (tf_states, tf_negative, tf_n_req, tf_refinement,
+        # #          tf_refined_negative) = storage.values()
+        # #     else:
+        # #         tf_states, tf_negative = storage.values()
+
+        # # # Get relevant properties
+        # # feed_dict = self.feed_dict
 
         if can_shrink:
             # Reset the safe set and adaptive discretization
@@ -557,18 +587,41 @@ class Lyapunov(object):
         batch_size = config.gp_batch_size
         batch_generator = batchify((value_order, safe_set, refinement),
                                    batch_size)
+        print('batch_generator\n', batch_generator.__dir__())
+        # exit()
         index_to_state = self.discretization.index_to_state
 
         #######################################################################
 
         for i, (indices, safe_batch, refine_batch) in batch_generator:
+            print('indices\n', indices)
+            print('safe_batch\n', safe_batch)
+            print('refine_batch\n', refine_batch)
+            # exit()
+
             states = index_to_state(indices)
-            torch_state = states
+            np_state = np.squeeze(states)
+            print('np_states in update safe set\n', np_state)
+            print('np_states shape\n', np_state.shape)
+            print('np_states type\n', type(np_state))
 
             # Update the safety with the safe_batch result
             # negative = tf_negative.eval(feed_dict)
-            negative = torch_negative(torch_state)
+            # negative = np_negative(np_state)
+            negative = np.zeros_like(safe_batch, dtype=bool)
+            for state_index in range(len(np_state)):
+                negative[state_index] = np_negative(np_state[state_index])
+            # convert negative to np array
+            negative = np.array(negative, dtype=bool)
+            # check data type
+            print('negative\n', negative)
+            print('negative shape\n', negative.shape)
+            print('negative type\n', type(negative))
+            print('safe_batch\n', safe_batch)
+            print('safe_batch shape\n', safe_batch.shape)
+            print('safe_batch type\n', type(safe_batch))
             safe_batch |= negative
+            # exit()
             refine_batch[negative] = 1
 
             # Boolean array: argmin returns first element that is False
@@ -578,51 +631,51 @@ class Lyapunov(object):
 
             # Check if there are unsafe elements in the batch
             if bound > 0 or not safe_batch[0]:
-                if self.adaptive and max_refinement > 1:
-                    # Compute required adaptive refinement
-                    torch_state = torch_state[bound:]
-                    refine_batch[bound:] = torch_n_req(torch_state)
+                # if self.adaptive and max_refinement > 1:
+                #     # Compute required adaptive refinement
+                #     torch_state = torch_state[bound:]
+                #     refine_batch[bound:] = torch_n_req(torch_state)
 
-                    # We do not need to refine cells that correspond to known
-                    # safe states
-                    idx_safe = np.logical_or(negative,
-                                             self.initial_safe_set[indices])
-                    refine_batch[idx_safe] = 1
+                #     # We do not need to refine cells that correspond to known
+                #     # safe states
+                #     idx_safe = np.logical_or(negative,
+                #                              self.initial_safe_set[indices])
+                #     refine_batch[idx_safe] = 1
 
-                    # Identify cells to refine
-                    states_to_check = np.logical_and(refine_batch >= 1,
-                                                     refine_batch <=
-                                                     max_refinement)
-                    states_to_check = states_to_check[bound:]
+                #     # Identify cells to refine
+                #     states_to_check = np.logical_and(refine_batch >= 1,
+                #                                      refine_batch <=
+                #                                      max_refinement)
+                #     states_to_check = states_to_check[bound:]
 
-                    if np.all(states_to_check):
-                        stop = len(states_to_check)
-                    else:
-                        stop = np.argmin(states_to_check)
+                #     if np.all(states_to_check):
+                #         stop = len(states_to_check)
+                #     else:
+                #         stop = np.argmin(states_to_check)
 
-                    if stop > 0:
-                        torch_state = states[bound:bound + stop]
-                        torch_refinement = refine_batch[bound:
-                                                                bound + stop,
-                                                                None]
-                        # refined_safe = tf_refined_negative.eval(feed_dict)
-                        refined_safe = torch_refined_negative(torch_state, torch_refinement)
+                #     if stop > 0:
+                #         torch_state = states[bound:bound + stop]
+                #         torch_refinement = refine_batch[bound:
+                #                                                 bound + stop,
+                #                                                 None]
+                #         # refined_safe = tf_refined_negative.eval(feed_dict)
+                #         refined_safe = torch_refined_negative(torch_state, torch_refinement)
 
-                        # Determine which states are safe under the refined
-                        # discretization
-                        if np.all(refined_safe):
-                            refine_bound = len(refined_safe)
-                        else:
-                            refine_bound = np.argmin(refined_safe)
-                        safe_batch[bound:bound + refine_bound] = True
+                #         # Determine which states are safe under the refined
+                #         # discretization
+                #         if np.all(refined_safe):
+                #             refine_bound = len(refined_safe)
+                #         else:
+                #             refine_bound = np.argmin(refined_safe)
+                #         safe_batch[bound:bound + refine_bound] = True
 
-                    # Break if the refined discretization does not work for all
-                    # states after `bound`
-                    if stop < len(states_to_check) or refine_bound < stop:
-                        safe_batch[bound + refine_bound:] = False
-                        refine_batch[bound + refine_bound:] = 0
-                        break
-                else:
+                #     # Break if the refined discretization does not work for all
+                #     # states after `bound`
+                #     if stop < len(states_to_check) or refine_bound < stop:
+                #         safe_batch[bound + refine_bound:] = False
+                #         refine_batch[bound + refine_bound:] = 0
+                #         break
+                # else:
                     # Make sure all following points are labeled as unsafe
                     safe_batch[bound:] = False
                     refine_batch[bound:] = 0
@@ -634,7 +687,10 @@ class Lyapunov(object):
         #######################################################################
 
         # Set placeholder for c_max to the corresponding value
-        feed_dict[self.c_max] = self.values[value_order[max_index]]
+        # feed_dict[self.c_max] = self.values[value_order[max_index]]
+        # print('self.values\n', self.values)
+        # print('value_order\n', value_order)
+        self.c_max = self.values[value_order[max_index]]
 
         # Restore the order of the safe set and adaptive refinement
         safe_nodes = value_order[safe_set]
@@ -666,11 +722,22 @@ class Lyapunov(object):
         """
         if tau is None:
             tau = self.tau
-        lv = self.lipschitz_lyapunov(states)
-        if hasattr(self._lipschitz_lyapunov, '__call__') and lv.shape[1] > 1:
-            # lv = tf.norm(lv, ord=1, axis=1, keepdims=True)
-            lv = torch.norm(lv, p=1, dim=1, keepdim=True)
-        lf = self.lipschitz_dynamics(states)
+        # if state is not a tensor, convert it to a tensor
+        if not isinstance(states, torch.Tensor):
+            states = torch.tensor(states, dtype=config.dtype, requires_grad=True)
+            states = states.float()
+        print('states\n', states)
+        lv = self._lipschitz_lyapunov(states)
+        print('lv\n', lv)
+        print('lv shape\n', lv.shape)
+        print('hasattr(self._lipschitz_lyapunov, __call__)\n', hasattr(self._lipschitz_lyapunov, '__call__'))
+        ## TODO: check this part (by Mingxuan)
+        # if hasattr(self._lipschitz_lyapunov, '__call__') and lv.shape[1] > 1:
+        #     # lv = tf.norm(lv, ord=1, axis=1, keepdims=True)
+        #     lv = torch.norm(lv, p=1, dim=1, keepdim=True)
+        # convert states to np array
+        states = states.detach().numpy()
+        lf = self._lipschitz_dynamics(states)
         return - lv * (1. + lf) * tau
     
     def v_decrease_bound(self, states, next_states):
@@ -723,8 +790,47 @@ class Lyapunov(object):
         else:
             # bound = tf.constant(0., dtype=config.dtype)
             bound = torch.tensor(0., dtype=config.dtype)
-
+        if not isinstance(states, torch.Tensor):
+            states = torch.tensor(states, dtype=torch.float64)
+            states = states.float() # avoid feedforward data type error
+        # next_states is of type casadi.DM
+        # convert the next_states first to numpy array, then to torch tensor
+        if not isinstance(next_states, torch.Tensor):
+            next_states = torch.tensor(np.array(next_states), dtype=torch.float64)
+            next_states = next_states.float() # avoid feedforward data type error
+        # print('next_states\n', next_states)
+        # print('next_states shape\n', next_states.shape)
+        # print('next_states type\n', type(next_states))
+        # print('next_states data type\n', next_states.dtype)
         v_decrease = (self.lyapunov_function(next_states)
                       - self.lyapunov_function(states))
 
         return v_decrease, bound
+
+# TODO: put this in a separate file (by Mingxuan)
+def batchify(arrays, batch_size):
+    """Yield the arrays in batches and in order.
+
+    The last batch might be smaller than batch_size.
+
+    Parameters
+    ----------
+    arrays : list of ndarray
+        The arrays that we want to convert to batches.
+    batch_size : int
+        The size of each individual batch.
+    """
+    if not isinstance(arrays, (list, tuple)):
+        arrays = (arrays,)
+
+    # Iterate over array in batches
+    for i, i_next in zip(itertools.count(start=0, step=batch_size),
+                         itertools.count(start=batch_size, step=batch_size)):
+
+        batches = [array[i:i_next] for array in arrays]
+
+        # Break if there are no points left
+        if batches[0].size:
+            yield i, batches
+        else:
+            break
