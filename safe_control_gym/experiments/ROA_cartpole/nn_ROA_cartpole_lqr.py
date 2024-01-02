@@ -3,6 +3,7 @@
 '''A LQR and iLQR example.'''
 
 import os
+import time
 import pickle
 from collections import defaultdict
 from functools import partial
@@ -19,6 +20,7 @@ from safe_control_gym.utils.registration import make
 
 from safe_control_gym.experiments.ROA_cartpole.utilities import *
 from lyapnov import LyapunovNN, Lyapunov
+from utilities import balanced_class_weights
 
 from pprint import pprint
 
@@ -29,6 +31,7 @@ class Options(object):
 
 OPTIONS = Options(
                 #   np_dtype              = safe_learning.config.np_dtype,
+                  np_dtype              = np.float32,
                 #   tf_dtype              = safe_learning.config.dtype,
                   eps                   = 1e-8,                            # numerical tolerance
                   saturate              = True,                            # apply saturation constraints to the control input
@@ -89,7 +92,7 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
                                    random_env.constraints.state_constraints[0].upper_bounds)).T
     # print('state constraints', state_constraints)
     state_dim = ctrl.model.x_sym.shape[0] # state dimension
-    grids = gridding(state_dim, state_constraints, num_states = 4)
+    grids = gridding(state_dim, state_constraints, num_states = 10)
     # print(grids.all_points)
     # print('grid.nindex', grids.nindex)
     # print('grid.ndim', grids.ndim)
@@ -102,7 +105,7 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
 
     # Set initial safe set as a ball around the origin (in normalized coordinates)
     # cutoff_radius    =  2.0 
-    cutoff_radius    = 0.1
+    cutoff_radius    = 0.5
     initial_safe_set = np.linalg.norm(grids.all_points, ord=2, axis=1) <= cutoff_radius
     
     
@@ -161,6 +164,19 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     # import sys
     # np.set_printoptions(threshold=sys.maxsize)
     # print('res\n', res)
+    ######################## True Region of Attraction ########################
+    compute_new_roa = False
+    # compute_new_roa = True
+    roa_file_name = 'roa.npy'
+    if not compute_new_roa:
+        # load the pre-saved ROA to avoid re-computation
+        roa = np.load(roa_file_name)
+    else:
+        roa = compute_roa(grids, env_func, ctrl, no_traj=True)
+        # save the ROA as a npy file
+        # TODO: add parameters to the the file name 
+        np.save(roa_file_name, roa)
+        # exit()
     #########################################################################
     # train the parameteric LYapunov candidate in order to expand the verifiable
     # safe set toward the brute-force safe set
@@ -175,23 +191,202 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     safe_set_fraction = [lyapunov_nn.safe_set.sum() / grid.nindex, ]
     print('safe_set_fraction', safe_set_fraction)
     ######################### traning hyperparameters #######################
-    outer_iters = 20
-    inner_iters = 10
-    horizon     = 100
+    outer_iters = 10
+    inner_iters = 5
+    horizon     = 200
     test_size   = int(1e4)
 
     # placeholder state
     candidate_state = np.zeros((1, grid.ndim))
-    safe_level = 1.
+    safe_level = 1
     lagrange_multiplier = 1000
     #
-    level_multiplier = 1.3,
-    # level_multiplier = 1.1,
-    learning_rate = 5e-3,
-    batch_size    = int(1e3),
+    # level_multiplier = 1.3
+    level_multiplier = 1.1
+    learning_rate = 5e-3
+    # batch_size    = int(1e3)
+    batch_size    = 500
+    
+    print('lyapunov_nn.lyapunov_function\n', lyapunov_nn.lyapunov_function.parameters().__dir__())
+    print('lyapunov_nn.lyapunov_function.parameters()\n', lyapunov_nn.lyapunov_function.parameters())
+    optimizer = torch.optim.SGD(lyapunov_nn.lyapunov_function.parameters(), lr=learning_rate)
 
     ############################# training loop #############################
+    print('Current metrics ...')
+    c = lyapunov_nn.c_max
+    num_safe = lyapunov_nn.safe_set.sum()
+    print('Safe level (c_k): {}'.format(c))
+    print('Safe set size: {} ({:.2f}% of grid, \
+           {:.2f}% of ROA)\n'.format(int(num_safe), \
+           100 * num_safe / grid.nindex, 100 * num_safe / roa.sum()))
+    print('')
+    time.sleep(0.5)
 
+    for _ in range(outer_iters):
+        print('Iteration (k): {}'.format(len(c_max)))
+        time.sleep(0.5)
+
+        ## Identify the "gap" states, i.e., those between V(c_k) 
+        ## and V(a * c_k) for a > 1
+        c = lyapunov_nn.c_max
+        idx_small = lyapunov_nn.values.ravel() <= c
+        # print('lyapunov_nn.values.ravel()', lyapunov_nn.values.ravel())
+        # print('c', c)
+        # print('level_multiplier', level_multiplier)
+        idx_big   = lyapunov_nn.values.ravel() <= level_multiplier * c
+        # print('idx_small', idx_small)
+        # print('idx_big', idx_big)
+        idx_gap   = np.logical_and(idx_big, ~idx_small)
+
+        ## Forward-simulate "gap" states to determine 
+        ## which ones we can add to our ROA estimate
+        gap_states = grid.all_points[idx_gap]
+        print('gap_states\n', gap_states)
+        print('gap_states.shape', gap_states.shape)
+        input('press enter to continue')
+        gap_future_values = np.zeros((gap_states.shape[0], 1))
+        for state_idx in range(gap_states.shape[0]):
+            # !! when using dynamics, the state can eventually go out of the bound
+            # for _ in range(horizon):
+                # print('gap_states[state_idx]', gap_states[state_idx])
+                # print('gap_states[state_idx].shape', gap_states[state_idx].shape)
+                # print('policy(gap_states[state_idx])', policy(gap_states[state_idx]))
+                # print('dynamics(gap_states[state_idx], policy(gap_states[state_idx]))', \
+                #         dynamics(gap_states[state_idx], policy(gap_states[state_idx])))
+                # print('dynamics(gap_states[state_idx], policy(gap_states[state_idx])).shape', \
+                #         dynamics(gap_states[state_idx], policy(gap_states[state_idx])).shape)
+                # # dynamics return the next state in the form of (4, 1)
+                # # to feed into gap_states[state_idx], we need to reshape it to (4,)
+                # gap_states[state_idx] = np.reshape(dynamics(gap_states[state_idx], \
+                #                                             policy(gap_states[state_idx])), -1)
+            # use the safe-control-gym to simulate the trajectory
+            init_state = gap_states[state_idx]
+            init_state_dict = {'init_x': init_state[0], 'init_x_dot': init_state[1], \
+                                'init_theta': init_state[2], 'init_theta_dot': init_state[3]}
+            init_state, _ = random_env.reset(init_state = init_state_dict)
+            # print('init_state', init_state)
+            static_env = env_func(gui=False, random_state=False, init_state=init_state)
+            static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
+            # Create experiment, train, and run evaluation
+            experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
+            # simulate the gap state in safe-control-gym for only pre-defined horizon
+            trajs_data, _ = experiment.run_evaluation(training=True, n_steps=horizon, verbose=False)
+            # print('trajectory data\n', trajs_data)
+            # print('trajs_data\n', trajs_data['info'][0][-1])
+            # print('obs[0]\n', trajs_data['obs'][0][-1])
+            gap_states[state_idx] = trajs_data['obs'][0][-1]
+            # print('gap_states[state_idx]', gap_states[state_idx])
+            # print('gap_states[state_idx].shape', gap_states[state_idx].shape)
+            # print('gap_states[state_idx] type', type(gap_states[state_idx]))
+            gap_future_values[state_idx] = (lyapunov_nn.lyapunov_function.forward(gap_states[state_idx].reshape(-1, 1))).detach().numpy()
+            # exit()
+            # Close environments
+            static_env.close()
+            static_train_env.close()
+        roa_estimate[idx_gap] |= (gap_future_values <= c).ravel()
+        # print('roa_estimate[idx_gap]', roa_estimate[idx_gap])
+
+        ## Identify the class labels for our current ROA estimate 
+        ## and the expanded level set
+        target_idx = np.logical_or(idx_big, roa_estimate)
+        target_set = grid.all_points[target_idx]
+        target_labels = roa_estimate[target_idx]\
+                        .astype(OPTIONS.np_dtype).reshape([-1, 1])
+        idx_range = target_set.shape[0]
+
+        ## test set
+        # idx_batch = tf.random_uniform([batch_size, ], 0, idx_range, dtype=tf.int32, name='batch_sample')
+        idx_test = np.random.randint(0, idx_range, size=(test_size, ))
+        test_set = target_set[idx_test]
+        test_labels = target_labels[idx_test]
+
+        # stochastic gradient descent for classification
+        for _ in range(inner_iters):
+            lyapunov_nn.lyapunov_function.train(True)
+            # training step
+            safe_level = lyapunov_nn.c_max
+            # idx_batch = tf.random_uniform([batch_size, ], 0, idx_range, dtype=tf.int32, name='batch_sample')
+            idx_batch_eval = np.random.randint(0, idx_range, size=(batch_size, ))
+            training_states = target_set[idx_batch_eval]
+            # print('training_states\n', training_states.shape)
+            num_training_states = training_states.shape[0]
+            
+            # True class labels, converted from Boolean ROA labels {0, 1} to {-1, 1}
+            roa_labels = target_labels[idx_batch_eval]
+            class_label = 2 * roa_labels - 1
+            class_label = torch.tensor(class_label, dtype=torch.float32)
+
+            # Signed, possibly normalized distance from the decision boundary
+            # print('safe_level\n', safe_level)
+            decision_distance_for_states = torch.zeros((num_training_states, 1), dtype=torch.float32)                                                   
+            for state_idx in range(num_training_states):
+                # decision_distance_for_states[state_idx] = safe_level - lyapunov_nn.lyapunov_function.forward(training_states[state_idx].reshape(-1, 1))
+                decision_distance_for_states[state_idx] = lyapunov_nn.lyapunov_function.forward(training_states[state_idx])
+            decision_distance = safe_level - decision_distance_for_states
+            # print('decision_distance\n', decision_distance)
+            # exit()
+            
+            # Perceptron loss with class weights
+            class_weights, class_counts = balanced_class_weights(roa_labels.astype(bool))
+            # classifier_loss = class_weights * tf.maximum(- class_labels * decision_distance, 0, name='classifier_loss')
+            # print('class_weights\n', class_weights)
+            # print('class_weights type\n', type(class_weights))
+            # convert class_weights to torch tensor
+            class_weights = torch.tensor(class_weights, dtype=torch.float32)
+            classifier_loss = class_weights * torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance))
+
+            # Enforce decrease constraint with Lagrangian relaxation
+            # decrease_loss = roa_labels * tf.maximum(tf_dv_nn, 0) / tf.stop_gradient(tf_values_nn + OPTIONS.eps)
+            torch_dv_nn = torch.zeros((num_training_states, 1), dtype=torch.float32)
+            for state_idx in range(num_training_states):
+                future_state = np.reshape(dynamics(training_states[state_idx], policy(training_states[state_idx])), -1)
+                torch_dv_nn[state_idx] = lyapunov_nn.lyapunov_function.forward(\
+                                    future_state) - \
+                                    lyapunov_nn.lyapunov_function.forward(training_states[state_idx])
+            
+            roa_labels = torch.tensor(roa_labels, dtype=torch.float32)
+            training_states_forwards = torch.zeros((num_training_states, 1), dtype=torch.float32)
+            for state_idx in range(num_training_states):
+                training_states_forwards[state_idx] = lyapunov_nn.lyapunov_function.forward(training_states[state_idx])
+            
+            decrease_loss = roa_labels * torch.max(torch_dv_nn, torch.zeros_like(torch_dv_nn)) / \
+                                (training_states_forwards + OPTIONS.eps)
+
+            optimizer.zero_grad() # zero gradiants for every batch !!
+
+            loss = torch.mean(classifier_loss + lagrange_multiplier * decrease_loss)
+                          
+            # stadard pytorch things
+            # inputs, labels = data
+            # zero gradiants for every batch !!
+            # optimizer.zero_grad()
+            # outputs = lyapunov_nn.lyapunov_function.forward(inputs)
+            # loss = loss_fn(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            # running_loss += loss.item()
+            # exit()
+
+        # exit()
+        
+        ## Update Lyapunov values and ROA estimate, 
+        ## based on new parameter values
+        lyapunov_nn.update_values()  
+        lyapunov_nn.update_safe_set()
+        roa_estimate |= lyapunov_nn.safe_set
+
+        c_max.append(lyapunov_nn.c_max)
+        safe_set_fraction.append(lyapunov_nn.safe_set.sum() / grid.nindex)
+        print('Current safe level (c_k): {}'.format(c_max[-1]))
+        print('Safe set size: {} ({:.2f}% of grid, {:.2f}% of ROA)\n'.format(
+                                int(lyapunov_nn.safe_set.sum()), \
+                                100 * safe_set_fraction[-1], \
+                                100 * safe_set_fraction[-1] * roa.size / roa.sum()\
+                                    ))
+    
+    print('c_max', c_max)
+    print('safe_set_fraction', safe_set_fraction)
 
     exit()
     z = roa.reshape(grids.num_points)

@@ -56,7 +56,7 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
     #     for t in range(1, horizon):
     #         trajectories[:, :, t] = closed_loop_dynamics(trajectories[:, :, t - 1])
     #     end_states = trajectories[:, :, -1]
-    ramdom_env = env_func(gui=False)
+    random_env = env_func(gui=False)
 
     roa = np.zeros((nindex))
     
@@ -66,24 +66,24 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
     #     trajectories = np.empty((nindex, ndim, horizon))
     for state_index in range(nindex):
         # for all initial state in the grid
-        print('state_index', state_index)
+        # print('state_index', state_index)
         init_state = grid.all_points[state_index]
         init_state_dict = {'init_x': init_state[0], 'init_x_dot': init_state[1], \
                             'init_theta': init_state[2], 'init_theta_dot': init_state[3]}
-        init_state, _ = ramdom_env.reset(init_state = init_state_dict)
-        print('init_state', init_state)
+        init_state, _ = random_env.reset(init_state = init_state_dict)
+        # print('init_state', init_state)
         static_env = env_func(gui=False, random_state=False, init_state=init_state)
         static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
         # Create experiment, train, and run evaluation
         experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
 
         trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
-        print('obs\n', trajs_data['obs'])
-        print('trajs_data\n', trajs_data['info'][-1][-1])
-        print('\n')
-        print('trajs_data[\'info\']\n', trajs_data['info'][-1][-1]['goal_reached'])
+        # print('obs\n', trajs_data['obs'])
+        # print('trajs_data\n', trajs_data['info'][-1][-1])
+        # print('\n')
+        # print('trajs_data[\'info\']\n', trajs_data['info'][-1][-1]['goal_reached'])
         # input('press enter to continue')
-        print('\n')
+        # print('\n')
         # exit()
         # print('goal reached', trajs_data['info'][-1][1]['goal_reached'])
         roa[state_index] = trajs_data['info'][-1][-1]['goal_reached']
@@ -114,4 +114,19 @@ def binary_cmap(color='red', alpha=1.):
         color_code = color
     transparent_code = (1., 1., 1., 0.)
     return ListedColormap([transparent_code, color_code])
+
+def balanced_class_weights(y_true, scale_by_total=True):
+    """Compute class weights from class label counts."""
+    y = y_true.astype(np.bool_)
+    nP = y.sum()
+    nN = y.size - y.sum()
+    class_counts = np.array([nN, nP])
+
+    weights = np.ones_like(y, dtype=float)
+    weights[ y] /= nP
+    weights[~y] /= nN
+    if scale_by_total:
+        weights *= y.size
+
+    return weights, class_counts
 

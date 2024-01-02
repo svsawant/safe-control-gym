@@ -293,7 +293,8 @@ class LyapunovNN(torch.nn.Module):
         self.num_layers = len(layer_dims)
         self.activations = activations
         self.eps = eps
-        self.layers = [] # store layers in a list
+        # self.layers = [] # store layers in a list won't work
+        self.layers = torch.nn.ModuleList()
 
         if layer_dims[0] < input_dim:
             raise ValueError('The first layer dimension must be at \
@@ -335,6 +336,13 @@ class LyapunovNN(torch.nn.Module):
         values = torch.sum(torch.square(x), dim=0)
         return values
 
+    def print_params(self):
+        # TODO: for each layer, print the layer weights
+        offset = 0
+        # print W0 
+        # print W1
+        # print eigenvalues of (W0.T*W0 + eps*I)
+        pass
 
 
 class Lyapunov(object):
@@ -587,23 +595,23 @@ class Lyapunov(object):
         batch_size = config.gp_batch_size
         batch_generator = batchify((value_order, safe_set, refinement),
                                    batch_size)
-        print('batch_generator\n', batch_generator.__dir__())
+        # print('batch_generator\n', batch_generator.__dir__())
         # exit()
         index_to_state = self.discretization.index_to_state
 
         #######################################################################
 
         for i, (indices, safe_batch, refine_batch) in batch_generator:
-            print('indices\n', indices)
-            print('safe_batch\n', safe_batch)
-            print('refine_batch\n', refine_batch)
+            # print('indices\n', indices)
+            # print('safe_batch\n', safe_batch)
+            # print('refine_batch\n', refine_batch)
             # exit()
 
             states = index_to_state(indices)
             np_state = np.squeeze(states)
-            print('np_states in update safe set\n', np_state)
-            print('np_states shape\n', np_state.shape)
-            print('np_states type\n', type(np_state))
+            # print('np_states in update safe set\n', np_state)
+            # print('np_states shape\n', np_state.shape)
+            # print('np_states type\n', type(np_state))
 
             # Update the safety with the safe_batch result
             # negative = tf_negative.eval(feed_dict)
@@ -614,12 +622,12 @@ class Lyapunov(object):
             # convert negative to np array
             negative = np.array(negative, dtype=bool)
             # check data type
-            print('negative\n', negative)
-            print('negative shape\n', negative.shape)
-            print('negative type\n', type(negative))
-            print('safe_batch\n', safe_batch)
-            print('safe_batch shape\n', safe_batch.shape)
-            print('safe_batch type\n', type(safe_batch))
+            # print('negative\n', negative)
+            # print('negative shape\n', negative.shape)
+            # print('negative type\n', type(negative))
+            # print('safe_batch\n', safe_batch)
+            # print('safe_batch shape\n', safe_batch.shape)
+            # print('safe_batch type\n', type(safe_batch))
             safe_batch |= negative
             # exit()
             refine_batch[negative] = 1
@@ -726,11 +734,11 @@ class Lyapunov(object):
         if not isinstance(states, torch.Tensor):
             states = torch.tensor(states, dtype=config.dtype, requires_grad=True)
             states = states.float()
-        print('states\n', states)
+        # print('states\n', states)
         lv = self._lipschitz_lyapunov(states)
-        print('lv\n', lv)
-        print('lv shape\n', lv.shape)
-        print('hasattr(self._lipschitz_lyapunov, __call__)\n', hasattr(self._lipschitz_lyapunov, '__call__'))
+        # print('lv\n', lv)
+        # print('lv shape\n', lv.shape)
+        # print('hasattr(self._lipschitz_lyapunov, __call__)\n', hasattr(self._lipschitz_lyapunov, '__call__'))
         ## TODO: check this part (by Mingxuan)
         # if hasattr(self._lipschitz_lyapunov, '__call__') and lv.shape[1] > 1:
         #     # lv = tf.norm(lv, ord=1, axis=1, keepdims=True)
