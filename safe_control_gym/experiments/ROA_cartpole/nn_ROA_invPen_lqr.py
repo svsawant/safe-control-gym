@@ -15,6 +15,7 @@ from matplotlib.ticker import FormatStrFormatter
 # from safe_control_gym.utils.configuration import ConfigFactory
 # from safe_control_gym.utils.registration import make
 
+
 from safe_control_gym.experiments.ROA_cartpole.utilities import *
 from lyapnov import LyapunovNN, Lyapunov, QuadraticFunction, GridWorld_pendulum
 from utilities import balanced_class_weights, dlqr, \
@@ -39,6 +40,9 @@ OPTIONS = Options(np_dtype              = np.float32,
                 #   tf_checkpoint_path    = "./tmp/lyapunov_function_learning.ckpt"
                 )
 
+# detect torch device
+myDevice = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+myDevice = torch.device("cpu")
 # Constants
 dt = 0.01   # sampling time
 g = 9.81    # gravity
@@ -118,7 +122,7 @@ Q = np.diag([5, 1])
 R = 1* np.identity(action_dim).astype(OPTIONS.np_dtype)    # action cost matrix
 # K, P_lqr = safe_learning.utilities.dlqr(A, B, Q, R)
 K, P_lqr = dlqr(A, B, Q, R) 
-print('K',K)
+# print('K',K)
 
 policy = lambda x: -K @ x
 if OPTIONS.saturate:
@@ -149,7 +153,7 @@ lyapunov_lqr.update_safe_set()
 # print('lyapunov_lqr.safe_set\n', lyapunov_lqr.safe_set[1:10])
 # print('lyapunov_lqr.values\n', lyapunov_lqr.values[1:10])
 # print('lyapunov_lqr.c_max\n', lyapunov_lqr.c_max)
-# print('lyapunov_lqr.safe_set.sum()\n', lyapunov_lqr.safe_set.sum())
+print('lyapunov_lqr.safe_set.sum()\n', lyapunov_lqr.safe_set.sum())
 
 
 horizon = 500
@@ -157,8 +161,12 @@ tol = 0.1
 # roa, trajectories = compute_roa_pendulum(lyapunov_lqr.discretization, cl_dynamics, horizon, tol, no_traj=False)
 compute_new_roa = False
 # compute_new_roa = True
+script_dir = os.path.dirname(__file__)
 roa_file_name = 'roa_pendulum.npy'
 traj_file_name = 'traj_pendulum.npy'
+# append the file name to the current path
+roa_file_name = os.path.join(script_dir, roa_file_name)
+traj_file_name = os.path.join(script_dir, traj_file_name)
 if not compute_new_roa:
     # load the pre-saved ROA to avoid re-computation
     roa = np.load(roa_file_name)
@@ -171,9 +179,174 @@ else:
 
 print('True ROA size:{}\n'.format(int(roa.sum())))
 print('')
+######################## define Lyapunov NN ########################
+# initialize Lyapunov NN
+layer_dim = [64, 64, 64]
+# layer_dim = [128, 128, 128]
+activations = [torch.nn.Tanh(), torch.nn.Tanh(), torch.nn.Tanh()]
+nn = LyapunovNN(state_dim, layer_dim, activations)
+# nn.print_params()
+# exit()
+# values = nn(np.array([[1], [1], [1], [1]]))
+# print('values', values)
 
+# approximate local Lipschitz constant with gradient
+grad_lyapunov_function = \
+    lambda x: torch.autograd.grad(nn(x), x, \
+                    torch.ones_like(nn(x)), allow_unused=True,)[0]
+lyapunov_nn = Lyapunov(state_discretization, nn, \
+                          cl_dynamics, L_dyn, L_v, tau, policy, \
+                          initial_safe_set)
+lyapunov_nn.update_values()
+lyapunov_nn.update_safe_set()
+#########################################################################
+# train the parameteric Lyapunov candidate in order to expand the verifiable
+# safe set toward the brute-force safe set
+test_classfier_loss = []
+test_decrease_loss   = []
+roa_estimate         = np.copy(lyapunov_nn.safe_set)
 
-grid              = lyapunov_lqr.discretization
+# grid              = lyapunov_lqr.discretization
+grid              = lyapunov_nn.discretization
+c_max             = [lyapunov_nn.c_max, ]
+safe_set_fraction = [lyapunov_nn.safe_set.sum() / grid.nindex, ]
+print('safe_set_fraction', safe_set_fraction)
+######################### traning hyperparameters #######################
+outer_iters = 5
+inner_iters = 10
+horizon     = 100
+test_size   = int(1e4)
+
+safe_level = 1
+lagrange_multiplier = 5000
+level_multiplier = 1.3
+learning_rate = 5e-3
+batch_size    = int(1e3)
+
+optimizer = torch.optim.SGD(lyapunov_nn.lyapunov_function.parameters(), lr=learning_rate)
+# print('optimizer\n', optimizer)
+# for name, param in lyapunov_nn.lyapunov_function.named_parameters():
+#     if param.requires_grad:
+#         print(name, param.data)
+# exit()
+############################# training loop #############################
+torch.autograd.set_detect_anomaly(True)
+print('Current metrics ...')
+c = lyapunov_nn.c_max
+num_safe = lyapunov_nn.safe_set.sum()
+print('Safe level (c_k): {}'.format(c))
+print('Safe set size: {} ({:.2f}% of grid, \
+        {:.2f}% of ROA)\n'.format(int(num_safe), \
+        100 * num_safe / grid.nindex, 100 * num_safe / roa.sum()))
+print('')
+time.sleep(0.5)
+for _ in range(outer_iters):
+    print('Iteration (k): {}'.format(len(c_max)))
+    time.sleep(0.5)
+
+    ## Identify the "gap" states, i.e., those between V(c_k) 
+    ## and V(a * c_k) for a > 1
+    c = lyapunov_nn.c_max
+    idx_small = lyapunov_nn.values.ravel() <= c
+    idx_big   = lyapunov_nn.values.ravel() <= level_multiplier * c
+    idx_gap   = np.logical_and(idx_big, ~idx_small)
+
+    ## Forward-simulate "gap" states to determine 
+    ## which ones we can add to our ROA estimate
+    gap_states = grid.all_points[idx_gap]
+    gap_future_values = np.zeros((gap_states.shape[0], 1))
+    for state_idx in range(gap_states.shape[0]):
+        # !! when using dynamics, the state can go out of the bound
+        for _ in range(horizon):
+            gap_states[state_idx] = np.reshape(cl_dynamics(gap_states[state_idx]), -1)
+        gap_future_values[state_idx] = (lyapunov_nn.lyapunov_function(\
+                                    gap_states[state_idx])).detach().numpy()
+    roa_estimate[idx_gap] |= (gap_future_values <= c).ravel()
+
+    ## Identify the class labels for our current ROA estimate 
+    ## and the expanded level set
+    target_idx = np.logical_or(idx_big, roa_estimate)
+    target_set = grid.all_points[target_idx]
+    target_labels = roa_estimate[target_idx]\
+                    .astype(OPTIONS.np_dtype).reshape([-1, 1])
+    print('target_labels\n', target_labels.T)
+    idx_range = target_set.shape[0]
+
+    ## test set
+    idx_test = np.random.randint(0, idx_range, size=(test_size, ))
+    test_set = target_set[idx_test]
+    test_labels = target_labels[idx_test]
+
+    # stochastic gradient descent for classification
+    for _ in range(inner_iters):
+        lyapunov_nn.lyapunov_function.train()
+        # training step
+        # safe_level = lyapunov_nn.c_max
+        idx_batch_eval = np.random.randint(0, idx_range, size=(batch_size, ))
+        training_states = target_set[idx_batch_eval]
+        num_training_states = training_states.shape[0]
+        print('training_states\n', training_states)
+        
+        # True class labels, converted from Boolean ROA labels {0, 1} to {-1, 1}
+        roa_labels = target_labels[idx_batch_eval]
+        class_label = 2 * roa_labels - 1
+        class_label = torch.tensor(class_label, dtype=torch.float32, device=myDevice)
+        # Signed, possibly normalized distance from the decision boundary
+        decision_distance_for_states = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice)                                                   
+        for state_idx in range(num_training_states):
+            decision_distance_for_states[state_idx] = lyapunov_nn.lyapunov_function(training_states[state_idx])
+        decision_distance = safe_level - decision_distance_for_states
+
+        # Perceptron loss with class weights
+        class_weights, class_counts = balanced_class_weights(roa_labels.astype(bool))
+        # convert class_weights to torch tensor
+        class_weights = torch.tensor(class_weights, dtype=torch.float32, device=myDevice)
+        classifier_loss = class_weights * torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
+
+        # Enforce decrease constraint with Lagrangian relaxation
+        # decrease_loss = roa_labels * tf.maximum(tf_dv_nn, 0) / tf.stop_gradient(tf_values_nn + OPTIONS.eps)
+        torch_dv_nn = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice)
+        for state_idx in range(num_training_states):
+            future_state = np.reshape(cl_dynamics(training_states[state_idx]), -1)
+            torch_dv_nn[state_idx] = lyapunov_nn.lyapunov_function(\
+                                future_state) - \
+                                lyapunov_nn.lyapunov_function(training_states[state_idx])
+
+        roa_labels = torch.tensor(roa_labels, dtype=torch.float32, device=myDevice).detach()
+        training_states_forwards = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice).detach()
+        for state_idx in range(num_training_states):
+            training_states_forwards[state_idx] = lyapunov_nn.lyapunov_function(training_states[state_idx])
+       
+        decrease_loss = roa_labels * torch.max(torch_dv_nn, torch.zeros_like(torch_dv_nn))  \
+                            # /(training_states_forwards + OPTIONS.eps)
+
+        loss = torch.mean(classifier_loss + lagrange_multiplier * decrease_loss)
+        print('loss\n', loss)
+        input('press enter to continue')
+        optimizer.zero_grad() # zero gradiants for every batch !!
+        # loss.backward()
+        loss.backward(retain_graph=True)
+        optimizer.step()
+    
+    ## Update Lyapunov values and ROA estimate, 
+    ## based on new parameter values
+    lyapunov_nn.update_values()  
+
+    lyapunov_nn.update_safe_set()
+    roa_estimate |= lyapunov_nn.safe_set
+
+    c_max.append(lyapunov_nn.c_max)
+    safe_set_fraction.append(lyapunov_nn.safe_set.sum() / grid.nindex)
+    print('Current safe level (c_k): {}'.format(c_max[-1]))
+    print('Safe set size: {} ({:.2f}% of grid, {:.2f}% of ROA)\n'.format(
+                            int(lyapunov_nn.safe_set.sum()), \
+                            100 * safe_set_fraction[-1], \
+                            100 * safe_set_fraction[-1] * roa.size / roa.sum()\
+                                ))
+
+print('c_max', c_max)
+print('safe_set_fraction', safe_set_fraction)
+
 ################################ plotting ################################
 fig = plt.figure(figsize=(8, 3), dpi=OPTIONS.dpi, frameon=False)
 fig.subplots_adjust(wspace=0.35)
@@ -190,10 +363,15 @@ colors[3] = (240/255, 228/255, 66/255)  # SOS - yellow
 
 # True ROA
 z = roa.reshape(grid.num_points)
-print(z.shape)
-print(z)
+# print(z.shape)
+# print(z)
 ax.contour(z.T, origin='lower', extent=plot_limits.ravel(), colors=(colors[0],), linewidths=1)
 ax.imshow(z.T, origin='lower', extent=plot_limits.ravel(), cmap=binary_cmap(colors[0]), alpha=alpha)
+
+# # Neural network
+z = lyapunov_nn.safe_set.reshape(grid.num_points)
+ax.contour(z.T, origin='lower', extent=plot_limits.ravel(), colors=(colors[1],), linewidths=1)
+ax.imshow(z.T, origin='lower', extent=plot_limits.ravel(), cmap=binary_cmap(colors[1]), alpha=alpha)
 
 # LQR
 z = lyapunov_lqr.safe_set.reshape(grid.num_points)
