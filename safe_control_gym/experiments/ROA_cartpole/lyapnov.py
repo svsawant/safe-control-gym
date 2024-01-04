@@ -5,6 +5,7 @@ import itertools
 import numpy as np
 import torch
 
+myDevice = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Add the configuration settings
 class Configuration(object):
@@ -15,7 +16,7 @@ class Configuration(object):
         super(Configuration, self).__init__()
 
         # Dtype for computations
-        self.dtype = torch.float64
+        self.dtype = torch.float32
         #######################################################################
         # Batch size for stability verification
         # TODO: change this back to 10000 in the future (by Mingxuan)
@@ -25,7 +26,7 @@ class Configuration(object):
     @property
     def np_dtype(self):
         """Return the numpy dtype."""
-        return np.float64
+        return np.float32
 
     def __repr__(self):
         """Print the parameters."""
@@ -63,6 +64,8 @@ class GridWorld(object):
         self.limits = np.atleast_2d(limits).astype(config.np_dtype)
         num_points = np.broadcast_to(num_points, len(self.limits))
         self.num_points = num_points.astype(np.int16, copy=False)
+        self.state_dim = len(self.limits)
+        # print('self.state_dim: ', self.state_dim)
 
         if np.any(self.num_points < 2):
             raise DimensionError('There must be at least 2 points in each '
@@ -99,10 +102,18 @@ class GridWorld(object):
 
         """
         if self._all_points is None:
-            # mesh = np.meshgrid(, indexing='ij')
-            mesh = np.stack(np.meshgrid(*self.discrete_points),-1).reshape(-1,4)
-            # each row of the mesh is a point in the stat space
+            # my own implementation
+            mesh = np.stack(np.meshgrid(*self.discrete_points),-1).reshape(-1,self.state_dim)
             self._all_points = mesh.astype(config.np_dtype)
+            # if self.all_points.shape[1] == 2:
+                # swap the first two columns
+                # self._all_points[:,[0,1]] = self._all_points[:,[1,0]]
+
+            # original implementation
+            # mesh = np.meshgrid(*self.discrete_points, indexing='ij')
+            # points = np.column_stack(col.ravel() for col in mesh)
+            # each row of the mesh is a point in the stat space
+            # self._all_points = points.astype(config.np_dtype)
 
         return self._all_points
 
@@ -284,6 +295,78 @@ class GridWorld(object):
                                                self.num_points - 1))
         return np.ravel_multi_index(np.atleast_2d(ijk_index),
                                     self.num_points)
+
+class QuadraticFunction(object):
+    """A quadratic function.
+
+    values(x) = x.T P x
+
+    Parameters
+    ----------
+    matrix : np.array
+        2d cost matrix for lyapunov function.
+
+    """
+    def __init__(self, matrix):
+        """Initialization, see `QuadraticLyapunovFunction`."""
+        super(QuadraticFunction, self).__init__()
+
+        self.matrix = np.atleast_2d(matrix).astype(config.np_dtype)
+        # print('self.matrix\n',self.matrix)
+        self.ndim = self.matrix.shape[0]
+        # with tf.variable_scope(self.scope_name):
+        #     self.matrix = tf.Variable(self.matrix)
+
+    def __call__(self, *args, **kwargs):
+        """Evaluate the function using the template to ensure variable sharing.
+
+        Parameters
+        ----------
+        args : list
+            The input arguments to the function.
+        kwargs : dict, optional
+            The keyword arguments to the function.
+
+        Returns
+        -------
+        outputs : list
+            The output arguments of the function as given by evaluate.
+
+        """
+        
+        outputs = self.forward(*args, **kwargs)
+        return outputs
+    
+    def forward(self, points):
+        """Like evaluate, but returns a tensor instead."""
+        if isinstance(points, np.ndarray):
+            points = torch.from_numpy(points).float()
+        # linear_form = tf.matmul(points, self.matrix)
+        # print('points\n', points)
+        # print('points shape\n', points.shape)
+        # print('points type\n', type(points))
+        # convert points to np array
+        if isinstance(points, torch.Tensor):
+            points = points.detach().numpy()
+            points = np.reshape(points, [-1])
+        # print('points\n', points)
+        # reshape points to 1d array  
+        
+        linear_form = points @ self.matrix
+        quadratic = linear_form @ points.T
+        # return tf.reduce_sum(quadratic, axis=1, keepdims=True)
+        # print('quadratic\n',quadratic)
+        return torch.tensor(quadratic)
+
+    def gradient(self, points):
+        """Return the gradient of the function."""
+        if isinstance(points, np.ndarray):
+            points = torch.from_numpy(points).float()
+        # return tf.matmul(points, self.matrix + self.matrix.T)
+        return torch.matmul(torch.tensor(points, dtype=config.dtype), \
+                            torch.tensor(self.matrix + self.matrix.T, dtype=config.dtype))
+
+
 class LyapunovNN(torch.nn.Module):
     # def __init__(self, dim_input, layer_dims, activations):
     def __init__(self, input_dim, layer_dims, activations, eps=1e-6):
@@ -333,7 +416,7 @@ class LyapunovNN(torch.nn.Module):
                 kernel = torch.cat((kernel,self.layers[-1].weight), dim=0)
             layer_output = torch.matmul(kernel, x)
             x = self.activations[i](layer_output)
-        values = torch.sum(torch.square(x), dim=0)
+        values = torch.sum(torch.square(x), dim=-1)
         return values
 
     def print_params(self):
@@ -395,6 +478,12 @@ class Lyapunov(object):
 
         self.initial_safe_set = initial_set
         if initial_set is not None:
+            # print('initial safe set\n', initial_set)
+            # print('initial safe set shape\n', initial_set.shape)
+            # print('initial safe set type\n', type(initial_set))
+            # print('self.safe_set\n', self.safe_set)
+            # print('self.safe_set shape\n', self.safe_set.shape)
+            # print('self.safe_set type\n', type(self.safe_set))
             self.safe_set[initial_set] = True
 
         # Discretization constant
@@ -435,7 +524,7 @@ class Lyapunov(object):
         """Update the discretized values when the Lyapunov function changes."""
         values = np.zeros(self.discretization.nindex)
         for i in range(self.discretization.nindex):
-            values[i] = self.lyapunov_function.forward(\
+            values[i] = self.lyapunov_function(\
                              self.discretization.all_points[i]).squeeze()
         self.values = values
 
@@ -460,120 +549,12 @@ class Lyapunov(object):
 
         """
         safety_factor = np.maximum(safety_factor, 1.)
-        # storage = get_storage(self._storage)
 
-        # if storage is None:
-        #     # Placeholder for states to evaluate for safety
-        #     tf_states = tf.placeholder(config.dtype,
-        #                                shape=[None, self.discretization.ndim],
-        #                                name='verification_states')
-        #     actions = self.policy(tf_states)
-        #     next_states = self.dynamics(tf_states, actions)
-        # torch_states = lambda x: torch.tensor(x, dtype=config.dtype)
         np_states = lambda x: np.array(x, dtype=config.dtype)
-            # decrease = self.v_decrease_bound(tf_states, next_states)
-        decrease = lambda x: self.v_decrease_bound(x, self.dynamics(x, self.policy(x)))
-            # threshold = self.threshold(tf_states, self.tau)
+        # decrease = lambda x: self.v_decrease_bound(x, self.dynamics(x, self.policy(x)))
+        decrease = lambda x: self.v_decrease_bound(x, self.dynamics(x))
         threshold = lambda x: self.threshold(x, self.tau)
-            # tf_negative = tf.squeeze(tf.less(decrease, threshold), axis=1)
-            # torch_negative = torch.squeeze(decrease < threshold, dim=1)
-        # torch_negative = lambda x: torch.squeeze(decrease(x) < threshold(x), dim=1)
         np_negative = lambda x: np.squeeze(decrease(x) < threshold(x), axis=0)
-        
-        #     storage = [('states', tf_states), ('negative', tf_negative)]
-
-        
-        # Compute an integer n such that dv < threshold for tau / n
-        # ratio = lambda x: safety_factor * threshold(x) / decrease(x)
-        # # If dv = 0, check for nan values, and clip to n = 0
-        # # tf_n_req = tf.where(tf.is_nan(ratio),
-        # #                     tf.zeros_like(ratio), ratio)
-        # torch_n_req = lambda x: torch.where(torch.isnan(ratio(x)),
-        #                             torch.zeros_like(ratio(x)), ratio(x))
-        # # Edge case: ratio = 1 should correspond to n = 2
-        # # TODO
-        # # If dv < 0, also clip to n = 0
-        # # tf_n_req = tf.ceil(tf.maximum(tf_n_req, 0))
-        # torch_n_req = lambda x: torch.ceil(torch.maximum(torch_n_req(x), 0))
-        # dim = int(self.discretization.ndim)
-        # lengths = self.discretization.unit_maxes.reshape((-1, 1))
-
-        # def refined_safety_check(data):
-        #     """Verify decrease condition in a locally refined grid."""
-        #     # convert data to torch tensor
-        #     data = torch.tensor(data, dtype=config.dtype)
-        #     # center = tf.reshape(data[:-1], [1, dim])
-        #     center = torch.reshape(data[:-1], [1, dim])
-        #     # n_req = tf.cast(data[-1], tf.int32)
-        #     n_req = torch.tensor(data[-1], dtype=torch.int32)
-
-
-        #     # start = tf.constant(-1., dtype=config.dtype)
-        #     start = torch.tensor(-1., dtype=config.dtype)
-        #     # spacing = tf.reshape(tf.linspace(start, 1., n_req),
-        #                             # [1, -1])
-        #     spacing = torch.reshape(torch.linspace(start, 1., n_req),
-        #                             [1, -1])
-        #     # border = (0.5 * (1 - 1 / n_req) * lengths *
-        #     #             tf.tile(spacing, [dim, 1]))
-        #     border = (0.5 * (1 - 1 / n_req) * lengths *
-        #                 torch.tile(spacing, [dim, 1]))
-        #     # mesh = tf.meshgrid(*tf.unstack(border), indexing='ij')
-        #     mesh = torch.stack(torch.meshgrid(*torch.unbind(border)), dim=-1)
-        #     # points = tf.stack([tf.reshape(col, [-1]) for col in mesh],
-        #                         # axis=1)
-        #     points = torch.stack([torch.reshape(col, [-1]) for col in mesh],
-        #                         dim=1)
-        #     points += center
-
-        #     refined_threshold = self.threshold(center,
-        #                                         self.tau / n_req)
-        #     # negative = tf.less(decrease, refined_threshold)
-        #     negative = decrease(points) < refined_threshold
-
-        #     # refined_negative = tf.reduce_all(negative)
-        #     refined_negative = torch.all(negative)
-        #     return refined_negative
-
-        # # tf_refinement = tf.placeholder(tf.int32, [None, 1],
-        # #                                        'refinement')
-        # torch_refinement = lambda x: torch.tensor(x, dtype=torch.int32)
-        # # data = tf.concat([tf_states, tf.cast(tf_refinement,
-        # #                                         config.dtype)], axis=1)
-        # data = lambda x, y: torch.cat((x, y), dim=0) 
-        # # tf_refined_negative = tf.map_fn(refined_safety_check, data,
-        # #                                 tf.bool, parallel_iterations)
-        # # do refinement for all the state in grids
-        # torch_refined_negative = torch.zeros(self.discretization.nindex, dtype=torch.bool)
-        # for state_index in range(self.discretization.nindex):
-        #     # print('state_index\n', state_index)
-        #     # torch_refined_option = torch_refinement(self._refinement[state_index])
-        #     # candidate_state = torch_states(self.discretization.all_points[state_index])
-        #     # # print the size 
-        #     # print('candidate_state size\n', candidate_state.shape)
-        #     # print('torch_refined_option size\n', torch_refined_option.shape)
-        #     # # reshape the refined option from zero dim to one dim
-        #     # torch_refined_option = torch.reshape(torch_refined_option, [1]) 
-        #     # print('torch_refined_option size\n', torch_refined_option.shape)
-        #     # # match the size and concatenate
-        #     # cat_result = data(candidate_state, torch_refined_option)
-        #     # print('cat_result\n', cat_result)
-        #     torch_refined_negative[state_index] = refined_safety_check(\
-        #         data(torch_states(self.discretization.all_points[state_index]), \
-        #              torch_refinement(self._refinement[state_index]).reshape([1])))
-        # #         storage += [('n_req', tf_n_req), ('refinement', tf_refinement),
-        # #                     ('refined_negative', tf_refined_negative)]
-
-        # #     set_storage(self._storage, storage)
-        # # else:
-        # #     if self.adaptive:
-        # #         (tf_states, tf_negative, tf_n_req, tf_refinement,
-        # #          tf_refined_negative) = storage.values()
-        # #     else:
-        # #         tf_states, tf_negative = storage.values()
-
-        # # # Get relevant properties
-        # # feed_dict = self.feed_dict
 
         if can_shrink:
             # Reset the safe set and adaptive discretization
@@ -639,52 +620,6 @@ class Lyapunov(object):
 
             # Check if there are unsafe elements in the batch
             if bound > 0 or not safe_batch[0]:
-                # if self.adaptive and max_refinement > 1:
-                #     # Compute required adaptive refinement
-                #     torch_state = torch_state[bound:]
-                #     refine_batch[bound:] = torch_n_req(torch_state)
-
-                #     # We do not need to refine cells that correspond to known
-                #     # safe states
-                #     idx_safe = np.logical_or(negative,
-                #                              self.initial_safe_set[indices])
-                #     refine_batch[idx_safe] = 1
-
-                #     # Identify cells to refine
-                #     states_to_check = np.logical_and(refine_batch >= 1,
-                #                                      refine_batch <=
-                #                                      max_refinement)
-                #     states_to_check = states_to_check[bound:]
-
-                #     if np.all(states_to_check):
-                #         stop = len(states_to_check)
-                #     else:
-                #         stop = np.argmin(states_to_check)
-
-                #     if stop > 0:
-                #         torch_state = states[bound:bound + stop]
-                #         torch_refinement = refine_batch[bound:
-                #                                                 bound + stop,
-                #                                                 None]
-                #         # refined_safe = tf_refined_negative.eval(feed_dict)
-                #         refined_safe = torch_refined_negative(torch_state, torch_refinement)
-
-                #         # Determine which states are safe under the refined
-                #         # discretization
-                #         if np.all(refined_safe):
-                #             refine_bound = len(refined_safe)
-                #         else:
-                #             refine_bound = np.argmin(refined_safe)
-                #         safe_batch[bound:bound + refine_bound] = True
-
-                #     # Break if the refined discretization does not work for all
-                #     # states after `bound`
-                #     if stop < len(states_to_check) or refine_bound < stop:
-                #         safe_batch[bound + refine_bound:] = False
-                #         refine_batch[bound + refine_bound:] = 0
-                #         break
-                # else:
-                    # Make sure all following points are labeled as unsafe
                     safe_batch[bound:] = False
                     refine_batch[bound:] = 0
                     break
@@ -695,9 +630,6 @@ class Lyapunov(object):
         #######################################################################
 
         # Set placeholder for c_max to the corresponding value
-        # feed_dict[self.c_max] = self.values[value_order[max_index]]
-        # print('self.values\n', self.values)
-        # print('value_order\n', value_order)
         self.c_max = self.values[value_order[max_index]]
 
         # Restore the order of the safe set and adaptive refinement
@@ -792,9 +724,10 @@ class Lyapunov(object):
         """
         if isinstance(next_states, Sequence):
             next_states, error_bounds = next_states
-            lv = self.lipschitz_lyapunov(next_states)
+            lv = self._lipschitz_lyapunov(next_states)
             # bound = tf.reduce_sum(lv * error_bounds, axis=1, keepdims=True)
-            bound = torch.sum(lv * error_bounds, dim=1, keepdim=True)
+            # bound = torch.sum(lv * error_bounds, dim=1, keepdim=True)
+            bound = np.sum(lv * error_bounds, axis=1, keepdims=True)
         else:
             # bound = tf.constant(0., dtype=config.dtype)
             bound = torch.tensor(0., dtype=config.dtype)
@@ -842,3 +775,256 @@ def batchify(arrays, batch_size):
             yield i, batches
         else:
             break
+
+class GridWorld_pendulum(object):
+    """Base class for function approximators on a regular grid.
+
+    Parameters
+    ----------
+    limits: 2d array-like
+        A list of limits. For example, [(x_min, x_max), (y_min, y_max)]
+    num_points: 1d array-like
+        The number of points with which to grid each dimension.
+
+    NOTE: in original Lyapunov NN, the grid is defined in a normalized 
+          fashion (i.e. [-1, 1] for each dimension)
+    """
+
+    def __init__(self, limits, num_points):
+        """Initialization, see `GridWorld`."""
+        super(GridWorld_pendulum, self).__init__()
+
+        self.limits = np.atleast_2d(limits).astype(config.np_dtype)
+        num_points = np.broadcast_to(num_points, len(self.limits))
+        self.num_points = num_points.astype(np.int16, copy=False)
+        self.state_dim = len(self.limits)
+        # print('self.state_dim: ', self.state_dim)
+
+        if np.any(self.num_points < 2):
+            raise DimensionError('There must be at least 2 points in each '
+                                 'dimension.')
+
+        # Compute offset and unit hyperrectangle
+        self.offset = self.limits[:, 0]
+        self.unit_maxes = ((self.limits[:, 1] - self.offset)
+                           / (self.num_points - 1)).astype(config.np_dtype)
+        self.offset_limits = np.stack((np.zeros_like(self.limits[:, 0]),
+                                       self.limits[:, 1] - self.offset),
+                                      axis=1)
+
+        # Statistics about the grid
+        self.discrete_points = [np.linspace(low, up, n, dtype=config.np_dtype)
+                                for (low, up), n in zip(self.limits,
+                                                        self.num_points)]
+
+        self.nrectangles = np.prod(self.num_points - 1)
+        self.nindex = np.prod(self.num_points)
+
+        self.ndim = len(self.limits)
+        self._all_points = None
+
+    @property
+    def all_points(self):
+        """Return all the discrete points of the discretization.
+
+        Returns
+        -------
+        points : ndarray
+            An array with all the discrete points with size
+            (self.nindex, self.ndim).
+
+        """
+        if self._all_points is None:
+            # my own implementation
+            mesh = np.stack(np.meshgrid(*self.discrete_points),-1).reshape(-1,self.state_dim)
+            self._all_points = mesh.astype(config.np_dtype)
+            if self.all_points.shape[1] == 2:
+                # swap the first two columns
+                self._all_points[:,[0,1]] = self._all_points[:,[1,0]]
+
+            # original implementation
+            # mesh = np.meshgrid(*self.discrete_points, indexing='ij')
+            # points = np.column_stack(col.ravel() for col in mesh)
+            # each row of the mesh is a point in the stat space
+            # self._all_points = points.astype(config.np_dtype)
+
+        return self._all_points
+
+    def __len__(self):
+        """Return the number of points in the discretization."""
+        return self.nindex
+
+    def sample_continuous(self, num_samples):
+        """Sample uniformly at random from the continuous domain.
+
+        Parameters
+        ----------
+        num_samples : int
+
+        Returns
+        -------
+        points : ndarray
+            Random points on the continuous rectangle.
+
+        """
+        limits = self.limits
+        rand = np.random.uniform(0, 1, size=(num_samples, self.ndim))
+        return rand * np.diff(limits, axis=1).T + self.offset
+
+    def sample_discrete(self, num_samples, replace=False):
+        """Sample uniformly at random from the discrete domain.
+
+        Parameters
+        ----------
+        num_samples : int
+        replace : bool, optional
+            Whether to sample with replacement.
+
+        Returns
+        -------
+        points : ndarray
+            Random points on the continuous rectangle.
+
+        """
+        idx = np.random.choice(self.nindex, size=num_samples, replace=replace)
+        return self.index_to_state(idx)
+
+    def _check_dimensions(self, states):
+        """Raise an error if the states have the wrong dimension.
+
+        Parameters
+        ----------
+        states : ndarray
+
+        """
+        if not states.shape[1] == self.ndim:
+            raise DimensionError('the input argument has the wrong '
+                                 'dimensions.')
+
+    def _center_states(self, states, clip=True):
+        """Center the states to the interval [0, x].
+
+        Parameters
+        ----------
+        states : np.array
+        clip : bool, optinal
+            If False the data is not clipped to lie within the limits.
+
+        Returns
+        -------
+        offset_states : ndarray
+
+        """
+        states = np.atleast_2d(states).astype(config.np_dtype)
+        states = states - self.offset[None, :]
+        if clip:
+            np.clip(states,
+                    self.offset_limits[:, 0] + 2 * _EPS,
+                    self.offset_limits[:, 1] - 2 * _EPS,
+                    out=states)
+        return states
+
+    def index_to_state(self, indices):
+        """Convert indices to physical states.
+
+        Parameters
+        ----------
+        indices : ndarray (int)
+            The indices of points on the discretization.
+
+        Returns
+        -------
+        states : ndarray
+            The states with physical units that correspond to the indices.
+
+        """
+        indices = np.atleast_1d(indices)
+        ijk_index = np.vstack(np.unravel_index(indices, self.num_points)).T
+        ijk_index = ijk_index.astype(config.np_dtype)
+        return ijk_index * self.unit_maxes + self.offset
+
+    def state_to_index(self, states):
+        """Convert physical states to indices.
+
+        Parameters
+        ----------
+        states: ndarray
+            Physical states on the discretization.
+
+        Returns
+        -------
+        indices: ndarray (int)
+            The indices that correspond to the physical states.
+
+        """
+        states = np.atleast_2d(states)
+        self._check_dimensions(states)
+        states = np.clip(states, self.limits[:, 0], self.limits[:, 1])
+        states = (states - self.offset) * (1. / self.unit_maxes)
+        ijk_index = np.rint(states).astype(np.int32)
+        return np.ravel_multi_index(ijk_index.T, self.num_points)
+
+    def state_to_rectangle(self, states):
+        """Convert physical states to its closest rectangle index.
+
+        Parameters
+        ----------
+        states : ndarray
+            Physical states on the discretization.
+
+        Returns
+        -------
+        rectangles : ndarray (int)
+            The indices that correspond to rectangles of the physical states.
+
+        """
+        ind = []
+        for i, (discrete, num_points) in enumerate(zip(self.discrete_points,
+                                                       self.num_points)):
+            idx = np.digitize(states[:, i], discrete)
+            idx -= 1
+            np.clip(idx, 0, num_points - 2, out=idx)
+
+            ind.append(idx)
+        return np.ravel_multi_index(ind, self.num_points - 1)
+
+    def rectangle_to_state(self, rectangles):
+        """
+        Convert rectangle indices to the states of the bottem-left corners.
+
+        Parameters
+        ----------
+        rectangles : ndarray (int)
+            The indices of the rectangles
+
+        Returns
+        -------
+        states : ndarray
+            The states that correspond to the bottom-left corners of the
+            corresponding rectangles.
+
+        """
+        rectangles = np.atleast_1d(rectangles)
+        ijk_index = np.vstack(np.unravel_index(rectangles,
+                                               self.num_points - 1))
+        ijk_index = ijk_index.astype(config.np_dtype)
+        return (ijk_index.T * self.unit_maxes) + self.offset
+
+    def rectangle_corner_index(self, rectangles):
+        """Return the index of the bottom-left corner of the rectangle.
+
+        Parameters
+        ----------
+        rectangles: ndarray
+            The indices of the rectangles.
+
+        Returns
+        -------
+        corners : ndarray (int)
+            The indices of the bottom-left corners of the rectangles.
+
+        """
+        ijk_index = np.vstack(np.unravel_index(rectangles,
+                                               self.num_points - 1))
+        return np.ravel_multi_index(np.atleast_2d(ijk_index),
+                                    self.num_points)

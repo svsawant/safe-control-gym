@@ -3,9 +3,16 @@
 
 import numpy as np
 from matplotlib.colors import ListedColormap
+import scipy.linalg
+from scipy import signal
+import torch
 
 from lyapnov import GridWorld
 from safe_control_gym.experiments.base_experiment import BaseExperiment
+from lyapnov import config
+
+NP_DTYPE = config.np_dtype
+TF_DTYPE = config.dtype
 
 def gridding(state_dim, state_constraints, num_states = 251, use_zero_threshold = True):
     ''' evenly discretize the state space
@@ -130,3 +137,347 @@ def balanced_class_weights(y_true, scale_by_total=True):
 
     return weights, class_counts
 
+def dlqr(a, b, q, r):
+    """Compute the discrete-time LQR controller.
+
+    The optimal control input is `u = -k.dot(x)`.
+
+    Parameters
+    ----------
+    a : np.array
+    b : np.array
+    q : np.array
+    r : np.array
+
+    Returns
+    -------
+    k : np.array
+        Controller matrix
+    p : np.array
+        Cost to go matrix
+    """
+    a, b, q, r = map(np.atleast_2d, (a, b, q, r))
+    p = scipy.linalg.solve_discrete_are(a, b, q, r)
+
+    # LQR gain
+    # k = (b.T * p * b + r)^-1 * (b.T * p * a)
+    bp = b.T.dot(p)
+    tmp1 = bp.dot(b)
+    tmp1 += r
+    tmp2 = bp.dot(a)
+    k = np.linalg.solve(tmp1, tmp2)
+
+    return k, p
+
+def discretize_linear_system(A, B, dt, exact=False):
+    '''Discretization of a linear system
+
+    dx/dt = A x + B u
+    --> xd[k+1] = Ad xd[k] + Bd ud[k] where xd[k] = x(k*dt)
+
+    Args:
+        A (ndarray): System transition matrix.
+        B (ndarray): Input matrix.
+        dt (scalar): Step time interval.
+        exact (bool): If to use exact discretization.
+
+    Returns:
+        Ad (ndarray): The discrete linear state matrix A.
+        Bd (ndarray): The discrete linear input matrix B.
+    '''
+
+    state_dim, input_dim = A.shape[1], B.shape[1]
+
+    if exact:
+        M = np.zeros((state_dim + input_dim, state_dim + input_dim))
+        M[:state_dim, :state_dim] = A
+        M[:state_dim, state_dim:] = B
+
+        Md = scipy.linalg.expm(M * dt)
+        Ad = Md[:state_dim, :state_dim]
+        Bd = Md[:state_dim, state_dim:]
+    else:
+        Identity = np.eye(state_dim)
+        Ad = Identity + A * dt
+        Bd = B * dt
+
+    return Ad, Bd
+
+def get_discrete_linear_system_matrices(model, x_0, u_0):
+    '''Get discrete linear system matrices for a given model.
+
+    Args:
+        model (ctrl.model)
+        x_0 (ndarray): The initial state.
+        u_0 (ndarray): The initial input.
+
+    Returns:
+        A (ndarray): The discrete linear state matrix A.
+        B (ndarray): The discrete linear input matrix B.
+    '''
+
+    # Linearization.
+    df = model.df_func(x_0, u_0)
+    A, B = df[0].toarray(), df[1].toarray()
+
+    # Discretize.
+    A, B = discretize_linear_system(A, B, model.dt)
+
+    return A, B
+
+def onestep_dynamics(x, env_func, ctrl):
+    ''' one-step forward dynamics '''
+    # get the format of the initial state
+    random_env = env_func(gui=False)
+    init_state_dict = {'init_x': x[0], 'init_x_dot': x[1], \
+                        'init_theta': x[2], 'init_theta_dot': x[3]}
+    init_state, _ = random_env.reset(init_state = init_state_dict)
+    static_env = env_func(gui=False, random_state=False, init_state=init_state)
+    static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
+    experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
+    trajs_data, _ = experiment.run_evaluation(training=False, n_steps=1, verbose=False)
+    x = trajs_data['obs'][0][-1]
+    static_env.close()
+    static_train_env.close()
+    random_env.close()
+
+    return x  
+
+
+
+class InvertedPendulum(object):
+    """Inverted Pendulum.
+
+    Parameters
+    ----------
+    mass : float
+    length : float
+    friction : float, optional
+    dt : float, optional
+        The sampling time.
+    normalization : tuple, optional
+        A tuple (Tx, Tu) of arrays used to normalize the state and actions. It
+        is so that diag(Tx) *x_norm = x and diag(Tu) * u_norm = u.
+
+    """
+
+    def __init__(self, mass, length, friction=0, dt=1 / 80,
+                 normalization=None):
+        """Initialization; see `InvertedPendulum`."""
+        super(InvertedPendulum, self).__init__()
+        self.mass = mass
+        self.length = length
+        self.gravity = 9.81
+        self.friction = friction
+        self.dt = dt
+
+        self.normalization = normalization
+        if normalization is not None:
+            self.normalization = [np.array(norm, dtype=config.np_dtype)
+                                  for norm in normalization]
+            self.inv_norm = [norm ** -1 for norm in self.normalization]
+
+    def __call__(self, *args, **kwargs):
+        """Evaluate the function using the template to ensure variable sharing.
+
+        Parameters
+        ----------
+        args : list
+            The input arguments to the function.
+        kwargs : dict, optional
+            The keyword arguments to the function.
+
+        Returns
+        -------
+        outputs : list
+            The output arguments of the function as given by evaluate.
+
+        """
+        
+        outputs = self.forward(*args, **kwargs)
+        return outputs
+
+    @property
+    def inertia(self):
+        """Return inertia of the pendulum."""
+        return self.mass * self.length ** 2
+
+    def normalize(self, state, action):
+        """Normalize states and actions."""
+        if self.normalization is None:
+            return state, action
+
+        Tx_inv, Tu_inv = map(np.diag, self.inv_norm)
+        # if isinstance(Tx_inv, np.ndarray):
+        #     Tx_inv = torch.from_numpy(Tx_inv)
+        # if isinstance(Tu_inv, np.ndarray):
+        #     Tu_inv = torch.from_numpy(Tu_inv)
+        # state = tf.matmul(state, Tx_inv)
+        # state = torch.matmul(state, Tx_inv)
+        state = np.matmul(state, Tx_inv)
+
+        if action is not None:
+            # action = tf.matmul(action, Tu_inv)
+            # action = torch.matmul(action, Tu_inv)
+            action = np.matmul(action, Tu_inv)
+
+        return state, action
+
+    def denormalize(self, state, action):
+        """De-normalize states and actions."""
+        if self.normalization is None:
+            return state, action
+
+        Tx, Tu = map(np.diag, self.normalization)
+
+        # state = tf.matmul(state, Tx)
+        # convert to torch
+        # if isinstance(Tx, np.ndarray):
+        #     Tx = torch.from_numpy(Tx)
+        # if isinstance(Tu, np.ndarray):
+        #     Tu = torch.from_numpy(Tu)
+
+        # state = torch.matmul(state, Tx)
+        state = np.matmul(state, Tx)
+        if action is not None:
+            # action = tf.matmul(action, Tu)
+            # action = torch.matmul(action, Tu)
+            action = np.matmul(action, Tu)
+
+        return state, action
+
+    def linearize(self):
+        """Return the linearized system.
+
+        Returns
+        -------
+        a : ndarray
+            The state matrix.
+        b : ndarray
+            The action matrix.
+
+        """
+        gravity = self.gravity
+        length = self.length
+        friction = self.friction
+        inertia = self.inertia
+
+        A = np.array([[0, 1],
+                      [gravity / length, -friction / inertia]],
+                     dtype=config.np_dtype)
+
+        B = np.array([[0],
+                      [1 / inertia]],
+                     dtype=config.np_dtype)
+
+        if self.normalization is not None:
+            Tx, Tu = map(np.diag, self.normalization)
+            Tx_inv, Tu_inv = map(np.diag, self.inv_norm)
+
+            A = np.linalg.multi_dot((Tx_inv, A, Tx))
+            B = np.linalg.multi_dot((Tx_inv, B, Tu))
+
+        sys = signal.StateSpace(A, B, np.eye(2), np.zeros((2, 1)))
+        sysd = sys.to_discrete(self.dt)
+        return sysd.A, sysd.B
+
+    # @concatenate_inputs(start=1)
+    def forward(self, state_action):
+        """Evaluate the dynamics."""
+        # Denormalize
+        # state, action = tf.split(state_action, [2, 1], axis=1)
+        # state, action = torch.split(state_action, [2, 1], dim=0)
+        # print('np.split(state_action, [2, 1], axis=0)', np.split(state_action, [2], axis=0))
+        state, action = np.split(state_action, [2], axis=0) 
+        state, action = self.denormalize(state, action)
+
+        n_inner = 10
+        dt = self.dt / n_inner
+        for i in range(n_inner):
+            state_derivative = self.ode(state, action)
+            state = state + dt * state_derivative
+
+        return self.normalize(state, None)[0]
+
+    def ode(self, state, action):
+        """Compute the state time-derivative.
+
+        Parameters
+        ----------
+        states: ndarray or Tensor
+            Unnormalized states.
+        actions: ndarray or Tensor
+            Unnormalized actions.
+
+        Returns
+        -------
+        x_dot: Tensor
+            The normalized derivative of the dynamics
+
+        """
+        # Physical dynamics
+        gravity = self.gravity
+        length = self.length
+        friction = self.friction
+        inertia = self.inertia
+
+        # angle, angular_velocity = tf.split(state, 2, axis=1)
+        # print('state', state)
+        # print('split result', torch.split(state, 1, dim=0))
+        # print('np.split(state, [1], axis=0)', np.split(state, [1], axis=-1))
+        # angle, angular_velocity = torch.split(state, 1, dim=-1)
+        angle, angular_velocity = np.split(state, [1], axis=-1)
+
+        # x_ddot = gravity / length * tf.sin(angle) + action / inertia
+        # x_ddot = gravity / length * torch.sin(angle) + action / inertia
+        x_ddot = gravity / length * np.sin(angle) + action / inertia
+
+        if friction > 0:
+            x_ddot -= friction / inertia * angular_velocity
+
+        # state_derivative = tf.concat((angular_velocity, x_ddot), axis=1)
+        # state_derivative = torch.cat((angular_velocity, x_ddot), dim=-1)
+        state_derivative = np.concatenate((angular_velocity, x_ddot), axis=-1)
+
+        # Normalize
+        return state_derivative
+    
+
+def compute_roa_pendulum(grid, closed_loop_dynamics, horizon=100, tol=1e-3, equilibrium=None, no_traj=True):
+    """Compute the largest ROA as a set of states in a discretization."""
+    if isinstance(grid, np.ndarray):
+        all_points = grid
+        nindex = grid.shape[0]
+        ndim = grid.shape[1]
+    else: # grid is a GridWorld instance
+        all_points = grid.all_points
+        nindex = grid.nindex
+        ndim = grid.ndim
+
+    # Forward-simulate all trajectories from initial points in the discretization
+    if no_traj:
+        end_states = all_points
+        for t in range(1, horizon):
+            end_states = closed_loop_dynamics(end_states)
+    else:
+        trajectories = np.empty((nindex, ndim, horizon))
+        trajectories[:, :, 0] = all_points
+        for t in range(1, horizon):
+            # print('trajectories[:, :, t - 1]', trajectories[1, :, t - 1])
+            # print('trajectories[:, :, t - 1].shape', trajectories[1, :, t - 1].shape)
+            # simulate all states in the grid
+            for state_index in range(nindex):
+                trajectories[state_index, :, t] = closed_loop_dynamics(trajectories[state_index, :, t - 1])
+               
+        end_states = trajectories[:, :, -1]
+
+    if equilibrium is None:
+        equilibrium = np.zeros((1, ndim))
+
+    # Compute an approximate ROA as all states that end up "close" to 0
+    dists = np.linalg.norm(end_states - equilibrium, ord=2, axis=1, keepdims=True).ravel()
+    roa = (dists <= tol)
+    if no_traj:
+        return roa
+    else:
+        return roa, trajectories
