@@ -10,18 +10,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FormatStrFormatter
 
-# from safe_control_gym.envs.benchmark_env import Task
-# from safe_control_gym.experiments.base_experiment import BaseExperiment
-# from safe_control_gym.utils.configuration import ConfigFactory
-# from safe_control_gym.utils.registration import make
-
-
 from safe_control_gym.experiments.ROA_cartpole.utilities import *
 from lyapnov import LyapunovNN, Lyapunov, QuadraticFunction, GridWorld_pendulum
 from utilities import balanced_class_weights, dlqr, \
                       get_discrete_linear_system_matrices, onestep_dynamics
 
 np.set_printoptions(threshold=sys.maxsize) # np print full array
+torch.autograd.set_detect_anomaly(True)
 
 class Options(object):
     def __init__(self, **kwargs):
@@ -43,7 +38,9 @@ OPTIONS = Options(np_dtype              = np.float32,
 # detect torch device
 myDevice = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 myDevice = torch.device("cpu")
-# Constants
+
+
+#################################### Constants ####################################
 dt = 0.01   # sampling time
 g = 9.81    # gravity
 
@@ -67,6 +64,7 @@ action_dim    = 1
 state_limits  = np.array([[-1., 1.]] * state_dim)
 action_limits = np.array([[-1., 1.]] * action_dim)
 
+############################### System dynamics ################################
 # Initialize system class and its linearization
 pendulum = InvertedPendulum(m, L, b, dt, [state_norm, action_norm])
 A, B = pendulum.linearize()
@@ -75,32 +73,16 @@ A, B = pendulum.linearize()
 # dynamics = pendulum.__call__
 dynamics = pendulum.__call__
 
-# # test dynamics with state [0.5, 0] and action [0.5]
-# x = torch.tensor([0.5, 0.], dtype=OPTIONS.torch_dtype)
-# u = torch.tensor([-0.5], dtype=OPTIONS.torch_dtype)
-# x = np.array([0.5, 0.])
-# u = np.array([-0.5])
-# print("x: ", x)
-# print("u: ", u)
-# state_action = np.concatenate([x, u])
-# state_action = torch.cat([x, u])
-# print("state_action: ", state_action)
-
-# x_next = dynamics(state_action)
-# print("x_next: ", x_next)
-# assert x_next.shape == x.shape
-# print("Dynamics shape test passed!")
-
+############################### Discretization ################################
 state_constraints = np.array([[-theta_max, theta_max], [-omega_max, omega_max]])
-
-print('state_constraints: ', state_constraints)
+# print('state_constraints: ', state_constraints)
 num_states = 100
 
 grid_limits = np.array([[-1., 1.], ] * state_dim)
 # state_discretization = gridding(state_dim, state_constraints=None, num_states = 100)
 state_discretization = GridWorld_pendulum(grid_limits, num_states)
 # state_discretization = gridding(state_dim, state_constraints, num_states = 100)
-print('state_discretization.all_points.shape: ', state_discretization.all_points.shape)
+# print('state_discretization.all_points.shape: ', state_discretization.all_points.shape)
 
 # Discretization constant
 if OPTIONS.use_zero_threshold:
@@ -114,51 +96,40 @@ print('Discretization constant (tau): {}'.format(tau))
 # Set initial safe set as a ball around the origin (in normalized coordinates)
 cutoff_radius    = 0.1
 initial_safe_set = np.linalg.norm(state_discretization.all_points, ord=2, axis=1) <= cutoff_radius
-print('state_discretization.all_points.shape: ', state_discretization.all_points.shape)
-print('initial_safe_set.sum(): ', initial_safe_set.shape)
+# print('state_discretization.all_points.shape: ', state_discretization.all_points.shape)
+# print('initial_safe_set.sum(): ', initial_safe_set.shape)
 
+########################## define LQR policy ##############################
 Q = np.identity(state_dim).astype(OPTIONS.np_dtype)     # state cost matrix
 Q = np.diag([5, 1])
 R = 1* np.identity(action_dim).astype(OPTIONS.np_dtype)    # action cost matrix
-# K, P_lqr = safe_learning.utilities.dlqr(A, B, Q, R)
 K, P_lqr = dlqr(A, B, Q, R) 
-# print('K',K)
 
 policy = lambda x: -K @ x
 if OPTIONS.saturate:
-    # policy = lambda x: np.clip(-K @ x, -u_max, u_max)
     policy = lambda x: np.clip(-K @ x, -1, 1)
 
+###############  closed-loop dynamics and Lipschitz constants ##############
+    
 cl_dynamics = lambda x: dynamics(np.concatenate([x, policy(x)]))
-
 L_pol = lambda x: np.linalg.norm(-K, 1)
-
 L_dyn = lambda x: np.linalg.norm(A, 1) + np.linalg.norm(B, 1) * L_pol(x)
 
+########################## define Lyapunov LQR ##########################
 lyapunov_function = QuadraticFunction(P_lqr)
-
 # Approximate local Lipschitz constants with gradients
-# grad_lyapunov_function = lambda x: 2 * P_lqr @ x
 grad_lyapunov_function = lambda x: 2 * torch.tensor(P_lqr, dtype=torch.float32) @ x
-# L_v = lambda x: tf.norm(grad_lyapunov_function(x), ord=1, axis=1, keepdims=True)
 L_v = lambda x: torch.norm(grad_lyapunov_function(x), p=1, dim=-1, keepdim=True)
-
 # Initialize Lyapunov class
 lyapunov_lqr = Lyapunov(state_discretization, lyapunov_function, cl_dynamics, L_dyn, L_v, tau, policy, initial_safe_set)
-# print the first 10 states in the safe set
-lyapunov_lqr.discretization.all_points[1:10]
-# print('lyaupunov_lqr.discretization.all_points[1:10]\n', lyapunov_lqr.discretization.all_points[1:10])
 lyapunov_lqr.update_values()
 lyapunov_lqr.update_safe_set()
-# print('lyapunov_lqr.safe_set\n', lyapunov_lqr.safe_set[1:10])
-# print('lyapunov_lqr.values\n', lyapunov_lqr.values[1:10])
 # print('lyapunov_lqr.c_max\n', lyapunov_lqr.c_max)
 print('lyapunov_lqr.safe_set.sum()\n', lyapunov_lqr.safe_set.sum())
 
-
+########################## compute ROA ################################
 horizon = 500
 tol = 0.1
-# roa, trajectories = compute_roa_pendulum(lyapunov_lqr.discretization, cl_dynamics, horizon, tol, no_traj=False)
 compute_new_roa = False
 # compute_new_roa = True
 script_dir = os.path.dirname(__file__)
@@ -185,10 +156,6 @@ layer_dim = [64, 64, 64]
 # layer_dim = [128, 128, 128]
 activations = [torch.nn.Tanh(), torch.nn.Tanh(), torch.nn.Tanh()]
 nn = LyapunovNN(state_dim, layer_dim, activations)
-# nn.print_params()
-# exit()
-# values = nn(np.array([[1], [1], [1], [1]]))
-# print('values', values)
 
 # approximate local Lipschitz constant with gradient
 grad_lyapunov_function = \
@@ -199,6 +166,7 @@ lyapunov_nn = Lyapunov(state_discretization, nn, \
                           initial_safe_set)
 lyapunov_nn.update_values()
 lyapunov_nn.update_safe_set()
+
 #########################################################################
 # train the parameteric Lyapunov candidate in order to expand the verifiable
 # safe set toward the brute-force safe set
@@ -212,7 +180,7 @@ c_max             = [lyapunov_nn.c_max, ]
 safe_set_fraction = [lyapunov_nn.safe_set.sum() / grid.nindex, ]
 print('safe_set_fraction', safe_set_fraction)
 ######################### traning hyperparameters #######################
-outer_iters = 5
+outer_iters = 20
 inner_iters = 10
 horizon     = 100
 test_size   = int(1e4)
@@ -230,7 +198,7 @@ optimizer = torch.optim.SGD(lyapunov_nn.lyapunov_function.parameters(), lr=learn
 #         print(name, param.data)
 # exit()
 ############################# training loop #############################
-torch.autograd.set_detect_anomaly(True)
+
 print('Current metrics ...')
 c = lyapunov_nn.c_max
 num_safe = lyapunov_nn.safe_set.sum()
@@ -269,7 +237,6 @@ for _ in range(outer_iters):
     target_set = grid.all_points[target_idx]
     target_labels = roa_estimate[target_idx]\
                     .astype(OPTIONS.np_dtype).reshape([-1, 1])
-    print('target_labels\n', target_labels.T)
     idx_range = target_set.shape[0]
 
     ## test set
@@ -285,7 +252,6 @@ for _ in range(outer_iters):
         idx_batch_eval = np.random.randint(0, idx_range, size=(batch_size, ))
         training_states = target_set[idx_batch_eval]
         num_training_states = training_states.shape[0]
-        print('training_states\n', training_states)
         
         # True class labels, converted from Boolean ROA labels {0, 1} to {-1, 1}
         roa_labels = target_labels[idx_batch_eval]
@@ -304,7 +270,6 @@ for _ in range(outer_iters):
         classifier_loss = class_weights * torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
 
         # Enforce decrease constraint with Lagrangian relaxation
-        # decrease_loss = roa_labels * tf.maximum(tf_dv_nn, 0) / tf.stop_gradient(tf_values_nn + OPTIONS.eps)
         torch_dv_nn = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice)
         for state_idx in range(num_training_states):
             future_state = np.reshape(cl_dynamics(training_states[state_idx]), -1)
@@ -318,11 +283,11 @@ for _ in range(outer_iters):
             training_states_forwards[state_idx] = lyapunov_nn.lyapunov_function(training_states[state_idx])
        
         decrease_loss = roa_labels * torch.max(torch_dv_nn, torch.zeros_like(torch_dv_nn))  \
-                            # /(training_states_forwards + OPTIONS.eps)
+                            /(training_states_forwards + OPTIONS.eps)
 
         loss = torch.mean(classifier_loss + lagrange_multiplier * decrease_loss)
-        print('loss\n', loss)
-        input('press enter to continue')
+        print('loss', loss)
+        # input('press enter to continue')
         optimizer.zero_grad() # zero gradiants for every batch !!
         # loss.backward()
         loss.backward(retain_graph=True)
