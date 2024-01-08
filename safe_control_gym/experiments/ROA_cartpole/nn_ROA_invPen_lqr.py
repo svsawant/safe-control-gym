@@ -5,6 +5,7 @@ import pickle
 from collections import defaultdict
 from functools import partial
 import torch
+from torchviz import make_dot
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,6 +15,11 @@ from safe_control_gym.experiments.ROA_cartpole.utilities import *
 from lyapnov import LyapunovNN, Lyapunov, QuadraticFunction, GridWorld_pendulum
 from utilities import balanced_class_weights, dlqr, \
                       get_discrete_linear_system_matrices, onestep_dynamics
+
+# set random seed for reproducibility
+seed = 1
+torch.manual_seed(seed)
+np.random.seed(seed)
 
 np.set_printoptions(threshold=sys.maxsize) # np print full array
 torch.autograd.set_detect_anomaly(True)
@@ -156,6 +162,10 @@ layer_dim = [64, 64, 64]
 # layer_dim = [128, 128, 128]
 activations = [torch.nn.Tanh(), torch.nn.Tanh(), torch.nn.Tanh()]
 nn = LyapunovNN(state_dim, layer_dim, activations)
+print('nn\n', nn)
+for name, param in nn.named_parameters():
+    if param.requires_grad:
+        print(name, param.data.shape)
 
 # approximate local Lipschitz constant with gradient
 grad_lyapunov_function = \
@@ -180,22 +190,26 @@ c_max             = [lyapunov_nn.c_max, ]
 safe_set_fraction = [lyapunov_nn.safe_set.sum() / grid.nindex, ]
 print('safe_set_fraction', safe_set_fraction)
 ######################### traning hyperparameters #######################
-outer_iters = 20
-inner_iters = 10
+outer_iters = 5
+inner_iters = 1
 horizon     = 100
 test_size   = int(1e4)
 
 safe_level = 1
 lagrange_multiplier = 5000
 level_multiplier = 1.3
-learning_rate = 5e-3
+# learning_rate = 5e-3
+learning_rate = 1e-1
 batch_size    = int(1e3)
 
 optimizer = torch.optim.SGD(lyapunov_nn.lyapunov_function.parameters(), lr=learning_rate)
 # print('optimizer\n', optimizer)
-# for name, param in lyapunov_nn.lyapunov_function.named_parameters():
-#     if param.requires_grad:
-#         print(name, param.data)
+for name, param in lyapunov_nn.lyapunov_function.named_parameters():
+    if param.requires_grad:
+        print(name, param.data.shape)
+# print('lyaunov_nn.lyapunov_function.input_dim', lyapunov_nn.lyapunov_function.input_dim)
+# print('lyaunov_nn.lyapunov_function.num_layers', lyapunov_nn.lyapunov_function.num_layers)
+# print('lyaunov_nn.lyapunov_function.kernel', lyapunov_nn.lyapunov_function.kernel)
 # exit()
 ############################# training loop #############################
 
@@ -228,7 +242,7 @@ for _ in range(outer_iters):
         for _ in range(horizon):
             gap_states[state_idx] = np.reshape(cl_dynamics(gap_states[state_idx]), -1)
         gap_future_values[state_idx] = (lyapunov_nn.lyapunov_function(\
-                                    gap_states[state_idx])).detach().numpy()
+                                    gap_states[state_idx]).detach().numpy())
     roa_estimate[idx_gap] |= (gap_future_values <= c).ravel()
 
     ## Identify the class labels for our current ROA estimate 
@@ -250,53 +264,90 @@ for _ in range(outer_iters):
         # training step
         # safe_level = lyapunov_nn.c_max
         idx_batch_eval = np.random.randint(0, idx_range, size=(batch_size, ))
+        # fix the batch from 0 to batch_size
+        # idx_batch_eval = np.arange(0, idx_range)
+        # print('idx_batch_eval', idx_batch_eval.T)
         training_states = target_set[idx_batch_eval]
         num_training_states = training_states.shape[0]
         
         # True class labels, converted from Boolean ROA labels {0, 1} to {-1, 1}
         roa_labels = target_labels[idx_batch_eval]
         class_label = 2 * roa_labels - 1
-        class_label = torch.tensor(class_label, dtype=torch.float32, device=myDevice)
+        class_label = torch.tensor(class_label, dtype=torch.float32, device=myDevice, requires_grad=False)
+        # print('class_label', class_label.T)
         # Signed, possibly normalized distance from the decision boundary
         decision_distance_for_states = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice)                                                   
         for state_idx in range(num_training_states):
             decision_distance_for_states[state_idx] = lyapunov_nn.lyapunov_function(training_states[state_idx])
         decision_distance = safe_level - decision_distance_for_states
 
-        # Perceptron loss with class weights
-        class_weights, class_counts = balanced_class_weights(roa_labels.astype(bool))
+        # Perceptron loss with class weights (here all classes are weighted equally)
+        # class_weights, class_counts = balanced_class_weights(roa_labels.astype(bool))
         # convert class_weights to torch tensor
-        class_weights = torch.tensor(class_weights, dtype=torch.float32, device=myDevice)
-        classifier_loss = class_weights * torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
-
+        # class_weights = torch.tensor(class_weights, dtype=torch.float32, device=myDevice, requires_grad=False)
+        # classifier_loss = class_weights * torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
+        
+        classifier_loss =  torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
+        # print('classifier_loss', classifier_loss.T)
         # Enforce decrease constraint with Lagrangian relaxation
-        torch_dv_nn = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice)
+        torch_dv_nn = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice, requires_grad=False)
         for state_idx in range(num_training_states):
             future_state = np.reshape(cl_dynamics(training_states[state_idx]), -1)
-            torch_dv_nn[state_idx] = lyapunov_nn.lyapunov_function(\
-                                future_state) - \
-                                lyapunov_nn.lyapunov_function(training_states[state_idx])
+            torch_dv_nn[state_idx] = lyapunov_nn.lyapunov_function(future_state) - \
+                                     lyapunov_nn.lyapunov_function(training_states[state_idx])
 
-        roa_labels = torch.tensor(roa_labels, dtype=torch.float32, device=myDevice).detach()
-        training_states_forwards = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice).detach()
+        roa_labels = torch.tensor(roa_labels, dtype=torch.float32, device=myDevice, requires_grad=False)
+        training_states_forwards = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice, requires_grad=False)
         for state_idx in range(num_training_states):
             training_states_forwards[state_idx] = lyapunov_nn.lyapunov_function(training_states[state_idx])
-       
+        
         decrease_loss = roa_labels * torch.max(torch_dv_nn, torch.zeros_like(torch_dv_nn))  \
                             /(training_states_forwards + OPTIONS.eps)
-
+        # print('decrease_loss', decrease_loss.T)
         loss = torch.mean(classifier_loss + lagrange_multiplier * decrease_loss)
+        # make_dot(classifier_loss)
         print('loss', loss)
-        # input('press enter to continue')
         optimizer.zero_grad() # zero gradiants for every batch !!
-        # loss.backward()
-        loss.backward(retain_graph=True)
+        loss.backward()
+        # loss.backward(retain_graph=True)
+        print('nn.lyapunov_function.layers[0].weight\n', lyapunov_nn.lyapunov_function.layers[0].weight)
+        # print('nn.lyapunov_function.layers[1].weight\n', lyapunov_nn.lyapunov_function.layers[1].weight)
+        # print('nn.lyapunov_function.layers[2].weight\n', lyapunov_nn.lyapunov_function.layers[2].weight)
+        # print('nn.lyapunov_function.layers[3].weight\n', lyapunov_nn.lyapunov_function.layers[3].weight)
+
+        print('nn.lyapunov_function.layers[0].weight.grad\n', lyapunov_nn.lyapunov_function.layers[0].weight.grad)
+        # print('nn.lyapunov_function.layers[1].weight.grad\n', lyapunov_nn.lyapunov_function.layers[1].weight.grad)
+        # print('nn.lyapunov_function.layers[2].weight.grad\n', lyapunov_nn.lyapunov_function.layers[2].weight.grad)
+        # print('nn.lyapunov_function.layers[3].weight.grad\n', lyapunov_nn.lyapunov_function.layers[3].weight.grad)
+        test_state_0 = np.array([0.0, 0.0])
+        test_state_1 = np.array([0.5, 0.5])
+        test_state_2 = np.array([1.0, 1.0])
+        value_before_0 = lyapunov_nn.lyapunov_function(test_state_0)
+        value_before_1 = lyapunov_nn.lyapunov_function(test_state_1)
+        value_before_2 = lyapunov_nn.lyapunov_function(test_state_2)
         optimizer.step()
+        value_after_0 = lyapunov_nn.lyapunov_function(test_state_0)
+        value_after_1 = lyapunov_nn.lyapunov_function(test_state_1)
+        value_after_2 = lyapunov_nn.lyapunov_function(test_state_2)
+        print('nn.lyapunov_function.layers[0].weight\n', lyapunov_nn.lyapunov_function.layers[0].weight)
+        print('value_before_0', value_before_0)
+        print('value_after_0', value_after_0)
+        print('value_before_1', value_before_1)
+        print('value_after_1', value_after_1)
+        print('value_before_2', value_before_2)
+        print('value_after_2', value_after_2)
+        input('press enter to continue')
+
+        # record losses 
+        # disable training mode
+        # lyapunov_nn.lyapunov_function.eval()
+        # test_classfier_loss.append(torch.mean(torch.max(- test_labels * (safe_level - lyapunov_nn.lyapunov_function(test_set)), torch.zeros_like(test_labels, device=myDevice))))
+        # test_decrease_loss.append(torch.mean(test_labels * torch.max(lyapunov_nn.lyapunov_function(cl_dynamics(test_set)) - lyapunov_nn.lyapunov_function(test_set), torch.zeros_like(test_labels, device=myDevice)) / (lyapunov_nn.lyapunov_function(test_set) + OPTIONS.eps)))
+        
     
     ## Update Lyapunov values and ROA estimate, 
     ## based on new parameter values
     lyapunov_nn.update_values()  
-
     lyapunov_nn.update_safe_set()
     roa_estimate |= lyapunov_nn.safe_set
 
@@ -376,7 +427,7 @@ ax.xaxis.set_ticks(np.arange(-180, 181, 60))
 ax.yaxis.set_ticks(np.arange(-360, 361, 120))
 
 proxy = [plt.Rectangle((0,0), 1, 1, fc=c) for c in colors]    
-legend = ax.legend(proxy, [r'Brute-forced ROA'], loc='upper right')
+legend = ax.legend(proxy, [r'Brute-forced ROA', r'NN ROA', r'LQR'], loc='upper right')
 legend.get_frame().set_alpha(1.)
 
 

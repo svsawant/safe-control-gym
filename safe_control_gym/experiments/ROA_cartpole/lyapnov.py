@@ -396,6 +396,31 @@ class LyapunovNN(torch.nn.Module):
                 layer_input_dim = self.output_dims[i - 1]
             self.hidden_dims[i] = np.ceil((layer_input_dim + 1) / 2).astype(int)
 
+    #     # build the nn structure
+    #     self.linear1 = torch.nn.Linear(2, 2, bias=False)
+    #     self.linear2 = torch.nn.Linear(2, 62, bias=False)
+    #     self.linear3 = torch.nn.Linear(64, 33, bias=False)
+    #     self.linear4 = torch.nn.Linear(64, 33, bias=False)
+    #     W1 = self.linear1.weight
+    #     W2 = self.linear2.weight
+    #     # print('W1.shape\n', W1.shape)
+    #     # print('W2.shape\n', W2.shape)
+    #     inter_kernel = torch.matmul(W1.T, W1) + self.eps * torch.eye(W1.shape[1])
+    #     self.kernel_1 = torch.cat((inter_kernel, W2), dim=0)
+    #     W3 = self.linear3.weight
+    #     self.kernel_2 = torch.matmul(W3.T, W3) + self.eps * torch.eye(W3.shape[1])
+    #     W4 = self.linear4.weight
+    #     self.kernel_3 = torch.matmul(W4.T, W4) + self.eps * torch.eye(W4.shape[1])
+
+    # def forward(self, x):
+    #     if isinstance(x, np.ndarray):
+    #         x = torch.from_numpy(x).float()
+    #     x = self.activations[0](torch.matmul(self.kernel_1, x))
+    #     x = self.activations[1](torch.matmul(self.kernel_2, x))
+    #     x = self.activations[2](torch.matmul(self.kernel_3, x))
+    #     return x
+        
+
         # build the nn structure
         for i in range(self.num_layers):
             if i == 0:
@@ -405,12 +430,15 @@ class LyapunovNN(torch.nn.Module):
             self.layers.append(\
                         torch.nn.Linear(layer_input_dim, self.hidden_dims[i], bias=False))
             W = self.layers[-1].weight
-            kernel = torch.matmul(W.T, W) + self.eps * torch.eye(W.shape[1])
+            weight = W.clone()
+            # weight = W
+            kernel = torch.matmul(weight.T, W) + self.eps * torch.eye(W.shape[1])
+            # kernel = torch.matmul(W.T, W) + self.eps * torch.eye(W.shape[1])
             dim_diff = self.output_dims[i] - layer_input_dim
             if dim_diff > 0:
                 self.layers.append(torch.nn.Linear(layer_input_dim, dim_diff, bias=False))
                 # print(kernel.shape, self.layers[-1].weight.shape)
-                kernel = torch.cat((kernel,self.layers[-1].weight), dim=0)
+                kernel = torch.cat((kernel, self.layers[-1].weight), dim=0)
             self.kernel.append(kernel)
 
     def forward(self, x):
@@ -537,6 +565,10 @@ class Lyapunov(object):
         """Update the discretized values when the Lyapunov function changes."""
         values = np.zeros(self.discretization.nindex)
         for i in range(self.discretization.nindex):
+            print('self.discretization.all_points[i]\n', self.discretization.all_points[i])
+            print('self.lyapunov_function(self.discretization.all_points[i]).squeeze(), \n', \
+                                self.lyapunov_function(\
+                                self.discretization.all_points[i]).squeeze())
             values[i] = self.lyapunov_function(\
                              self.discretization.all_points[i]).squeeze()
         self.values = values
