@@ -22,7 +22,7 @@ torch.manual_seed(seed)
 np.random.seed(seed)
 
 np.set_printoptions(threshold=sys.maxsize) # np print full array
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
 
 class Options(object):
     def __init__(self, **kwargs):
@@ -42,8 +42,9 @@ OPTIONS = Options(np_dtype              = np.float32,
                 )
 
 # detect torch device
-myDevice = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# myDevice = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 myDevice = torch.device("cpu")
+# torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
 
 #################################### Constants ####################################
@@ -162,6 +163,14 @@ layer_dim = [64, 64, 64]
 # layer_dim = [128, 128, 128]
 activations = [torch.nn.Tanh(), torch.nn.Tanh(), torch.nn.Tanh()]
 nn = LyapunovNN(state_dim, layer_dim, activations)
+# test_state = np.array([0.0, 0.0])
+# print('nn(test_state)', nn(test_state))
+test_state = np.array([0.5, 0.5]) # dummy test input
+test_output = nn(test_state)
+print('test_output', test_output) # dummy test output
+make_dot(test_output, params=dict(nn.named_parameters())).render("attached", format="png")
+# # nn.print_manual_kernel()
+# exit()
 print('nn\n', nn)
 for name, param in nn.named_parameters():
     if param.requires_grad:
@@ -190,19 +199,21 @@ c_max             = [lyapunov_nn.c_max, ]
 safe_set_fraction = [lyapunov_nn.safe_set.sum() / grid.nindex, ]
 print('safe_set_fraction', safe_set_fraction)
 ######################### traning hyperparameters #######################
-outer_iters = 5
-inner_iters = 1
+outer_iters = 20
+inner_iters = 10
 horizon     = 100
 test_size   = int(1e4)
 
 safe_level = 1
+# lagrange_multiplier = 1000
 lagrange_multiplier = 5000
 level_multiplier = 1.3
-# learning_rate = 5e-3
-learning_rate = 1e-1
+learning_rate = 5e-3
+# learning_rate = 1e-1
 batch_size    = int(1e3)
 
-optimizer = torch.optim.SGD(lyapunov_nn.lyapunov_function.parameters(), lr=learning_rate)
+# optimizer = torch.optim.SGD(lyapunov_nn.lyapunov_function.parameters(), lr=learning_rate)
+optimizer = torch.optim.Adam(lyapunov_nn.lyapunov_function.parameters(), lr=learning_rate)
 # print('optimizer\n', optimizer)
 for name, param in lyapunov_nn.lyapunov_function.named_parameters():
     if param.requires_grad:
@@ -224,7 +235,7 @@ print('')
 time.sleep(0.5)
 for _ in range(outer_iters):
     print('Iteration (k): {}'.format(len(c_max)))
-    time.sleep(0.5)
+    # time.sleep(0.5)
 
     ## Identify the "gap" states, i.e., those between V(c_k) 
     ## and V(a * c_k) for a > 1
@@ -282,12 +293,11 @@ for _ in range(outer_iters):
         decision_distance = safe_level - decision_distance_for_states
 
         # Perceptron loss with class weights (here all classes are weighted equally)
-        # class_weights, class_counts = balanced_class_weights(roa_labels.astype(bool))
+        class_weights, class_counts = balanced_class_weights(roa_labels.astype(bool))
         # convert class_weights to torch tensor
-        # class_weights = torch.tensor(class_weights, dtype=torch.float32, device=myDevice, requires_grad=False)
-        # classifier_loss = class_weights * torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
-        
-        classifier_loss =  torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
+        class_weights = torch.tensor(class_weights, dtype=torch.float32, device=myDevice, requires_grad=False)
+        classifier_loss = class_weights * torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
+        # classifier_loss =  torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
         # print('classifier_loss', classifier_loss.T)
         # Enforce decrease constraint with Lagrangian relaxation
         torch_dv_nn = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice, requires_grad=False)
@@ -301,7 +311,7 @@ for _ in range(outer_iters):
         for state_idx in range(num_training_states):
             training_states_forwards[state_idx] = lyapunov_nn.lyapunov_function(training_states[state_idx])
         
-        decrease_loss = roa_labels * torch.max(torch_dv_nn, torch.zeros_like(torch_dv_nn))  \
+        decrease_loss = roa_labels * torch.max(torch_dv_nn, torch.zeros_like(torch_dv_nn, device=myDevice))  \
                             /(training_states_forwards + OPTIONS.eps)
         # print('decrease_loss', decrease_loss.T)
         loss = torch.mean(classifier_loss + lagrange_multiplier * decrease_loss)
@@ -310,40 +320,42 @@ for _ in range(outer_iters):
         optimizer.zero_grad() # zero gradiants for every batch !!
         loss.backward()
         # loss.backward(retain_graph=True)
-        print('nn.lyapunov_function.layers[0].weight\n', lyapunov_nn.lyapunov_function.layers[0].weight)
-        # print('nn.lyapunov_function.layers[1].weight\n', lyapunov_nn.lyapunov_function.layers[1].weight)
-        # print('nn.lyapunov_function.layers[2].weight\n', lyapunov_nn.lyapunov_function.layers[2].weight)
-        # print('nn.lyapunov_function.layers[3].weight\n', lyapunov_nn.lyapunov_function.layers[3].weight)
+        # print('nn.lyapunov_function.layers[0].weight\n', lyapunov_nn.lyapunov_function.layers[0].weight)
+        # # print('nn.lyapunov_function.layers[1].weight\n', lyapunov_nn.lyapunov_function.layers[1].weight)
+        # # print('nn.lyapunov_function.layers[2].weight\n', lyapunov_nn.lyapunov_function.layers[2].weight)
+        # # print('nn.lyapunov_function.layers[3].weight\n', lyapunov_nn.lyapunov_function.layers[3].weight)
+        # print('nn.lyapunov_function.linear1.weight\n', lyapunov_nn.lyapunov_function.linear1.weight)
 
-        print('nn.lyapunov_function.layers[0].weight.grad\n', lyapunov_nn.lyapunov_function.layers[0].weight.grad)
-        # print('nn.lyapunov_function.layers[1].weight.grad\n', lyapunov_nn.lyapunov_function.layers[1].weight.grad)
-        # print('nn.lyapunov_function.layers[2].weight.grad\n', lyapunov_nn.lyapunov_function.layers[2].weight.grad)
-        # print('nn.lyapunov_function.layers[3].weight.grad\n', lyapunov_nn.lyapunov_function.layers[3].weight.grad)
-        test_state_0 = np.array([0.0, 0.0])
-        test_state_1 = np.array([0.5, 0.5])
-        test_state_2 = np.array([1.0, 1.0])
-        value_before_0 = lyapunov_nn.lyapunov_function(test_state_0)
-        value_before_1 = lyapunov_nn.lyapunov_function(test_state_1)
-        value_before_2 = lyapunov_nn.lyapunov_function(test_state_2)
+        # print('nn.lyapunov_function.layers[0].weight.grad\n', lyapunov_nn.lyapunov_function.layers[0].weight.grad)
+        # # print('nn.lyapunov_function.layers[1].weight.grad\n', lyapunov_nn.lyapunov_function.layers[1].weight.grad)
+        # # print('nn.lyapunov_function.layers[2].weight.grad\n', lyapunov_nn.lyapunov_function.layers[2].weight.grad)
+        # # print('nn.lyapunov_function.layers[3].weight.grad\n', lyapunov_nn.lyapunov_function.layers[3].weight.grad)
+        # print('nn.lyapunov_function.linear1.weight.grad\n', lyapunov_nn.lyapunov_function.linear1.weight.grad)
+
+        # test_state_0 = np.array([0.0, 0.0])
+        # test_state_1 = np.array([0.5, 0.5])
+        # test_state_2 = np.array([1.0, 1.0])
+        # value_before_0 = lyapunov_nn.lyapunov_function(test_state_0)
+        # value_before_1 = lyapunov_nn.lyapunov_function(test_state_1)
+        # value_before_2 = lyapunov_nn.lyapunov_function(test_state_2)
         optimizer.step()
-        value_after_0 = lyapunov_nn.lyapunov_function(test_state_0)
-        value_after_1 = lyapunov_nn.lyapunov_function(test_state_1)
-        value_after_2 = lyapunov_nn.lyapunov_function(test_state_2)
-        print('nn.lyapunov_function.layers[0].weight\n', lyapunov_nn.lyapunov_function.layers[0].weight)
-        print('value_before_0', value_before_0)
-        print('value_after_0', value_after_0)
-        print('value_before_1', value_before_1)
-        print('value_after_1', value_after_1)
-        print('value_before_2', value_before_2)
-        print('value_after_2', value_after_2)
-        input('press enter to continue')
+        lyapunov_nn.lyapunov_function.update_kernel()
+        # lyapunov_nn.lyapunov_function.print_manual_kernel()
+        # value_after_0 = lyapunov_nn.lyapunov_function(test_state_0)
+        # value_after_1 = lyapunov_nn.lyapunov_function(test_state_1)
+        # value_after_2 = lyapunov_nn.lyapunov_function(test_state_2)
+        # print('nn.lyapunov_function.layers[0].weight\n', lyapunov_nn.lyapunov_function.layers[0].weight)
+        # print('nn.lyapunov_function.linear1.weight\n', lyapunov_nn.lyapunov_function.linear1.weight)
+        # print('value_before_0', value_before_0)
+        # print('value_after_0', value_after_0)
+        # print('value_before_1', value_before_1)
+        # print('value_after_1', value_after_1)
+        # print('value_before_2', value_before_2)
+        # print('value_after_2', value_after_2)
+        # input('press enter to continue')
 
         # record losses 
-        # disable training mode
-        # lyapunov_nn.lyapunov_function.eval()
-        # test_classfier_loss.append(torch.mean(torch.max(- test_labels * (safe_level - lyapunov_nn.lyapunov_function(test_set)), torch.zeros_like(test_labels, device=myDevice))))
-        # test_decrease_loss.append(torch.mean(test_labels * torch.max(lyapunov_nn.lyapunov_function(cl_dynamics(test_set)) - lyapunov_nn.lyapunov_function(test_set), torch.zeros_like(test_labels, device=myDevice)) / (lyapunov_nn.lyapunov_function(test_set) + OPTIONS.eps)))
-        
+
     
     ## Update Lyapunov values and ROA estimate, 
     ## based on new parameter values
