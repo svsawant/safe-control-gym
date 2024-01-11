@@ -44,6 +44,8 @@ OPTIONS = Options(np_dtype              = np.float32,
 # detect torch device
 # myDevice = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 myDevice = torch.device("cpu")
+# if torch.cuda.is_available():
+#     myDevice = torch.device("cuda:0")
 # torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
 
@@ -164,13 +166,13 @@ print('')
 layer_dim = [64, 64, 64]
 # layer_dim = [128, 128, 128]
 activations = [torch.nn.Tanh(), torch.nn.Tanh(), torch.nn.Tanh()]
-nn = LyapunovNN(state_dim, layer_dim, activations)
+nn = LyapunovNN(state_dim, layer_dim, activations, device=myDevice)
 # test_state = np.array([0.0, 0.0])
 # print('nn(test_state)', nn(test_state))
-test_state = np.array([0.5, 0.5]) # dummy test input
-test_output = nn(test_state)
-print('test_output', test_output) # dummy test output
-make_dot(test_output, params=dict(nn.named_parameters())).render("attached", format="png")
+# test_state = np.array([0.5, 0.5]) # dummy test input
+# test_output = nn(test_state)
+# print('test_output', test_output) # dummy test output
+# make_dot(test_output, params=dict(nn.named_parameters())).render("attached", format="png")
 # # nn.print_manual_kernel()
 # exit()
 print('nn\n', nn)
@@ -253,9 +255,12 @@ for _ in range(outer_iters):
     for state_idx in range(gap_states.shape[0]):
         # !! when using dynamics, the state can go out of the bound
         for _ in range(horizon):
+            temp_state = np.reshape(cl_dynamics(gap_states[state_idx]), -1)
             gap_states[state_idx] = np.reshape(cl_dynamics(gap_states[state_idx]), -1)
-        gap_future_values[state_idx] = (lyapunov_nn.lyapunov_function(\
-                                    gap_states[state_idx]).detach().numpy())
+        temp_gap_future_value = lyapunov_nn.lyapunov_function(gap_states[state_idx])
+        if temp_gap_future_value.is_cuda:
+            temp_gap_future_value = temp_gap_future_value.cpu()
+        gap_future_values[state_idx] = temp_gap_future_value.detach().numpy()
     roa_estimate[idx_gap] |= (gap_future_values <= c).ravel()
 
     ## Identify the class labels for our current ROA estimate 
@@ -364,7 +369,7 @@ for _ in range(outer_iters):
         # print('value_before_2', value_before_2)
         # print('value_after_2', value_after_2)
         # input('press enter to continue')
-        
+
         ################################# test #################################
         # # feed the test set to the network
         # lyapunov_nn.lyapunov_function.eval() # Set the model to evaluation mode
