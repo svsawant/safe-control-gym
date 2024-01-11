@@ -270,6 +270,7 @@ for _ in range(outer_iters):
     idx_test = np.random.randint(0, idx_range, size=(test_size, ))
     test_set = target_set[idx_test]
     test_labels = target_labels[idx_test]
+    test_loss_history = []
 
     # stochastic gradient descent for classification
     for _ in range(inner_iters):
@@ -318,7 +319,7 @@ for _ in range(outer_iters):
         # print('decrease_loss', decrease_loss.T)
         loss = torch.mean(classifier_loss + lagrange_multiplier * decrease_loss)
         # make_dot(classifier_loss)
-        print('loss', loss)
+        print('training loss', loss)
         optimizer.zero_grad() # zero gradiants for every batch !!
         loss.backward()
         # loss.backward(retain_graph=True)
@@ -363,9 +364,36 @@ for _ in range(outer_iters):
         # print('value_before_2', value_before_2)
         # print('value_after_2', value_after_2)
         # input('press enter to continue')
-
-        # record losses 
-
+        
+        ################################# test #################################
+        # # feed the test set to the network
+        # lyapunov_nn.lyapunov_function.eval() # Set the model to evaluation mode
+        # # Disable gradient computation and reduce memory consumption.
+        # with torch.no_grad():
+        #     test_class_labels = 2 * test_labels - 1
+        #     test_class_labels = torch.tensor(test_class_labels, dtype=torch.float32, device=myDevice, requires_grad=False)
+        #     test_decision_distance_for_states = torch.zeros((test_size, 1), dtype=torch.float32, device=myDevice, requires_grad=False)
+        #     for state_idx in range(test_size):
+        #         test_decision_distance_for_states[state_idx] = lyapunov_nn.lyapunov_function(test_set[state_idx])
+        #     test_decision_distance = safe_level - test_decision_distance_for_states
+        #     test_class_weights, test_class_counts = balanced_class_weights(test_labels.astype(bool))
+        #     test_class_weights = torch.tensor(test_class_weights, dtype=torch.float32, device=myDevice, requires_grad=False)
+        #     test_classifier_loss = test_class_weights * torch.max(- test_class_labels * test_decision_distance, torch.zeros_like(test_decision_distance, device=myDevice))
+        #     test_torch_dv_nn = torch.zeros((test_size, 1), dtype=torch.float32, device=myDevice, requires_grad=False)
+        #     for state_idx in range(test_size):
+        #         future_state = np.reshape(cl_dynamics(test_set[state_idx]), -1)
+        #         test_torch_dv_nn[state_idx] = lyapunov_nn.lyapunov_function(future_state) - \
+        #                                         lyapunov_nn.lyapunov_function(test_set[state_idx])
+        #     test_training_states_forwards = torch.zeros((test_size, 1), dtype=torch.float32, device=myDevice, requires_grad=False)
+        #     for state_idx in range(test_size):
+        #         test_training_states_forwards[state_idx] = lyapunov_nn.lyapunov_function(test_set[state_idx])
+        #     test_decrease_loss = torch.tensor(test_labels, dtype=torch.float32, device=myDevice, requires_grad=False) * \
+        #                             torch.max(test_torch_dv_nn, torch.zeros_like(test_torch_dv_nn, device=myDevice))  \
+        #                             /(test_training_states_forwards + OPTIONS.eps)
+        #     test_loss = torch.mean(test_classifier_loss + lagrange_multiplier * test_decrease_loss)
+        #     test_loss_history.append(test_loss.item())
+        #     print('test loss', test_loss)
+            
     
     ## Update Lyapunov values and ROA estimate, 
     ## based on new parameter values
