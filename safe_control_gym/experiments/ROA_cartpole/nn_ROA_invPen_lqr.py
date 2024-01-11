@@ -137,8 +137,8 @@ print('lyapunov_lqr.safe_set.sum()\n', lyapunov_lqr.safe_set.sum())
 ########################## compute ROA ################################
 horizon = 500
 tol = 0.1
-# compute_new_roa = False
-compute_new_roa = True
+compute_new_roa = False
+# compute_new_roa = True
 script_dir = os.path.dirname(__file__)
 roa_file_name = 'roa_pendulum.npy'
 traj_file_name = 'traj_pendulum.npy'
@@ -340,8 +340,16 @@ for _ in range(outer_iters):
         # value_before_0 = lyapunov_nn.lyapunov_function(test_state_0)
         # value_before_1 = lyapunov_nn.lyapunov_function(test_state_1)
         # value_before_2 = lyapunov_nn.lyapunov_function(test_state_2)
+        # print(lyapunov_nn.lyapunov_function.kernel[0].shape)
+        # print(lyapunov_nn.lyapunov_function.kernel[1].shape)
+        # print(lyapunov_nn.lyapunov_function.kernel[2].shape)
+        # input('press enter to continue')
         optimizer.step()
         lyapunov_nn.lyapunov_function.update_kernel()
+        # print(lyapunov_nn.lyapunov_function.kernel[0].shape)
+        # print(lyapunov_nn.lyapunov_function.kernel[1].shape)
+        # print(lyapunov_nn.lyapunov_function.kernel[2].shape)
+        # input('press enter to continue')
         # lyapunov_nn.lyapunov_function.print_manual_kernel()
         # value_after_0 = lyapunov_nn.lyapunov_function(test_state_0)
         # value_after_1 = lyapunov_nn.lyapunov_function(test_state_1)
@@ -377,7 +385,8 @@ training_end_time = time.time()
 print('c_max', c_max)
 print('safe_set_fraction', safe_set_fraction)
 print('Training time: {:.2f} s'.format(training_end_time - training_start_time))
-if brute_force_end_time is not None:
+# if brute_force_end_time is not None:
+if compute_new_roa:
     print('Brute-force time: {:.2f} s'.format(brute_force_end_time - brute_force_start_time))
 
 ################################ plotting ################################

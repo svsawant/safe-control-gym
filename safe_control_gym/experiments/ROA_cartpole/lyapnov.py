@@ -396,103 +396,105 @@ class LyapunovNN(torch.nn.Module):
                 layer_input_dim = self.output_dims[i - 1]
             self.hidden_dims[i] = np.ceil((layer_input_dim + 1) / 2).astype(int)
 
-        # build the nn structure
-        self.linear1 = torch.nn.Linear(2, 2, bias=False)
-        self.linear2 = torch.nn.Linear(2, 62, bias=False)
-        self.linear3 = torch.nn.Linear(64, 33, bias=False)
-        self.linear4 = torch.nn.Linear(64, 33, bias=False)
-        W1 = self.linear1.weight
-        W2 = self.linear2.weight
-        # print('W1.shape\n', W1.shape)
-        # print('W2.shape\n', W2.shape)
-        inter_kernel = torch.matmul(W1.T, W1) + self.eps * torch.eye(W1.shape[1])
-        self.kernel_1 = torch.cat((inter_kernel, W2), dim=0)
-        W3 = self.linear3.weight
-        self.kernel_2 = torch.matmul(W3.T, W3) + self.eps * torch.eye(W3.shape[1])
-        W4 = self.linear4.weight
-        self.kernel_3 = torch.matmul(W4.T, W4) + self.eps * torch.eye(W4.shape[1])
-
-    def forward(self, x):
-        if isinstance(x, np.ndarray):
-            x = torch.from_numpy(x).float()
-        x = self.activations[0](torch.matmul(self.kernel_1, x))
-        x = self.activations[1](torch.matmul(self.kernel_2, x))
-        x = self.activations[2](torch.matmul(self.kernel_3, x))
-        x = torch.sum(torch.square(x))
-        return x
-    
-    def update_kernel(self):
-        # update the kernel
-        W1 = self.linear1.weight
-        W2 = self.linear2.weight
-        inter_kernel = torch.matmul(W1.T, W1) + self.eps * torch.eye(W1.shape[1])
-        self.kernel_1 = torch.cat((inter_kernel, W2), dim=0)
-        W3 = self.linear3.weight
-        self.kernel_2 = torch.matmul(W3.T, W3) + self.eps * torch.eye(W3.shape[1])
-        W4 = self.linear4.weight
-        self.kernel_3 = torch.matmul(W4.T, W4) + self.eps * torch.eye(W4.shape[1])
-        
-
     #     # build the nn structure
-    #     for i in range(self.num_layers):
-    #         if i == 0:
-    #             layer_input_dim = self.input_dim
-    #         else:
-    #             layer_input_dim = self.output_dims[i - 1]
-    #         self.layers.append(\
-    #                     torch.nn.Linear(layer_input_dim, self.hidden_dims[i], bias=False))
-    #         W = self.layers[-1].weight
-    #         weight = W.clone()
-    #         # weight = W
-    #         kernel = torch.matmul(weight.T, weight) + self.eps * torch.eye(W.shape[1])
-    #         # kernel = torch.matmul(W.T, W) + self.eps * torch.eye(W.shape[1])
-    #         dim_diff = self.output_dims[i] - layer_input_dim
-    #         if dim_diff > 0:
-    #             self.layers.append(torch.nn.Linear(layer_input_dim, dim_diff, bias=False))
-    #             # print(kernel.shape, self.layers[-1].weight.shape)
-    #             kernel = torch.cat((kernel, self.layers[-1].weight), dim=0)
-    #         self.kernel.append(kernel)
+    #     self.linear1 = torch.nn.Linear(2, 2, bias=False)
+    #     self.linear2 = torch.nn.Linear(2, 62, bias=False)
+    #     self.linear3 = torch.nn.Linear(64, 33, bias=False)
+    #     self.linear4 = torch.nn.Linear(64, 33, bias=False)
+    #     W1 = self.linear1.weight
+    #     W2 = self.linear2.weight
+    #     # print('W1.shape\n', W1.shape)
+    #     # print('W2.shape\n', W2.shape)
+    #     inter_kernel = torch.matmul(W1.T, W1) + self.eps * torch.eye(W1.shape[1])
+    #     self.kernel_1 = torch.cat((inter_kernel, W2), dim=0)
+    #     W3 = self.linear3.weight
+    #     self.kernel_2 = torch.matmul(W3.T, W3) + self.eps * torch.eye(W3.shape[1])
+    #     W4 = self.linear4.weight
+    #     self.kernel_3 = torch.matmul(W4.T, W4) + self.eps * torch.eye(W4.shape[1])
 
     # def forward(self, x):
     #     if isinstance(x, np.ndarray):
     #         x = torch.from_numpy(x).float()
-    #     for i in range(self.num_layers):
-    #         layer_output = torch.matmul(self.kernel[i], x)
-    #         x = self.activations[i](layer_output)
-    #     values = torch.sum(torch.square(x), dim=-1)
-    #     return values
+    #     x = self.activations[0](torch.matmul(self.kernel_1, x))
+    #     x = self.activations[1](torch.matmul(self.kernel_2, x))
+    #     x = self.activations[2](torch.matmul(self.kernel_3, x))
+    #     x = torch.sum(torch.square(x))
+    #     return x
     
     # def update_kernel(self):
-    #     self.kernel = [] 
-    #     for i in range(self.num_layers):
-    #         if i == 0:
-    #             layer_input_dim = self.input_dim
-    #         else:
-    #             layer_input_dim = self.output_dims[i - 1]
+    #     # update the kernel
+    #     W1 = self.linear1.weight
+    #     W2 = self.linear2.weight
+    #     inter_kernel = torch.matmul(W1.T, W1) + self.eps * torch.eye(W1.shape[1])
+    #     self.kernel_1 = torch.cat((inter_kernel, W2), dim=0)
+    #     W3 = self.linear3.weight
+    #     self.kernel_2 = torch.matmul(W3.T, W3) + self.eps * torch.eye(W3.shape[1])
+    #     W4 = self.linear4.weight
+    #     self.kernel_3 = torch.matmul(W4.T, W4) + self.eps * torch.eye(W4.shape[1])
+        
 
-    #         W = self.layers[i].weight
-    #         weight = W.clone()
-    #         # weight = W
-    #         kernel = torch.matmul(weight.T, weight) + self.eps * torch.eye(W.shape[1])
-    #         # kernel = torch.matmul(W.T, W) + self.eps * torch.eye(W.shape[1])
-    #         dim_diff = self.output_dims[i] - layer_input_dim
-    #         if dim_diff > 0:
-    #             kernel = torch.cat((kernel, self.layers[i+1].weight), dim=0)
-    #             i += 1
-    #         self.kernel.append(kernel)
+        # build the nn structure
+        for i in range(self.num_layers):
+            if i == 0:
+                layer_input_dim = self.input_dim
+            else:
+                layer_input_dim = self.output_dims[i - 1]
+            self.layers.append(\
+                        torch.nn.Linear(layer_input_dim, self.hidden_dims[i], bias=False))
+            # W = self.layers[-1].weight
+            # weight = W.clone()
+            # weight = W
+            # kernel = torch.matmul(weight.T, weight) + self.eps * torch.eye(W.shape[1])
+            # kernel = torch.matmul(W.T, W) + self.eps * torch.eye(W.shape[1])
+            dim_diff = self.output_dims[i] - layer_input_dim
+            if dim_diff > 0:
+                self.layers.append(torch.nn.Linear(layer_input_dim, dim_diff, bias=False))
+                # print(kernel.shape, self.layers[-1].weight.shape)
+                # kernel = torch.cat((kernel, self.layers[-1].weight), dim=0)
+            # self.kernel.append(kernel)
+        self.update_kernel()
 
-    def print_manual_kernel(self):
-        print('Kernel 1:\n', self.kernel_1)
-        print('Kernel 2:\n', self.kernel_2)
-        print('Kernel 3:\n', self.kernel_3)
+    def forward(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.from_numpy(x).float()
+        for i in range(self.num_layers):
+            layer_output = torch.matmul(self.kernel[i], x)
+            x = self.activations[i](layer_output)
+        values = torch.sum(torch.square(x), dim=-1)
+        return values
+    
+    def update_kernel(self):
+        self.kernel = [] # clear the kernel
+        param_idx = 0 # for skipping the extra layer parameters
+        for i in range(self.num_layers):
+            if i == 0:
+                layer_input_dim = self.input_dim
+            else:
+                layer_input_dim = self.output_dims[i - 1]
+            # build the positive definite part of the kernel
+            W = self.layers[i + param_idx].weight
+            weight = W.clone()
+            kernel = torch.matmul(weight.T, weight) + self.eps * torch.eye(W.shape[1])
+            # if the kernel need extra part, append the parameters of the next layer
+            dim_diff = self.output_dims[i] - layer_input_dim
+            if dim_diff > 0:
+                kernel = torch.cat((kernel, self.layers[i+1].weight), dim=0)
+                param_idx += 1
+            # print('i: ', i)
+            self.kernel.append(kernel)
 
-        # print kernel eigenvalues
-        eigvals, _ = np.linalg.eig(self.kernel_1[0:2, :].detach().numpy())
-        print('Eigenvalues of (W0.T*W0 + eps*I):', eigvals, '\n')
-        eigvals, _ = np.linalg.eig(self.kernel_2.detach().numpy())
-        print('Eigenvalues of (W0.T*W0 + eps*I):', eigvals, '\n')
-        eigvals, _ = np.linalg.eig(self.kernel_3.detach().numpy())
-        print('Eigenvalues of (W0.T*W0 + eps*I):', eigvals, '\n')
+    # def print_manual_kernel(self):
+    #     print('Kernel 1:\n', self.kernel_1)
+    #     print('Kernel 2:\n', self.kernel_2)
+    #     print('Kernel 3:\n', self.kernel_3)
+
+    #     # print kernel eigenvalues
+    #     eigvals, _ = np.linalg.eig(self.kernel_1[0:2, :].detach().numpy())
+    #     print('Eigenvalues of (W0.T*W0 + eps*I):', eigvals, '\n')
+    #     eigvals, _ = np.linalg.eig(self.kernel_2.detach().numpy())
+    #     print('Eigenvalues of (W0.T*W0 + eps*I):', eigvals, '\n')
+    #     eigvals, _ = np.linalg.eig(self.kernel_3.detach().numpy())
+    #     print('Eigenvalues of (W0.T*W0 + eps*I):', eigvals, '\n')
 
     def print_params(self):
         offset = 0
