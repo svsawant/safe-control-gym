@@ -137,8 +137,8 @@ print('lyapunov_lqr.safe_set.sum()\n', lyapunov_lqr.safe_set.sum())
 ########################## compute ROA ################################
 horizon = 500
 tol = 0.1
-compute_new_roa = False
-# compute_new_roa = True
+# compute_new_roa = False
+compute_new_roa = True
 script_dir = os.path.dirname(__file__)
 roa_file_name = 'roa_pendulum.npy'
 traj_file_name = 'traj_pendulum.npy'
@@ -150,7 +150,9 @@ if not compute_new_roa:
     roa = np.load(roa_file_name)
     trajectories = np.load(traj_file_name)
 else:
+    brute_force_start_time = time.time()
     roa, trajectories = compute_roa_pendulum(lyapunov_lqr.discretization, cl_dynamics, horizon, tol, no_traj=False)
+    brute_force_end_time = time.time()
     np.save(roa_file_name, roa)
     np.save(traj_file_name, trajectories)
     # exit()
@@ -223,7 +225,7 @@ for name, param in lyapunov_nn.lyapunov_function.named_parameters():
 # print('lyaunov_nn.lyapunov_function.kernel', lyapunov_nn.lyapunov_function.kernel)
 # exit()
 ############################# training loop #############################
-
+training_start_time = time.time()
 print('Current metrics ...')
 c = lyapunov_nn.c_max
 num_safe = lyapunov_nn.safe_set.sum()
@@ -371,9 +373,12 @@ for _ in range(outer_iters):
                             100 * safe_set_fraction[-1], \
                             100 * safe_set_fraction[-1] * roa.size / roa.sum()\
                                 ))
-
+training_end_time = time.time()
 print('c_max', c_max)
 print('safe_set_fraction', safe_set_fraction)
+print('Training time: {:.2f} s'.format(training_end_time - training_start_time))
+if brute_force_end_time is not None:
+    print('Brute-force time: {:.2f} s'.format(brute_force_end_time - brute_force_start_time))
 
 ################################ plotting ################################
 fig = plt.figure(figsize=(8, 3), dpi=OPTIONS.dpi, frameon=False)

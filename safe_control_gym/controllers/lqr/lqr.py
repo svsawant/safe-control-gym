@@ -28,10 +28,6 @@ class LQR(BaseController):
         super().__init__(env_func, **kwargs)
 
         self.env = env_func()
-        print(self.env.__dir__())
-        # print(self.env.constraints)
-        # print(self.env.num_constraints)
-        # exit()
         # Controller params.
         self.model = self.get_prior(self.env)
 
@@ -40,7 +36,7 @@ class LQR(BaseController):
         self.R = get_cost_weight_matrix(r_lqr, self.model.nu)
         self.env.set_cost_function_param(self.Q, self.R)
 
-        self.gain = compute_lqr_gain(self.model, self.model.X_EQ, self.model.U_EQ,
+        self.gain, self.P = compute_lqr_gain(self.model, self.model.X_EQ, self.model.U_EQ,
                                      self.Q, self.R, self.discrete_dynamics)
 
     def reset(self):
