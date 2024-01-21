@@ -1,12 +1,9 @@
 # MPC args
-horizon: 1000
+horizon: 1
 r_mpc:
   - 0.1
 q_mpc:
-  - 3
-  - 0
-  - 3
-  - 0
+  - 1
 warmstart: True
 soft_constraints: False
 constraint_tol: 1.0e-6

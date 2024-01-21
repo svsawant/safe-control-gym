@@ -2,7 +2,7 @@ task_config:
 
   seed: 41
   info_in_reset: True
-  ctrl_freq: 75 # actual frequency of the sim
+  ctrl_freq: 15 # actual frequency of the sim
   pyb_freq: 750
   physics: pyb
   gui: False
@@ -10,61 +10,61 @@ task_config:
   - constraint_form: bounded_constraint
     constrained_variable: state
     # active_dims: [0, 1, 2, 3]
-    # lower_bounds: [-10, -3, -6.28, -4]
-    # upper_bounds: [ 10, 3, 6.28, 4]
+    # lower_bounds: [-10, -4, -4.5, -7]
+    # upper_bounds: [ 10, 4, 4.5, 7]
     # tolerance: [0.05, 0.05, 0.05, 0.05,   0.05, 0.05, 0.05, 0.05]
-    active_dims: [0]
-    lower_bounds: [-10]
-    upper_bounds: [ 10]
-    tolerance: [0.05  , 0.05]
+    active_dims: [0, 1, 2, 3]
+    lower_bounds: [-10, -3, -10, -10]
+    upper_bounds: [ 10, 3, 10, 10]
+    tolerance: [0.05, 0.05, 0.05, 0.05,   0.05, 0.05, 0.05, 0.05]
+    # active_dims: [0]
+    # lower_bounds: [-10]
+    # upper_bounds: [ 10]
+    # tolerance: [0.05  , 0.05]
 
   - constraint_form: bounded_constraint
     constrained_variable: input
     active_dims: [0]
-    lower_bounds: [-100]
-    upper_bounds: [ 100]
+    lower_bounds: [-9]
+    upper_bounds: [ 9]
     tolerance: [0.05, 0.05]
   done_on_violation: False #True
 
   inertial_prop: 
+    # to finisha a swing up
+    # pole_length: 0.5
+    # pole_mass: 0.1
+    # cart_mass: 1.0
+
     pole_length: 0.5
-    pole_mass: 1.0
+    pole_mass: 0.1
     cart_mass: 1.0
-  # inertial_prop_randomization_info:
-  #           pole_length:
-  #               distrib: choice
-  #               args: [0.5]
-  #           pole_mass:
-  #               distrib: choice
-  #               args: [1.0]
-  #           cart_mass: 
-  #               distrib: choice
-  #               args: [1.0]
+
   
   # will also randomize the initial state when the env is reset manually
   init_state_randomization_info:
     init_x:
       distrib: 'uniform'
       low:  -0.0001
-      high:  0.0001
+      high: -0.0001
     init_x_dot:
       distrib: 'uniform'
       low: -0.0001
       high: 0.0001
     init_theta:
       distrib: 'uniform'
-      low:  -3.14
-      high: -3.14
+      low:  3.14
+      high: 3.14
     init_theta_dot:
       distrib: 'uniform'
       low: -0.0001
       high: 0.0001
   task: stabilization
   task_info:
-    stabilization_goal: [0.0]
+    stabilization_goal: [0.0, 0.0, 0.0, 0.0]
     stabilization_goal_tolerance: 0.1
   episode_len_sec: 6 # total time of the sim
   cost: quadratic
   # done_on_out_of_bound: True
   done_on_out_of_bound: False
-  # obs_wrap_angle: True
+  obs_wrap_angle: False
