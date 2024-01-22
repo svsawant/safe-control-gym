@@ -76,20 +76,25 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     n_episodes = 1 if n_episodes is None else n_episodes
     
     # state constraints
-    state_constraints = np.vstack((random_env.constraints.state_constraints[0].lower_bounds,
-                                   random_env.constraints.state_constraints[0].upper_bounds)).T
+    # state_constraints = np.vstack((random_env.constraints.state_constraints[0].lower_bounds,
+    #                                random_env.constraints.state_constraints[0].upper_bounds)).T
     # print('state constraints', state_constraints)
     dim_state = ctrl.model.x_sym.shape[0] # state dimension
     
     # lower bound has the shape [-1, -1, -1, -1]
     # override state constraints with self-defined constraints
-    state_constraints = np.array([1 , 2, 3, 2])
-    state_constraints = np.vstack((-1 * state_constraints, \
-                                        state_constraints)).T
+    dim_grid = 3
+    grid_constraints = np.array([4, 3.14, 3.14])
+    # grid_constraints = np.vstack((-1 * grid_constraints, \
+    #                                     grid_constraints)).T
+    grid_constraints_ub = np.array([-0.1, -0.1, grid_constraints[2]])
+    grid_constraints = np.vstack((-1 * grid_constraints, \
+                                        grid_constraints_ub)).T
 
-    prec = [2, 3, 3, 2]
-    grids = gridding(dim_state, state_constraints, prec)
-    
+    prec = [2, 2, 2]
+    grids = gridding(dim_grid, grid_constraints, prec)
+    print('grids.all_points\n', grids.all_points)
+    # exit()
     
     # Run the experiment.
     # forward simulation all trajtories from all points in grids
@@ -97,7 +102,7 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     compute_new_ROA = True
     if compute_new_ROA:
         before_roa_time = time.time()
-        roa = compute_roa_par(grids, env_func, ctrl, no_traj=True)
+        roa = compute_roa(grids, env_func, ctrl, no_traj=True)
         after_roa_time = time.time()
         print('time for compute_roa', after_roa_time - before_roa_time)
         # save roa to file
@@ -105,13 +110,16 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
                            '_m_'+repr(m)+\
                            '_l_'+repr(l)+\
                            '.npy'
-        np.save(roa_file_name, roa)
+        result = [roa, grids]
+        result = roa
+        np.save(roa_file_name, result)
     else:
         # load roa from file
         roa_file_name = 'roa_M_'+repr(M)+\
                            '_m_'+repr(m)+\
                            '_l_'+repr(l)+\
                            '.npy'
+        # [roa, grids] = np.load(roa_file_name)
         roa = np.load(roa_file_name)
 
     safe_fraction = np.sum(roa) / len(grids.all_points)

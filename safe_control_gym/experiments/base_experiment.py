@@ -111,7 +111,12 @@ class BaseExperiment:
         if n_episodes is not None:
             while trajs < n_episodes:
                 # if the 'done' flag is not set, repeat stepping
-                action = self._select_action(obs=obs, info=info)
+                # action = self._select_action(obs=obs, info=info)
+                try:
+                    action = self._select_action(obs=obs, info=info)
+                except RuntimeError:
+                    print('RuntimeError in selecting action, skipping this step')
+                    action = action  # use the previous action
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
                     # sim_steps is 1 by default? => line 101

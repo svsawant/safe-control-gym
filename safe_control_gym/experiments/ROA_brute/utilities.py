@@ -6,6 +6,8 @@ from matplotlib.colors import ListedColormap
 import scipy.linalg
 from scipy import signal
 import torch
+from parfor import pmap
+import multiprocessing as mp
 
 from lyapnov import GridWorld
 from safe_control_gym.experiments.base_experiment import BaseExperiment
@@ -86,6 +88,10 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
 
         try:
             trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
+            roa[state_index] = trajs_data['info'][-1][-1]['goal_reached']
+            # close environments
+            static_env.close()
+            static_train_env.close()
         except RuntimeError:
             print('RuntimeError: possibly infeasible initial state')
             roa[state_index] = False
@@ -102,17 +108,140 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
         # print('\n')
         # exit()
         # print('goal reached', trajs_data['info'][-1][1]['goal_reached'])
-        roa[state_index] = trajs_data['info'][-1][-1]['goal_reached']
-        # close environments
-        static_env.close()
-        static_train_env.close()
+        
 
     # if equilibrium is None:
     #     equilibrium = np.zeros((1, ndim))
-
+    random_env.close()
     # # Compute an approximate ROA as all states that end up "close" to 0
     # dists = np.linalg.norm(end_states - equilibrium, ord=2, axis=1, keepdims=True).ravel()
     # roa = (dists <= tol)
+    if no_traj:
+        return roa
+    else:
+        return roa, trajectories
+
+def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
+    """Compute the largest ROA as a set of states in a discretization."""
+    if isinstance(grid, np.ndarray):
+        all_points = grid
+        nindex = grid.shape[0]
+        ndim = grid.shape[1]
+    else: # grid is a GridWorld instance
+        all_points = grid.all_points
+        nindex = grid.nindex # number of points in the discretization
+        ndim = grid.ndim  # dimension of the state space
+
+    random_env = env_func(gui=False)
+
+    roa = np.zeros((nindex))
+    
+    for state_index in range(nindex):
+        # for all initial state in the grid
+        # print('state_index', state_index)
+        init_state = grid.all_points[state_index]
+        init_state_dict = {'init_x': 0.0, 'init_x_dot': init_state[0], \
+                            'init_theta': init_state[1], 'init_theta_dot': init_state[2]}
+        init_state, _ = random_env.reset(init_state = init_state_dict)
+        # print('init_state', init_state)
+        static_env = env_func(gui=False, random_state=False, init_state=init_state)
+        static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
+        # Create experiment, train, and run evaluation
+        experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
+
+        try:
+            trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
+            roa[state_index] = trajs_data['info'][-1][-1]['goal_reached']
+            # close environments
+            static_env.close()
+            static_train_env.close()
+        except RuntimeError:
+            print('RuntimeError: possibly infeasible initial state')
+            roa[state_index] = False
+            # close environments
+            static_env.close()
+            static_train_env.close()
+            continue    
+
+    # if equilibrium is None:
+    #     equilibrium = np.zeros((1, ndim))
+    random_env.close()
+    # # Compute an approximate ROA as all states that end up "close" to 0
+    # dists = np.linalg.norm(end_states - equilibrium, ord=2, axis=1, keepdims=True).ravel()
+    # roa = (dists <= tol)
+    if no_traj:
+        return roa
+    else:
+        return roa, trajectories
+
+
+# define the function to be parallelized
+def simulate_at_index(state_index, grid, env_func, ctrl):
+    random_env = env_func(gui=False)
+    init_state = grid.all_points[state_index]
+    init_state_dict = {'init_x': init_state[0], 'init_x_dot': init_state[1], \
+                        'init_theta': init_state[2], 'init_theta_dot': init_state[3]}
+    init_state, _ = random_env.reset(init_state = init_state_dict)
+    # print('init_state', init_state)
+    static_env = env_func(gui=False, random_state=False, init_state=init_state)
+    static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
+    # Create experiment, train, and run evaluation
+    experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
+
+    # # if infeasible initial state, return False
+    # try:
+    #     trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
+    #     static_env.close()
+    #     static_train_env.close()
+    #     print('goal reached', trajs_data['info'][-1][-1]['goal_reached'])
+    #     # return result
+    #     if trajs_data['info'][-1][-1]['goal_reached']:
+    #         return True
+    #     else:
+    #         return False 
+    # except RuntimeError:
+    #     print('RuntimeError: possibly infeasible initial state')
+    #     # close environments
+    #     static_env.close()
+    #     static_train_env.close()
+    #     return False
+    # # close the env
+    trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
+    static_env.close()
+    static_train_env.close()
+    random_env.close()
+
+    return trajs_data['info'][-1][-1]['goal_reached']
+               
+
+def compute_roa_par(grid, env_func, ctrl, equilibrium=None, no_traj=True):
+    """Compute the largest ROA as a set of states in a discretization."""
+    if isinstance(grid, np.ndarray):
+        all_points = grid
+        nindex = grid.shape[0]
+        ndim = grid.shape[1]
+    else: # grid is a GridWorld instance
+        all_points = grid.all_points
+        nindex = grid.nindex # number of points in the discretization
+        ndim = grid.ndim  # dimension of the state space
+
+    # Forward-simulate all trajectories from initial points in the discretization
+    # random_env = env_func(gui=False)
+    roa = [False] * nindex
+
+    # # init multiprocessing pool
+    # pool = mp.Pool(mp.cpu_count())
+    # # pool apply the 'simulate_at_index' function to all state indices
+    # roa = [pool.apply(simulate_at_index, \
+    #                   args=(state_idx, grid, random_env, env_func, ctrl)) for state_idx in range(nindex)]
+    # # close the pool
+    # pool.close()
+    # roa = pmap(simulate_at_index, range(nindex), (grid, random_env, env_func, ctrl))
+    roa = pmap(simulate_at_index, range(nindex), (grid, env_func, ctrl))
+    
+    # convert list to np array
+    roa = np.array(roa)
+
     if no_traj:
         return roa
     else:
