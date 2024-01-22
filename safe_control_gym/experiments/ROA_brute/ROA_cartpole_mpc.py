@@ -83,13 +83,19 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     
     # lower bound has the shape [-1, -1, -1, -1]
     # override state constraints with self-defined constraints
-    state_constraints = np.array([1 , 2, 3, 2])
+    state_constraints = np.array([1, 3, 3, 3])
     state_constraints = np.vstack((-1 * state_constraints, \
                                         state_constraints)).T
+    num_states = 51
+    prec = []
+    prec.append(2) # dummy dimension: cartpole is position-invariant
+    for _ in range(dim_state - 1):
+        prec.append(num_states)
 
-    prec = [2, 3, 3, 2]
     grids = gridding(dim_state, state_constraints, prec)
-    
+    # print('grids.all_points\n', grids.all_points)
+    # print('grids.all_points.shape\n', grids.all_points.shape)
+    # exit()
     
     # Run the experiment.
     # forward simulation all trajtories from all points in grids
