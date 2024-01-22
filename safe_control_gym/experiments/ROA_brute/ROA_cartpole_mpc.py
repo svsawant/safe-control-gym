@@ -14,7 +14,8 @@ from safe_control_gym.experiments.base_experiment import BaseExperiment
 from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 
-from safe_control_gym.experiments.ROA_cartpole.utilities import *
+from utilities import *
+import time
 
 from pprint import pprint
 
@@ -41,13 +42,18 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
                        )
     random_env = env_func(gui=False)
     print('random env\n', random_env.__dir__())
-    print('random env.CTRL_STEPS', random_env.CTRL_STEPS)
-    print('random env.EPISODE_LEN_SEC', random_env.EPISODE_LEN_SEC)
-    print('\n')
+    # print('random env.CTRL_STEPS', random_env.CTRL_STEPS)
+    # print('random env.EPISODE_LEN_SEC', random_env.EPISODE_LEN_SEC)
+    # print('\n')
     # print('random env.constraints.constraints\n')
     # print(random_env.constraints.state_constraints[0].lower_bounds)
     # print(random_env.constraints.__dir__())
     # print('\n')
+    # print effective (true) parmeters
+    print('random env\n', random_env.__dir__())
+    print('random env.POLE_MASS', random_env.POLE_MASS)
+    print('random env.EFFECTIVE_POLE_LENGTH', random_env.EFFECTIVE_POLE_LENGTH)
+    print('random env.CART_MASS', random_env.CART_MASS)
 
     # exit()
     # Create controller.
@@ -55,7 +61,14 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
                 env_func,
                 **config.algo_config
                 )
+    # print('ctrl\n', ctrl.__dir__())
+    # print('ctrl.model\n', ctrl.model.__dir__())
+    print('ctrl.model.pole_mass', ctrl.model.pole_mass)
+    print('ctrl.model.pole_length', ctrl.model.pole_length)
+    print('ctrl.model.cart_mass', ctrl.model.cart_mass)
 
+
+    # exit()
     all_trajs = defaultdict(list)
     n_episodes = 1 if n_episodes is None else n_episodes
     
@@ -65,70 +78,43 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     # print('state constraints', state_constraints)
     dim_state = ctrl.model.x_sym.shape[0] # state dimension
     
-    grids = gridding(dim_state, state_constraints, num_states = 2)
-    # print(grids.__dir__())
-    # print(grids.all_points)
-    # print('grid.nindex', grids.nindex)
-    # print('grid.ndim', grids.ndim)
-    # exit()
-    # init state format
+    # lower bound has the shape [-1, -1, -1, -1]
+    # override state constraints with self-defined constraints
+    state_constraints = np.array([1 , 2, 3, 2])
+    state_constraints = np.vstack((-1 * state_constraints, \
+                                        state_constraints)).T
+
+    grids = gridding(dim_state, state_constraints, num_states = 3)
     
     
     # Run the experiment.
     # forward simulation all trajtories from all points in grids
-    roa = compute_roa(grids, env_func, ctrl, no_traj=True)
-    print('roa\n', roa)
-    print('grids.all_points\n', grids.all_points)
+    # compute_new_ROA = False
+    compute_new_ROA = True
+    if compute_new_ROA:
+        before_roa_time = time.time()
+        roa = compute_roa(grids, env_func, ctrl, no_traj=True)
+        after_roa_time = time.time()
+        print('time for compute_roa', after_roa_time - before_roa_time)
+        # save roa to file
+        roa_file_name = 'roa.npy'
+        np.save(roa_file_name, roa)
+    else:
+        # load roa from file
+        roa_file_name = 'roa.npy'
+        roa = np.load(roa_file_name)
 
+    safe_fraction = np.sum(roa) / len(grids.all_points)
+    print('safe fraction', safe_fraction)
+    
+    # print('roa\n', roa)
+    # print('grids.all_points\n', grids.all_points)
     # concatenate all points in grids with roa
     res = np.hstack(( roa.reshape(-1, 1), grids.all_points))
     print('res\n', res)
     ctrl.close()
     random_env.close()
     exit()
-    z = roa.reshape(grids.num_points)
-    print('num_points', grids.num_points)
-    ctrl.close()
-    random_env.close()
-    print('roa', z)
-    
-    if save_data:
-        results = {'roa': roa, 'grids': grids, }
-                # 'trajs_data': all_trajs, 'metrics': metrics \
-        path_dir = os.path.dirname('./temp-data/')
-        os.makedirs(path_dir, exist_ok=True)
-        with open(f'./temp-data/{config.algo}_data_{config.task}_{config.task_config.task}.pkl', 'wb') as file:
-            pickle.dump(results, file)
-
-    # plot ROA of the 1st and 3rd state dimension
-    fig = plt.figure(figsize=(10, 10), dpi=100, frameon=False)
-    fig.subplots_adjust(wspace=0.35)
-    x_max = np.max(np.abs(grids.all_points), axis=0)
-    pos_max = x_max[0]
-    theta_max = x_max[2]
-    plot_limits = np.hstack((- np.rad2deg([pos_max, theta_max]), \
-                               np.rad2deg([pos_max, theta_max])))
-    # extract the 1st and 3rd state dimension of z
-    print('z.shape', z.shape)
-    z = z
-    # print('\n')
-    # print('z after extract', z)
-    # print('z.shape', z.shape)
-    exit()
-
-
-    ax = plt.subplot(121)
-    alpha = 1
-    colors = [None] * 4
-    colors[0] = (0, 158/255, 115/255)       # ROA - bluish-green
-    colors[1] = (230/255, 159/255, 0)       # NN  - orange
-    colors[2] = (0, 114/255, 178/255)       # LQR - blue
-    colors[3] = (240/255, 228/255, 66/255)  # SOS - yellow
-
-    # True ROA
-    ax.contour(z.T, origin='lower', extent=plot_limits.ravel(), colors=(colors[0],), linewidths=1)
-    ax.imshow(z.T, origin='lower', extent=plot_limits.ravel(), cmap=binary_cmap(colors[0]), alpha=alpha)
-
 
     exit()
 

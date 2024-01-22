@@ -84,7 +84,16 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
         # Create experiment, train, and run evaluation
         experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
 
-        trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
+        try:
+            trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
+        except RuntimeError:
+            print('RuntimeError: possibly infeasible initial state')
+            roa[state_index] = False
+            # close environments
+            static_env.close()
+            static_train_env.close()
+            continue
+        # trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
         # print('obs\n', trajs_data['obs'])
         # print('trajs_data\n', trajs_data['info'][-1][-1])
         # print('\n')

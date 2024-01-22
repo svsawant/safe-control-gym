@@ -22,5 +22,5 @@ python3 ./ROA_cartpole_mpc.py \
     --task ${SYS_NAME} \
     --algo ${ALGO} \
     --overrides \
-        ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
-        ./config_overrides/${SYS}/${ALGO}_${SYS}_${TASK}.yaml
+        ./config_overrides/${SYS}/${SYS}_${TASK}_ROA.yaml \
+        ./config_overrides/${SYS}/${ALGO}_${SYS}_ROA.yaml
