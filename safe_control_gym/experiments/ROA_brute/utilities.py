@@ -121,7 +121,9 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
     else:
         return roa, trajectories
 
-def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
+
+
+def compute_roa_fix(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
     """Compute the largest ROA as a set of states in a discretization."""
     if isinstance(grid, np.ndarray):
         all_points = grid
@@ -239,6 +241,49 @@ def compute_roa_par(grid, env_func, ctrl, equilibrium=None, no_traj=True):
     # roa = pmap(simulate_at_index, range(nindex), (grid, random_env, env_func, ctrl))
     roa = pmap(simulate_at_index, range(nindex), (grid, env_func, ctrl))
     
+    # convert list to np array
+    roa = np.array(roa)
+
+    if no_traj:
+        return roa
+    else:
+        return roa, trajectories
+
+# define the function to be parallelized
+def simulate_at_index_fix(state_index, grid, env_func, ctrl):
+    random_env = env_func(gui=False)
+    init_state = grid.all_points[state_index]
+    init_state_dict = {'init_x': 0.0, 'init_x_dot': init_state[0], \
+                        'init_theta': init_state[1], 'init_theta_dot': init_state[2]}
+    init_state, _ = random_env.reset(init_state = init_state_dict)
+    # print('init_state', init_state)
+    static_env = env_func(gui=False, random_state=False, init_state=init_state)
+    static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
+    # Create experiment, train, and run evaluation
+    experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
+
+    trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
+    static_env.close()
+    static_train_env.close()
+    random_env.close()
+
+    return trajs_data['info'][-1][-1]['goal_reached']
+               
+
+def compute_roa_fix_par(grid, env_func, ctrl, equilibrium=None, no_traj=True):
+    """Compute the largest ROA as a set of states in a discretization."""
+    if isinstance(grid, np.ndarray):
+        all_points = grid
+        nindex = grid.shape[0]
+        ndim = grid.shape[1]
+    else: # grid is a GridWorld instance
+        all_points = grid.all_points
+        nindex = grid.nindex # number of points in the discretization
+        ndim = grid.ndim  # dimension of the state space
+
+    # Forward-simulate all trajectories from initial points in the discretization
+    roa = [False] * nindex
+    roa = pmap(simulate_at_index_fix, range(nindex), (grid, env_func, ctrl))
     # convert list to np array
     roa = np.array(roa)
 

@@ -87,13 +87,14 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     grid_constraints = np.array([4, 3.14, 3.14])
     # grid_constraints = np.vstack((-1 * grid_constraints, \
     #                                     grid_constraints)).T
-    grid_constraints_ub = np.array([-0.1, -0.1, grid_constraints[2]])
+    grid_constraints_ub = np.array([grid_constraints[0], -0.1, grid_constraints[2]])
     grid_constraints = np.vstack((-1 * grid_constraints, \
                                         grid_constraints_ub)).T
 
+    # prec = [19, 20, 19]
     prec = [2, 2, 2]
     grids = gridding(dim_grid, grid_constraints, prec)
-    print('grids.all_points\n', grids.all_points)
+    # print('grids.all_points\n', grids.all_points)
     # exit()
     
     # Run the experiment.
@@ -102,7 +103,7 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     compute_new_ROA = True
     if compute_new_ROA:
         before_roa_time = time.time()
-        roa = compute_roa(grids, env_func, ctrl, no_traj=True)
+        roa = compute_roa_fix_par(grids, env_func, ctrl, no_traj=True)
         after_roa_time = time.time()
         print('time for compute_roa', after_roa_time - before_roa_time)
         # save roa to file
