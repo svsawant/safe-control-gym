@@ -1,5 +1,5 @@
 '''Model Predictive Control.'''
-
+import time
 from copy import deepcopy
 
 import casadi as cs
@@ -262,7 +262,7 @@ class MPC(BaseController):
         Returns:
             action (ndarray): Input/action to the task/env.
         '''
-
+        time_before = time.time()
         opti_dict = self.opti_dict
         opti = opti_dict['opti']
         x_var = opti_dict['x_var']
@@ -305,6 +305,8 @@ class MPC(BaseController):
         else:
             action = np.array([u_val[0]])
         self.prev_action = action
+        time_after = time.time()
+        print('MPC _select_action time: ', time_after - time_before)
         return action
 
     def get_references(self):

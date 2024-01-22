@@ -77,7 +77,7 @@ class BaseExperiment:
             print('Evaluation done.')
         return dict(trajs_data), metrics
 
-    def _execute_evaluations(self, n_episodes=None, n_steps=None, log_freq=None, seeds=None):
+    def _execute_evaluations(self, n_episodes=None, n_steps=None, log_freq=None, seeds=None, full_eval=False):
         '''Runs the experiments and collects all the required data.
 
         Args:
@@ -110,22 +110,36 @@ class BaseExperiment:
 
         if n_episodes is not None:
             while trajs < n_episodes:
+                # if the 'done' flag is not set, repeat stepping
                 action = self._select_action(obs=obs, info=info)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
+                    # sim_steps is 1 by default? => line 101
                     obs, _, done, info = self.env.step(action)
-                    if done:
+                    print('obs', obs)
+                    # print('done', info)
+                    # input('press enter to continue')
+                    # exit()
+                    if done and not full_eval:
+                        # terminate when done is returned
                         trajs += 1
                         if trajs < n_episodes and seeds is not None:
                             seed = seeds[trajs]
                         obs, info = self._evaluation_reset(ctrl_data=ctrl_data, sf_data=sf_data)
                         break
+                    # elif 
+                        # otherwise, keep stepping
+
         elif n_steps is not None:
             while steps < n_steps:
                 action = self._select_action(obs=obs, info=info)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
                     obs, _, done, info = self.env.step(action)
+                    # print('obs\n', obs)
+                    # print('done\n', done)
+                    # print('info\n', info)
+                    # input('press enter to continue')
                     steps += 1
                     if steps >= n_steps:
                         self.env.save_data()
@@ -358,6 +372,8 @@ class RecordDataWrapper(gym.Wrapper):
 
         if done:
             self.save_data()
+        # print('info', info)
+        # input('press enter to continue')
 
         return obs, reward, done, info
 
