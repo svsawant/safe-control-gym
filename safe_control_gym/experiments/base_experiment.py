@@ -116,7 +116,10 @@ class BaseExperiment:
                     action = self._select_action(obs=obs, info=info)
                 except RuntimeError:
                     print('RuntimeError in selecting action, skipping this step')
-                    action = action  # use the previous action
+                    if 'action' in locals():
+                        action = action  # use the previous action
+                    else:
+                        action = np.zeros(self.env.action_space.shape)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
                     # sim_steps is 1 by default? => line 101
