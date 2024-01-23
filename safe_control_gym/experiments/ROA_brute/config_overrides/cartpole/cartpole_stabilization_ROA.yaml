@@ -50,7 +50,7 @@ task_config:
   task_info:
     stabilization_goal: [0.0, 0.0, 0.0, 0.0]
     stabilization_goal_tolerance: 0.1
-  episode_len_sec: 6 # total time of the sim
+  episode_len_sec: 4 # total time of the sim
   cost: quadratic
   # done_on_out_of_bound: True
   done_on_out_of_bound: False

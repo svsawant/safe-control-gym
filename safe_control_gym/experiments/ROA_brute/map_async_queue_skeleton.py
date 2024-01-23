@@ -45,10 +45,9 @@ def main():
         exist_number_list = [x['number'] for x in result]
         # subtract the existing number list from the desired number list
         search_list = list(set(number_list) - set(exist_number_list))
-    print('number_list', search_list)
+        print('search_list', search_list)
     # send task to pool
     roa = pool.map_async(task, [(x, q) for x in search_list])
-    
     time.sleep(5)
     all_done = False
     while not all_done:
