@@ -192,7 +192,15 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
         # terminate the pool when all tasks are done
         if len(result) == len(index_list):
             all_done = True
-
+        else:
+            current_time = time.time()
+            # print the time elapsed every 30 seconds
+            if (current_time - time_before) % 30== 0:
+                print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+                print('time elapsed', current_time - time_before)
+                # print the number of tasks done
+                print('progress: {}, {}'.format(len(result), len(index_list)))
+                print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
     time_after = time.time()
     print('time for parallel processing', time_after - time_before)
     print('roa', roa.get())
@@ -207,10 +215,10 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
         # read the result from json file
         with open(result_file_name, 'r') as f:
             result = json.load(f)
-        print('result before sorting', result)
+        # print('result before sorting', result)
         # sort the result list
         result.sort(key=lambda x: x['idx'])
-        print('result after sorting', result)
+        # print('result after sorting', result)
         # save the sorted result to json file
         with open(result_file_name, 'w') as f:
             json.dump(result, f, indent=4)

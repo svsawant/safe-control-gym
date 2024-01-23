@@ -115,7 +115,7 @@ class BaseExperiment:
                 try:
                     action = self._select_action(obs=obs, info=info)
                 except RuntimeError:
-                    print('RuntimeError in selecting action, skipping this step')
+                    print('RuntimeError in selecting action, using last avaible action')
                     if 'action' in locals():
                         action = action  # use the previous action
                     else:
@@ -124,7 +124,7 @@ class BaseExperiment:
                 for _ in range(sim_steps):
                     # sim_steps is 1 by default? => line 101
                     obs, _, done, info = self.env.step(action)
-                    print('obs', obs)
+                    # print('obs', obs)
                     # print('done', info)
                     # input('press enter to continue')
                     # exit()
