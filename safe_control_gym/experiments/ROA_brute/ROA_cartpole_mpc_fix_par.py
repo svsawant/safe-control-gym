@@ -116,15 +116,15 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     
     # override state constraints for grids with self-defined constraints
     dim_grid = 3
-    grid_constraints = np.array([3., 3., 3.])
+    grid_constraints = np.array([3., 3.14, 3.14])
     # grid_constraints = np.array([1, 0.3, 0.2])
-    # grid_constraints = np.vstack((-1 * grid_constraints, \
-    #                                     grid_constraints)).T
-    grid_constraints_ub = np.array([grid_constraints[0], -0.1, grid_constraints[2]])
     grid_constraints = np.vstack((-1 * grid_constraints, \
-                                        grid_constraints_ub)).T
+                                        grid_constraints)).T
+    # grid_constraints_ub = np.array([grid_constraints[0], -0.1, grid_constraints[2]])
+    # grid_constraints = np.vstack((-1 * grid_constraints, \
+    #                                     grid_constraints_ub)).T
 
-    prec = [19, 20, 19]
+    prec = [41, 51, 41]
     # prec = [2, 2, 2]
     grids = gridding(dim_grid, grid_constraints, prec)
     ################### parallel processing code here ###################
@@ -168,6 +168,13 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
         target_list = list(set(index_list) - set(exist_idx_list))
         
     print('target_list', target_list)
+    # # create a log file to record the progress
+    # log_file_name = 'progress.json'
+    # if not os.path.exists(log_file_name):
+    #     # write a empty list to json file
+    #     log = []
+    #     with open(log_file_name, 'w') as f:
+    #         json.dump(log, f, indent=4)
     # send task to pool
     # roa = pool.map_async(run_each_exp, [(idx, env_func, ctrl, grids, q) \
     #                                             for idx in target_list])
@@ -195,11 +202,13 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
         else:
             current_time = time.time()
             # print the time elapsed every 30 seconds
-            if (current_time - time_before) % 30== 0:
+            if (current_time - time_before) % 30 == 0:
                 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
                 print('time elapsed', current_time - time_before)
                 # print the number of tasks done
                 print('progress: {}, {}'.format(len(result), len(index_list)))
+                # with open(log_file_name, 'w') as f:
+                #     json.dump(len(result)/len(index_list), f, indent=4)
                 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
     time_after = time.time()
     print('time for parallel processing', time_after - time_before)
