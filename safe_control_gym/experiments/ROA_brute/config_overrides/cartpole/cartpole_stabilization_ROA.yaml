@@ -29,23 +29,11 @@ task_config:
     cart_mass: 1.0
   
   # will also randomize the initial state when the env is reset manually
-  init_state_randomization_info:
-    init_x:
-      distrib: 'uniform'
-      low:  -0.0001
-      high:  0.0001
-    init_x_dot:
-      distrib: 'uniform'
-      low: -0.0001
-      high: 0.0001
-    init_theta:
-      distrib: 'uniform'
-      low:  -0.0001
-      high:  0.0001
-    init_theta_dot:
-      distrib: 'uniform'
-      low: -0.0001
-      high: 0.0001
+  init_state:
+    init_x: 0.0
+    init_x_dot: 0.0
+    init_theta: 0.0
+    init_theta_dot: 0.0
   task: stabilization
   task_info:
     stabilization_goal: [0.0, 0.0, 0.0, 0.0]
