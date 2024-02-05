@@ -116,7 +116,8 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     
     # override state constraints for grids with self-defined constraints
     dim_grid = 4
-    grid_constraints = np.array([2., 3., 3.14, 3.14])
+    # grid_constraints = np.array([0.5, 0.5, 0.5, 0.5])
+    grid_constraints = np.array([0.5, 1.5, 1.57, 1.57])
     # grid_constraints = np.array([1, 0.3, 0.2])
     grid_constraints = np.vstack((-1 * grid_constraints, \
                                         grid_constraints)).T
@@ -134,7 +135,7 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     q = manager.Queue()
     # init pool
     cpu_count = multiprocessing.cpu_count()
-    pool = multiprocessing.Pool(cpu_count - 1)
+    pool = multiprocessing.Pool(cpu_count - 2)
 
     # get index list of all points in grids
     index_list = list(range(len(grids.all_points)))
@@ -142,8 +143,8 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     # # get the state for the first index 
     # state = grids.all_points[index_list[0]]
     # print('state', state)
-    result_file_name =  'results_M_{:0.1f}_m_{:0.1f}_l_{:0.1f}_prec_{}_{}_{}_{}.json'\
-                            .format(M, m, l, prec[0], prec[1], prec[2], prec[3])
+    result_file_name =  'results_{}_M_{:0.1f}_m_{:0.1f}_l_{:0.1f}_prec_{}_{}_{}_{}.json'\
+                            .format(config.algo, M, m, l, prec[0], prec[1], prec[2], prec[3])
     print('result_file_name', result_file_name)
     # if the desired json file does not exist, create one
     if not os.path.exists(result_file_name):
