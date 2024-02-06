@@ -109,7 +109,7 @@ def run(config, grids=None, sampled_init_state_idx=0):
             x_seq, actions, x_next_seq = gather_training_samples(train_runs, epoch-1, num_samples, train_envs[epoch-1].np_random)
         else:
             x_seq, actions, x_next_seq = gather_training_samples(train_runs, epoch-1, num_samples)
-        # print(x_seq.shape, actions.shape, x_next_seq.shape)
+        print(x_seq.shape, actions.shape, x_next_seq.shape)
         # print(num_epochs, num_train_episodes_per_epoch, num_test_episodes_per_epoch, num_samples, train_envs[epoch-1].state_dim, config.output_dir)
         train_inputs, train_outputs = ctrl.preprocess_training_data(x_seq, actions, x_next_seq)
         # print(train_inputs.shape, train_outputs.shape)
@@ -160,11 +160,11 @@ def run(config, grids=None, sampled_init_state_idx=0):
                  data_inputs=ctrl.data_inputs,
                  data_targets=ctrl.data_targets)
 
-        make_plots(test_runs, train_runs, train_envs[0].state_dim, config.output_dir)
+        # make_plots(test_runs, train_runs, train_envs[0].state_dim, config.output_dir)
 
-    fname = os.path.join(config.output_dir, 'figs', 'avg_rmse_cost_learning_curve.csv')
-    plot_data_eff_from_csv(fname,
-                           'Cartpole Data Efficiency')
+    # fname = os.path.join(config.output_dir, 'figs', 'avg_rmse_cost_learning_curve.csv')
+    # plot_data_eff_from_csv(fname,
+                        #    'Cartpole Data Efficiency')
     #plot_runs(test_runs, num_epochs)
     return train_runs, test_runs
 
@@ -193,13 +193,21 @@ if __name__ == "__main__":
     grids = gridding(dim_grid, grid_constraints, prec)
     # sample random integers in the range of grids.nindex
     # and convert them to init states
-    num_init_states = 2
+    num_init_states = 30
     sampled_init_state_idx = np.random.choice(grids.nindex, num_init_states, replace=False)
+    skip = -1
     
     print('sampled_init_state_idx:', sampled_init_state_idx)
     if config.plot_dir == '':
         for i in range(num_init_states):
-            train_runs, test_runs = run(config, grids=grids, sampled_init_state_idx=sampled_init_state_idx[i])
+            if i <= skip:
+                continue
+            else:#
+                try:
+                    train_runs, test_runs = run(config, grids=grids, sampled_init_state_idx=sampled_init_state_idx[i])
+                except:
+                    print('Error in run {} at idx {}'.format(i, sampled_init_state_idx[i]))
+                    continue
     else:
         fname = config.plot_dir
         plot_data_eff_from_csv(fname,

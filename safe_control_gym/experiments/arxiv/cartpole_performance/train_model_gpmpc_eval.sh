@@ -1,7 +1,9 @@
 #!/bin/bash
 
+MASS = '1000'
+
 # Remove previous results.
-rm -r -f ./temp-data/
+rm -r -f ./temp-data/M_${MASS}/
 # rm -r -f ./data/
 
 # _XXX refers to using a prior model with 130, 150, and 300% inertial parameters.
@@ -21,7 +23,7 @@ rm -r -f ./temp-data/
 # rm -r -f ./data/
 
 python3 ./utils/gpmpc_cartpole_data_eff_diff_init.py \
-            --algo gp_mpc --task cartpole --overrides ./config_overrides/gpmpc_cartpole_data_eff_l_1000.yaml
+            --algo gp_mpc --task cartpole --overrides ./config_overrides/gpmpc_cartpole_data_eff_M_${MASS}.yaml
 
-mv ./temp-data/cartpole_data_eff/* ./data/cartpole_data_eff/
+mv ./temp-data/M_${MASS}/cartpole_data_eff/* ./data/cartpole_data_eff/M_${MASS}/
 

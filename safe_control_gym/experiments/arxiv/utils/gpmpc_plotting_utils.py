@@ -50,7 +50,7 @@ def plot_runs(all_runs, num_epochs, episode=0, ind=0, ylabel='x position', dir=N
 
 
 def plot_learning_curve(avg_rewards, num_points_per_epoch, stem, dir):
-    samples = num_points_per_epoch
+    samples = num_points_per_epoch # data number
     rewards = np.array(avg_rewards)
     plt.plot(samples, rewards)
     plt.title('Avg Episode' + stem)
@@ -177,14 +177,21 @@ def make_quad_plots(test_runs, train_runs, trajectory, num_inds, dir):
     plot_learning_curve(rmse_error_xz, num_points_per_epoch, 'rmse_xz_error_learning_curve', fig_dir)
 
 def gather_training_samples(all_runs, epoch_i, num_samples, rand_generator=None):
+    # sample training data from each episode
+    # and concatenate the data to num_samples data points
     n_episodes = len(all_runs[epoch_i].keys())
-    num_samples_per_episode = int(num_samples/n_episodes)
+    num_samples_per_episode = int(num_samples/n_episodes) # data number
+    print('num_samples', num_samples)
+    # input('press enter to continue')
     x_seq_int = []
     x_next_seq_int = []
     actions_int = []
     for episode_i in range(n_episodes):
         run_results_int = all_runs[epoch_i][episode_i]
-        n = run_results_int['action'].shape[0]
+        n = run_results_int['action'].shape[0] # number of actions (data points)
+        # print('n', n)
+        # print('num_samples_per_episode', num_samples_per_episode)
+        # input('press enter to continue')
         if num_samples_per_episode < n:
             if rand_generator is not None:
                 rand_inds_int = rand_generator.choice(n-1, num_samples_per_episode, replace=False)
