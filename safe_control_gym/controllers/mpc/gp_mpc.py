@@ -830,19 +830,23 @@ class GPMPC(MPC):
         Returns:
             action (ndarray): Desired policy action.
         '''
-
-        if self.gaussian_process is None:
-            action = self.prior_ctrl.select_action(obs)
-        else:
-            if (self.last_obs is not None and self.last_action is not None and self.online_learning):
-                print('[ERROR]: Not yet supported.')
-                exit()
-            t1 = time.perf_counter()
-            action = self.select_action_with_gp(obs)
-            t2 = time.perf_counter()
-            print(f'GP SELECT ACTION TIME: {(t2 - t1)}')
-            self.last_obs = obs
-            self.last_action = action
+        try:
+            if self.gaussian_process is None:
+                action = self.prior_ctrl.select_action(obs)
+            else:
+                if (self.last_obs is not None and self.last_action is not None and self.online_learning):
+                    print('[ERROR]: Not yet supported.')
+                    exit()
+                t1 = time.perf_counter()
+                action = self.select_action_with_gp(obs)
+                t2 = time.perf_counter()
+                print(f'GP SELECT ACTION TIME: {(t2 - t1)}')
+                self.last_obs = obs
+                self.last_action = action
+        except Exception as e:
+            print(f'[ERROR]: gp_mpc.select_action: {e}')
+            print('using the last action')
+            action = self.last_action
         return action
 
     def close(self):
