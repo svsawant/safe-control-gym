@@ -11,10 +11,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FormatStrFormatter
 
-from safe_control_gym.experiments.ROA_cartpole.utilities import *
-from lyapnov import LyapunovNN, Lyapunov, QuadraticFunction, GridWorld_pendulum
-from utilities import balanced_class_weights, dlqr, \
-                      get_discrete_linear_system_matrices, onestep_dynamics
+from safe_control_gym.lyapunov.utilities import *
+from safe_control_gym.lyapunov.lyapunov import LyapunovNN, Lyapunov, QuadraticFunction, GridWorld_pendulum
 
 # set random seed for reproducibility
 seed = 5
@@ -65,8 +63,8 @@ b = 0.1     # rotational friction
 # State and action normalizers
 theta_max = np.deg2rad(180)                     # angular position [rad]
 omega_max = np.deg2rad(360)                     # angular velocity [rad/s]
-# u_max     = g * m * L * np.sin(np.deg2rad(60))  # torque [N.m], control action
-u_max = 0.5
+u_max     = g * m * L * np.sin(np.deg2rad(60))  # torque [N.m], control action
+# u_max = 0.5
 
 state_norm = (theta_max, omega_max)
 action_norm = (u_max,)
@@ -94,7 +92,7 @@ dynamics_p = pendulum_p.__call__
 ############################### Discretization ################################
 state_constraints = np.array([[-theta_max, theta_max], [-omega_max, omega_max]])
 # print('state_constraints: ', state_constraints)
-num_states = 100
+num_states = 251
 
 grid_limits = np.array([[-1., 1.], ] * state_dim)
 # state_discretization = gridding(state_dim, state_constraints=None, num_states = 100)

@@ -11,13 +11,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FormatStrFormatter
 
-from safe_control_gym.experiments.ROA_cartpole.utilities import *
-from lyapnov import LyapunovNN, Lyapunov, QuadraticFunction, GridWorld_pendulum
-from utilities import balanced_class_weights, dlqr, \
-                      get_discrete_linear_system_matrices, onestep_dynamics
+from safe_control_gym.lyapunov.utilities import *
+from safe_control_gym.lyapunov.lyapunov import LyapunovNN, Lyapunov, QuadraticFunction, GridWorld_pendulum
 
 # set random seed for reproducibility
-seed = 1
+seed = 2
 torch.manual_seed(seed)
 np.random.seed(seed)
 
@@ -61,8 +59,8 @@ b = 0.1     # rotational friction
 # State and action normalizers
 theta_max = np.deg2rad(180)                     # angular position [rad]
 omega_max = np.deg2rad(360)                     # angular velocity [rad/s]
-# u_max     = g * m * L * np.sin(np.deg2rad(60))  # torque [N.m], control action
-u_max = 0.5
+u_max     = g * m * L * np.sin(np.deg2rad(60))  # torque [N.m], control action
+# u_max = 0.5
 
 state_norm = (theta_max, omega_max)
 action_norm = (u_max,)
@@ -103,7 +101,7 @@ print('Grid size: {}'.format(state_discretization.nindex))
 print('Discretization constant (tau): {}'.format(tau))
 
 # Set initial safe set as a ball around the origin (in normalized coordinates)
-cutoff_radius    = 0.5
+cutoff_radius    = 0.1
 initial_safe_set = np.linalg.norm(state_discretization.all_points, ord=2, axis=1) <= cutoff_radius
 # print('state_discretization.all_points.shape: ', state_discretization.all_points.shape)
 # print('initial_safe_set.sum(): ', initial_safe_set.shape)
@@ -142,8 +140,8 @@ tol = 0.1
 compute_new_roa = False
 # compute_new_roa = True
 script_dir = os.path.dirname(__file__)
-roa_file_name = 'roa_pendulum.npy'
-traj_file_name = 'traj_pendulum.npy'
+roa_file_name = 'roa_pendulum_{}.npy'.format(num_states)
+traj_file_name = 'traj_pendulum_{}.npy'.format(num_states)
 # append the file name to the current path
 roa_file_name = os.path.join(script_dir, roa_file_name)
 traj_file_name = os.path.join(script_dir, traj_file_name)
@@ -250,6 +248,10 @@ for _ in range(outer_iters):
 
     ## Forward-simulate "gap" states to determine 
     ## which ones we can add to our ROA estimate
+    # print('grid.all_points.shape', grid.all_points.shape)
+    # print('idx_gap.shape', idx_gap.shape)
+    # print('idx_gap', idx_gap)
+    # exit()
     gap_states = grid.all_points[idx_gap]
     gap_future_values = np.zeros((gap_states.shape[0], 1))
     for state_idx in range(gap_states.shape[0]):
@@ -299,13 +301,15 @@ for _ in range(outer_iters):
         for state_idx in range(num_training_states):
             decision_distance_for_states[state_idx] = lyapunov_nn.lyapunov_function(training_states[state_idx])
         decision_distance = safe_level - decision_distance_for_states
-
+        print('decision_distance shape', decision_distance.shape)
+        # exit()
         # Perceptron loss with class weights (here all classes are weighted equally)
         class_weights, class_counts = balanced_class_weights(roa_labels.astype(bool))
         # convert class_weights to torch tensor
         class_weights = torch.tensor(class_weights, dtype=torch.float32, device=myDevice, requires_grad=False)
         classifier_loss = class_weights * torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
         # classifier_loss =  torch.max(- class_label * decision_distance, torch.zeros_like(decision_distance, device=myDevice)) 
+        print('classifier_loss.shape', classifier_loss.shape)
         # print('classifier_loss', classifier_loss.T)
         # Enforce decrease constraint with Lagrangian relaxation
         torch_dv_nn = torch.zeros((num_training_states, 1), dtype=torch.float32, device=myDevice, requires_grad=False)
@@ -321,10 +325,12 @@ for _ in range(outer_iters):
         
         decrease_loss = roa_labels * torch.max(torch_dv_nn, torch.zeros_like(torch_dv_nn, device=myDevice))  \
                             /(training_states_forwards + OPTIONS.eps)
+        print('decrease_loss.shape', decrease_loss.shape)
         # print('decrease_loss', decrease_loss.T)
         loss = torch.mean(classifier_loss + lagrange_multiplier * decrease_loss)
         # make_dot(classifier_loss)
         print('training loss', loss)
+        input('press enter to continue')
         optimizer.zero_grad() # zero gradiants for every batch !!
         loss.backward()
         # loss.backward(retain_graph=True)
