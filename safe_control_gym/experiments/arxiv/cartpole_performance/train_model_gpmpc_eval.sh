@@ -1,6 +1,6 @@
 #!/bin/bash
 
-MASS = '1000'
+MASS='large'
 
 # Remove previous results.
 rm -r -f ./temp-data/M_${MASS}/

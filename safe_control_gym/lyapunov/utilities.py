@@ -8,10 +8,12 @@ from scipy import signal
 import torch
 from parfor import pmap
 import multiprocessing as mp
+import casadi as cs
 
 from safe_control_gym.lyapunov.lyapunov import GridWorld
 from safe_control_gym.experiments.base_experiment import BaseExperiment
 from safe_control_gym.lyapunov.lyapunov import config
+from safe_control_gym.math_and_models.symbolic_systems import SymbolicModel
 
 NP_DTYPE = config.np_dtype
 TF_DTYPE = config.dtype
@@ -68,11 +70,8 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
     random_env = env_func(gui=False)
 
     roa = np.zeros((nindex))
-    
-    # if no_traj:
-    #     pass
-    # else:
-    #     trajectories = np.empty((nindex, ndim, horizon))
+    trajectories = [{} for _ in range(nindex)]
+
     for state_index in range(nindex):
         # for all initial state in the grid
         # print('state_index', state_index)
@@ -85,16 +84,29 @@ def compute_roa(grid, env_func, ctrl ,equilibrium=None, no_traj=True):
         static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
         # Create experiment, train, and run evaluation
         experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
-
+        
         try:
             trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1, verbose=False)
             roa[state_index] = trajs_data['info'][-1][-1]['goal_reached']
+            input_traj = trajs_data['action'][0]
+            state_traj = trajs_data['obs'][0]
+            trajectories[state_index]['state_traj'] = state_traj
+            trajectories[state_index]['input_traj'] = input_traj
+            print('trajectory[state_index]', trajectories[state_index])
+            
+            print('goal reached', trajs_data['info'][-1][-1]['goal_reached'])
+            # exit()
             # close environments
             static_env.close()
             static_train_env.close()
         except RuntimeError:
             print('RuntimeError: possibly infeasible initial state')
             roa[state_index] = False
+            # print(ctrl.model.__dir__())
+            # print(ctrl.model.nx)
+            # exit()
+            trajectories[state_index]['state_traj'] = np.zeros((2, ctrl.model.nx))
+            trajectories[state_index]['input_traj'] = np.zeros((1, ctrl.model.nu))
             # close environments
             static_env.close()
             static_train_env.close()
@@ -453,6 +465,9 @@ class InvertedPendulum(object):
         self.gravity = 9.81
         self.friction = friction
         self.dt = dt
+        self.nx = 2
+        self.nu = 1
+        self.symbolic = None
 
         self.normalization = normalization
         if normalization is not None:
@@ -625,6 +640,47 @@ class InvertedPendulum(object):
         # Normalize
         return state_derivative
     
+    def _setup_symbolic(self, prior_prop={}, **kwargs):
+        """Setup the casadi symbolic dynamics."""
+        length = self.length
+        gravity = self.gravity
+        mass = self.mass
+        friction = self.friction
+        inertia = self.inertia # mass * length ** 2
+        dt = self.dt
+        # Input variables.
+        theta = cs.MX.sym('theta')
+        theta_dot = cs.MX.sym('theta_dot')
+        X = cs.vertcat(theta, theta_dot)
+        U = cs.MX.sym('u')
+        nx = 2
+        nu = 1
+        # Dynamics.
+        theta_ddot = gravity / length * cs.sin(theta) + U / inertia
+        if friction > 0:
+            theta_ddot -= friction / inertia * theta_dot
+        X_dot = cs.vertcat(theta_dot, theta_ddot)
+        # Observation.
+        Y = cs.vertcat(theta, theta_dot)
+        # Define cost (quandratic form).
+        Q = cs.MX.sym('Q', nx, nx)
+        R = cs.MX.sym('R', nu, nu)
+        Xr = cs.MX.sym('Xr', nx, 1)
+        Ur = cs.MX.sym('Ur', nu, 1)
+        cost_func = 0.5 * (X - Xr).T @ Q @ (X - Xr) + 0.5 * (U - Ur).T @ R @ (U - Ur)
+        # Define dynamics and cost dictionaries.
+        dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}}
+        cost = {'cost_func': cost_func, 'vars': {'X': X, 'U': U, 'Xr': Xr, 'Ur': Ur, 'Q': Q, 'R': R}}
+        params = {
+            # prior inertial properties
+            'pole_length': length,
+            'pole_mass': mass,
+            # equilibrium point for linearization
+            'X_EQ': np.zeros(self.nx),
+            'U_EQ': np.atleast_2d(Ur)[0, :],
+        }
+         # Setup symbolic model.
+        self.symbolic = SymbolicModel(dynamics=dynamics, cost=cost, dt=dt, params=params)
 
 def compute_roa_pendulum(grid, closed_loop_dynamics, horizon=100, tol=1e-3, equilibrium=None, no_traj=True):
     """Compute the largest ROA as a set of states in a discretization."""
