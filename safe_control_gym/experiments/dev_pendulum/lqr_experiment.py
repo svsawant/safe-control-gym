@@ -43,6 +43,19 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
                 env_func,
                 **config.algo_config
                 )
+    # print('ctrl.__dir__: \n', ctrl.__dir__())
+    # print('ctrl.model.__dir__: \n', ctrl.model.__dir__())
+    # print('ctrl.env.__dir__: \n', ctrl.env.__dir__())
+    # print('ctrl.env.obs_wrap_angle: \n', ctrl.env.obs_wrap_angle)
+    # loss = ctrl.model.loss(x=np.pi * 2,
+    loss = ctrl.model.loss(x=np.array([6.5886, 0.0]),
+                            u=0,
+                            Xr=np.zeros((ctrl.model.nx, 1)),
+                            Ur=np.zeros((ctrl.model.nu, 1)),
+                            Q=ctrl.Q,
+                            R=ctrl.R)['l']
+    print('loss: ', loss)
+    # exit()
 
     all_trajs = defaultdict(list)
     n_episodes = 1 if n_episodes is None else n_episodes
@@ -63,8 +76,10 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
         else:
             trajs_data, _ = experiment.run_evaluation(training=True, n_steps=n_steps)
 
-        if gui:
-            post_analysis(trajs_data['obs'][0], trajs_data['action'][0], ctrl.env)
+        # if gui:
+        # print('Time taken:', time_after - time_before)
+        print('goal reached', trajs_data['info'][-1][-1]['goal_reached'])
+        post_analysis(trajs_data['obs'][0], trajs_data['action'][0], ctrl.env)
 
         # Close environments
         static_env.close()

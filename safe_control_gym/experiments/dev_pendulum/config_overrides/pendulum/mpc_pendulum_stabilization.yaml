@@ -1,13 +1,16 @@
 algo: mpc
 algo_config:
-  horizon: 100
+  horizon: 70
   r_mpc:
-    - 0.1
+    - 0.01
   q_mpc:
-    - 5.0
+    - 1
     - 0.1
   # Prior info
   prior_info:
+    # prior_prop: 
+    #   pole_length: 1.0
+    #   pole_mass: 1.0
     prior_prop: null
     randomize_prior_prop: False
     prior_prop_rand_info: null

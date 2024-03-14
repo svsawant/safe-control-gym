@@ -26,7 +26,7 @@ from safe_control_gym.math_and_models.symbolic_systems import SymbolicModel
 
 
 class Pendulum(BenchmarkEnv):
-    '''Cartpole environment task.
+    '''Pendulum environment task.
 
     Including symbolic model, constraints, randomization, adversarial disturbances,
     multiple cost functions, stabilization and trajectory tracking references.
@@ -135,7 +135,7 @@ class Pendulum(BenchmarkEnv):
                  done_on_out_of_bound=True,
                  **kwargs
                  ):
-        '''Initialize a cartpole environment.
+        '''Initialize a pendulum environment.
 
         Args:
             init_state  (ndarray/dict, optional): The initial state of the environment.
@@ -355,10 +355,9 @@ class Pendulum(BenchmarkEnv):
             physicsClientId=self.PYB_CLIENT)
         # Compute state (x, x_dot, theta, theta_dot).
         self.state = np.hstack(
-            # (p.getJointState(self.CARTPOLE_ID, jointIndex=0,
-            #                  physicsClientId=self.PYB_CLIENT)[0:2], p.getJointState(self.CARTPOLE_ID, jointIndex=1, physicsClientId=self.PYB_CLIENT)[0:2]))
             (p.getJointState(self.PENDULUM_ID, jointIndex=0,
                              physicsClientId=self.PYB_CLIENT)[0:2]))
+        # print('state in reset', self.state)
         # Debug visualization if GUI enabled
         self.line = None
         obs, info = self._get_observation(), self._get_reset_info()
@@ -413,37 +412,32 @@ class Pendulum(BenchmarkEnv):
         '''
         length = prior_prop.get('pole_length', self.EFFECTIVE_POLE_LENGTH)
         m = prior_prop.get('pole_mass', self.POLE_MASS)
-        # M = prior_prop.get('cart_mass', self.CART_MASS)
-        # Mm, ml = m + M, m * length
         ml = m * length
         g = self.GRAVITY_ACC
         dt = self.CTRL_TIMESTEP
         # Input variables.
-        # x = cs.MX.sym('x')
-        # x_dot = cs.MX.sym('x_dot')
         theta = cs.MX.sym('theta')
         theta_dot = cs.MX.sym('theta_dot')
-        # X = cs.vertcat(x, x_dot, theta, theta_dot)
         X = cs.vertcat(theta, theta_dot)
         U = cs.MX.sym('U')
-        # nx = 4
         nx = 2
         nu = 1
         # Dynamics.
+        theta_wrapped = cs.fmod(theta + cs.pi, 2 * cs.pi) - cs.pi
         # temp_factor = (U + ml * theta_dot**2 * cs.sin(theta)) / Mm
         # theta_dot_dot = ((g * cs.sin(theta) - cs.cos(theta) * temp_factor) / (length * (4.0 / 3.0 - m * cs.cos(theta)**2 / Mm)))
-        theta_dot_dot = (U + ml * g * cs.sin(theta)) / (m * length**2)
-        # X_dot = cs.vertcat(x_dot, temp_factor - ml * theta_dot_dot * cs.cos(theta) / Mm, theta_dot, theta_dot_dot)
+        theta_dot_dot = (U + ml * g * cs.sin(theta_wrapped)) / (m * length**2)
         X_dot = cs.vertcat(theta_dot, theta_dot_dot)
         # Observation.
-        # Y = cs.vertcat(x, x_dot, theta, theta_dot)
-        Y = cs.vertcat(theta, theta_dot)
+        Y = cs.vertcat(theta_wrapped, theta_dot)
         # Define cost (quadratic form).
         Q = cs.MX.sym('Q', nx, nx)
         R = cs.MX.sym('R', nu, nu)
         Xr = cs.MX.sym('Xr', nx, 1)
         Ur = cs.MX.sym('Ur', nu, 1)
-        cost_func = 0.5 * (X - Xr).T @ Q @ (X - Xr) + 0.5 * (U - Ur).T @ R @ (U - Ur)
+        cost_func = 0.5 * (self.wrap_sym(X) - Xr).T @ Q @ (self.wrap_sym(X) - Xr) \
+                  + 0.5 * (U - Ur).T @ R @ (U - Ur)
+        # cost_func = self.cost_func(X, U, Xr, Ur, Q, R)
         # Define dynamics and cost dictionaries.
         # dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}}
         dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}}
@@ -453,19 +447,28 @@ class Pendulum(BenchmarkEnv):
             # prior inertial properties
             'pole_length': length,
             'pole_mass': m,
-            # 'cart_mass': M,
             # equilibrium point for linearization
             'X_EQ': np.zeros(self.state_dim),
             'U_EQ': np.atleast_2d(self.U_GOAL)[0, :],
         }
-        # print('params: ', params)
-        # exit()
         # Setup symbolic model.
         self.symbolic = SymbolicModel(dynamics=dynamics, cost=cost, dt=dt, params=params)
+    
+    def wrap_sym(self, X):
+        '''Wrap angle to [-pi, pi] when used in observation.
+
+        Args:
+            X (ndarray): The state to be wrapped.
+
+        Returns:
+            X_wrapped (ndarray): The wrapped state.
+        '''
+        X_wrapped = cs.fmod(X[0] + cs.pi, 2 * cs.pi) - cs.pi
+        return X_wrapped
 
     def _set_action_space(self):
         '''Sets the action space of the environment.'''
-        self.action_scale = 10
+        self.action_scale = 1.0
         self.physical_action_bounds = (-1 * np.atleast_1d(self.action_scale), np.atleast_1d(self.action_scale))
         self.action_threshold = 1 if self.NORMALIZED_RL_ACTION_SPACE else self.action_scale
         self.action_space = spaces.Box(low=-self.action_threshold, high=self.action_threshold, shape=(1,))
@@ -628,7 +631,9 @@ class Pendulum(BenchmarkEnv):
         # Wrap angle to constrain state space, useful in swing-up task.
         if self.obs_wrap_angle:
             # obs[2] = normalize_angle(obs[2])
+            # print('angle before wrap', obs[0])
             obs[0] = normalize_angle(obs[0])
+            # print('angle after wrap', obs[0])
 
         # Concatenate goal info (goal state(s)) for RL
         # Plus two because ctrl_step_counter has not incremented yet, and we want to return the obs (which would be
@@ -666,9 +671,13 @@ class Pendulum(BenchmarkEnv):
                 rew = np.exp(rew)
             return rew
         if self.COST == Cost.QUADRATIC:
+            # state = deepcopy(self.state)
+            # state[0] = normalize_angle(state[0])
+            # print('state in reward', state)
             if self.TASK == Task.STABILIZATION:
                 return float(
                     -1 * self.symbolic.loss(x=self.state,
+                    # -1 * self.symbolic.loss(x=state,
                                             Xr=self.X_GOAL,
                                             u=self.current_clipped_action,
                                             Ur=self.U_GOAL,
