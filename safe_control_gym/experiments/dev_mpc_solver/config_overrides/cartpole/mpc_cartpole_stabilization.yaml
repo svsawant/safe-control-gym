@@ -20,4 +20,6 @@ algo_config:
         cart_mass: 1.0 # M true = 1.0
     randomize_prior_prop: False
     prior_prop_rand_info: {}
+    
+  obs_wrap_angle: True
   ###################################
