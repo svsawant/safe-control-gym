@@ -10,7 +10,7 @@ from safe_control_gym.controllers.mpc.mpc import MPC
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
-from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system_sym
+from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
 from safe_control_gym.controllers.mpc.sqp_mpc_utils import get_cost
@@ -104,14 +104,16 @@ class SQPMPC(MPC):
         self.init_step_solver = 'ipopt' # for nonlinear warmstart
         self.qp_solver = 'qrqp'
 
-    def set_dynamics_func(self, x_guess, u_guess):
+    def set_lin_dynamics_func(self):
         '''Updates symbolic dynamics with actual control frequency.'''
         # Original version, used in shooting.
+        delta_x = cs.MX.sym('delta_x', self.model.nx, 1)
+        delta_u = cs.MX.sym('delta_u', self.model.nu, 1)
+        x_guess = cs.MX.sym('x_guess', self.model.nx, 1)
+        u_guess = cs.MX.sym('u_guess', self.model.nu, 1)
         dfdxdfdu = self.model.df_func(x=x_guess, u=u_guess)
         dfdx = dfdxdfdu['dfdx']#.toarray()
         dfdu = dfdxdfdu['dfdu']#.toarray()
-        delta_x = cs.MX.sym('delta_x', self.model.nx, 1)
-        delta_u = cs.MX.sym('delta_u', self.model.nu, 1)
         # x_dot_lin_vec = dfdx @ delta_x + dfdu @ delta_u
         # self.linear_dynamics_func = cs.integrator(
         #    'linear_discrete_dynamics', self.model.integration_algo,
@@ -121,12 +123,14 @@ class SQPMPC(MPC):
         #        'ode': x_dot_lin_vec
         #    }, {'tf': self.dt}
         # )
-        Ad, Bd = discretize_linear_system(dfdx, dfdu, self.dt, exact=True)
+        # Ad, Bd = discretize_linear_system(dfdx, dfdu, self.dt, exact=True)
+        Ad = cs.DM_eye(self.model.nx) + dfdx * self.dt
+        Bd = dfdu * self.dt
         x_dot_lin = Ad @ delta_x + Bd @ delta_u
         self.linear_dynamics_func = cs.Function('linear_discrete_dynamics',
-                                                [delta_x, delta_u],
+                                                [delta_x, delta_u, x_guess, u_guess],
                                                 [x_dot_lin],
-                                                ['x0', 'p'],
+                                                ['x0', 'p', 'x_guess', 'u_guess'],
                                                 ['xf'])
         self.dfdx = dfdx
         self.dfdu = dfdu
@@ -145,11 +149,8 @@ class SQPMPC(MPC):
             # Step along the reference.
             self.traj_step = 0
         # Dynamics model
-        # self.set_dynamics_func()
-
-        # TODO: when setup optimizer, first call compute_initial_guess
-        # then setup_optimizer
-        # self.setup_optimizer(solver=self.init_step_solver)
+        self.set_dynamics_func()
+        self.set_lin_dynamics_func()
 
         # Previously solved states & inputs, useful for warm start.
         # nominal solution
@@ -162,23 +163,23 @@ class SQPMPC(MPC):
         self.u_guess = None
 
         init_state = self.env.reset()
-        print('init_state', init_state)
+        # print('init_state', init_state)
         self.setup_optimizer()
-        # self.setup_sqp_optimizer(solver=self.qp_solver)
+        self.setup_sqp_optimizer()
         self.setup_results_dict()
     
 
-    # def set_dynamics_func(self):
-    #     '''Updates symbolic dynamics with actual control frequency.'''
-    #     self.dynamics_func = rk_discrete(self.model.fc_func,
-    #                                      self.model.nx,
-    #                                      self.model.nu,
-    #                                      self.dt)
+    def set_dynamics_func(self):
+        '''Updates symbolic dynamics with actual control frequency.'''
+        self.dynamics_func = rk_discrete(self.model.fc_func,
+                                         self.model.nx,
+                                         self.model.nu,
+                                         self.dt)
     
     def compute_initial_guess(self, init_state, goal_states):
         time_before = time.time()
         '''Use IPOPT to get an initial guess of the '''
-        self.setup_optimizer(solver=self.init_step_solver)
+        self.setup_optimizer()
         opti_dict = self.opti_dict
         opti = opti_dict['opti']
         x_var = opti_dict['x_var'] # optimization variables
@@ -201,19 +202,12 @@ class SQPMPC(MPC):
             x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
 
         self.x_guess, self.u_guess = x_val, u_val
+        self.x_prev, self.u_prev = x_val, u_val
         time_after = time.time()
         print('MPC _compute_initial_guess time: ', time_after - time_before)
+        self.setup_sqp_optimizer()
 
-    
-    def compute_linearized_dynamics(self, x, u):
-        '''Compute the linearized dynamics around the current state and input.'''
-        dfdxdfdu = self.model.df_func(x=x, u=u)
-        dfdx = dfdxdfdu['dfdx'].toarray()
-        dfdu = dfdxdfdu['dfdu'].toarray()
-        Ad, Bd = discretize_linear_system(dfdx, dfdu, self.dt, exact=True)
-        return Ad, Bd
-
-    def setup_optimizer(self):
+    def setup_sqp_optimizer(self):
         '''Sets up convex optimization problem.
 
         Including cost objective, variable bounds and dynamics constraints.
@@ -221,23 +215,21 @@ class SQPMPC(MPC):
         nx, nu = self.model.nx, self.model.nu
         T = self.T
         # Define optimizer and variables.
-        if self.solver in ['qrqp', 'qpoases']:
+        if self.qp_solver in ['qrqp', 'qpoases']:
             opti = cs.Opti('conic')
         else:
             opti = cs.Opti()
         # States.
         x_var = opti.variable(nx, T + 1)
-        x_guess_var = opti.variable(nx, T + 1)
         # Inputs.
         u_var = opti.variable(nu, T)
-        u_guess_var = opti.variable(nu, T)
+
+        x_guess_var = opti.parameter(nx, T + 1)
+        u_guess_var = opti.parameter(nu, T)
         # Initial state.
         x_init = opti.parameter(nx, 1)
         # Reference (equilibrium point or trajectory, last step for terminal cost).
         x_ref = opti.parameter(nx, T + 1)
-        # Add slack variables
-        state_slack = opti.variable(len(self.state_constraints_sym))
-        input_slack = opti.variable(len(self.input_constraints_sym))
 
         # cost (cumulative)
         cost = 0
@@ -258,51 +250,35 @@ class SQPMPC(MPC):
                           R=self.R)['l']
         for i in range(self.T):
             # Dynamics constraints.
-            self.set_dynamics_func(x_guess=x_guess_var[:, i], u_guess=u_guess_var[:, i])
-            next_state = self.linear_dynamics_func(x0=x_var[:, i], p=u_var[:, i])['xf']
+            next_state = self.linear_dynamics_func(x0=x_var[:, i], p=u_var[:, i], 
+                                                   x_guess=x_guess_var[:,i], u_guess=u_guess_var[:,i])['xf']
             opti.subject_to(x_var[:, i + 1] == next_state)
-
             # State and input constraints
-            soft_con_coeff = 10
             for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-                if self.soft_constraints:
-                    opti.subject_to(state_constraint(x_var[:, i] + x_guess_var[:, i]) <= state_slack[sc_i])
-                    cost += soft_con_coeff * state_slack[sc_i]**2
-                    opti.subject_to(state_slack[sc_i] >= 0)
-                else:
-                    opti.subject_to(state_constraint(x_var[:, i] + x_guess_var[:, i]) <= -self.constraint_tol)
+                opti.subject_to(state_constraint(x_var[:, i] + x_guess_var[:, i]) <= -self.constraint_tol)
 
             for ic_i, input_constraint in enumerate(self.input_constraints_sym):
-                if self.soft_constraints:
-                    opti.subject_to(input_constraint(u_var[:, i] + u_guess_var[:, i]) <= input_slack[ic_i])
-                    cost += soft_con_coeff * input_slack[ic_i]**2
-                    opti.subject_to(input_slack[ic_i] >= 0)
-                else:
-                    opti.subject_to(input_constraint(u_var[:, i] + u_guess_var[:, i]) <= -self.constraint_tol)
+                opti.subject_to(input_constraint(u_var[:, i] + u_guess_var[:, i]) <= -self.constraint_tol)
 
         # final state constraints
         for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-            if self.soft_constraints:
-                opti.subject_to(state_constraint(x_var[:, -1] + x_guess_var[:, -1]) <= state_slack[sc_i])
-                cost += soft_con_coeff * state_slack[sc_i] ** 2
-                opti.subject_to(state_slack[sc_i] >= 0)
-            else:
-                opti.subject_to(state_constraint(x_var[:, -1] + x_guess_var[:, -1]) <= -self.constraint_tol)
+            opti.subject_to(state_constraint(x_var[:, -1] + x_guess_var[:, -1]) <= -self.constraint_tol)
 
         # initial condition constraints
-        opti.subject_to(x_var[:, 0] == x_init)
+        opti.subject_to(x_var[:, 0] + x_guess_var[:, 0] == x_init)
         opti.minimize(cost)
         # create solver (IPOPT solver for now )
         opts = {'expand': True}
-        if platform == 'linux':
-            opts.update({'print_time': 1, 'print_header': 0})
-            opti.solver(self.solver, opts)
-        elif platform == 'darwin':
-            opts.update({'ipopt.max_iter': 100})
-            opti.solver('ipopt', opts)
-        else:
-            print('[ERROR]: CasADi solver tested on Linux and OSX only.')
-            exit()
+        # if platform == 'linux':
+        #     opts.update({'print_time': 1, 'print_header': 0})
+        #     opti.solver(self.solver, opts)
+        # elif platform == 'darwin':
+        #     opts.update({'ipopt.max_iter': 100})
+        #     opti.solver('ipopt', opts)
+        # else:
+        #     print('[ERROR]: CasADi solver tested on Linux and OSX only.')
+        #     exit()
+        opti.solver(self.qp_solver, opts)
         self.opti_dict = {
             'opti': opti,
             'x_var': x_var,
@@ -340,12 +316,12 @@ class SQPMPC(MPC):
         x_ref = opti_dict['x_ref']
 
         # Assign the initial state.
-        opti.set_value(x_init, obs - self.x_guess)
+        opti.set_value(x_init, obs)
         # Assign reference trajectory within horizon.
         goal_states = self.get_references()
         opti.set_value(x_ref, goal_states)
-        opti.set_initial(x_guess_var, self.x_guess)
-        opti.set_initial(u_guess_var, self.u_guess)
+        opti.set_value(x_guess_var, self.x_guess)
+        opti.set_value(u_guess_var, self.u_guess)
         if self.env.TASK == Task.TRAJ_TRACKING:
             self.traj_step += 1
         if self.warmstart and self.u_prev is not None and self.x_prev is not None:
@@ -374,13 +350,14 @@ class SQPMPC(MPC):
             elif return_status == 'Search_Direction_Becomes_Too_Small':
                 self.terminate_loop = True
                 u_val = opti.debug.value(u_var)
+            # x_val = self.x_prev
 
         # take first one from solved action sequence
         if u_val.ndim > 1:
             action = u_val[:, 0]
         else:
             action = np.array([u_val[0]])
-        action += self.u_guess[:, 0]
+        action += self.u_guess[0]
         self.prev_action = action
         self.x_guess = x_val + self.x_guess
         self.u_guess = u_val + self.u_guess
