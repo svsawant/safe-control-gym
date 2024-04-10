@@ -1,6 +1,7 @@
 '''Model Predictive Control using Sequential Quadratic Programming (SQP).'''
 import time
 from copy import deepcopy
+from sys import platform
 
 import casadi as cs
 import numpy as np
@@ -9,7 +10,7 @@ from safe_control_gym.controllers.mpc.mpc import MPC
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
-from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
+from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system_sym
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
 from safe_control_gym.controllers.mpc.sqp_mpc_utils import get_cost
@@ -98,12 +99,37 @@ class SQPMPC(MPC):
         self.warmstart = warmstart
         self.terminate_run_on_done = terminate_run_on_done
 
-        self.X_EQ = self.env.X_GOAL
-        self.U_EQ = self.env.U_GOAL
+        # self.X_EQ = self.env.X_GOAL
+        # self.U_EQ = self.env.U_GOAL
         self.init_step_solver = 'ipopt' # for nonlinear warmstart
         self.qp_solver = 'qrqp'
 
-
+    def set_dynamics_func(self, x_guess, u_guess):
+        '''Updates symbolic dynamics with actual control frequency.'''
+        # Original version, used in shooting.
+        dfdxdfdu = self.model.df_func(x=x_guess, u=u_guess)
+        dfdx = dfdxdfdu['dfdx']#.toarray()
+        dfdu = dfdxdfdu['dfdu']#.toarray()
+        delta_x = cs.MX.sym('delta_x', self.model.nx, 1)
+        delta_u = cs.MX.sym('delta_u', self.model.nu, 1)
+        # x_dot_lin_vec = dfdx @ delta_x + dfdu @ delta_u
+        # self.linear_dynamics_func = cs.integrator(
+        #    'linear_discrete_dynamics', self.model.integration_algo,
+        #    {
+        #        'x': delta_x,
+        #        'p': delta_u,
+        #        'ode': x_dot_lin_vec
+        #    }, {'tf': self.dt}
+        # )
+        Ad, Bd = discretize_linear_system(dfdx, dfdu, self.dt, exact=True)
+        x_dot_lin = Ad @ delta_x + Bd @ delta_u
+        self.linear_dynamics_func = cs.Function('linear_discrete_dynamics',
+                                                [delta_x, delta_u],
+                                                [x_dot_lin],
+                                                ['x0', 'p'],
+                                                ['xf'])
+        self.dfdx = dfdx
+        self.dfdu = dfdu
     
     def reset(self):
         '''Prepares for training or evaluation.'''
@@ -119,7 +145,7 @@ class SQPMPC(MPC):
             # Step along the reference.
             self.traj_step = 0
         # Dynamics model
-        self.set_dynamics_func()
+        # self.set_dynamics_func()
 
         # TODO: when setup optimizer, first call compute_initial_guess
         # then setup_optimizer
@@ -129,20 +155,25 @@ class SQPMPC(MPC):
         # nominal solution
         self.x_prev = None 
         self.u_prev = None
-        # previous delta solution
-        self.dx_prev = None
-        self.du_prev = None
+        # # previous delta solution
+        # self.dx_prev = None
+        # self.du_prev = None
+        self.x_guess = None
+        self.u_guess = None
 
+        init_state = self.env.reset()
+        print('init_state', init_state)
+        self.setup_optimizer()
         # self.setup_sqp_optimizer(solver=self.qp_solver)
         self.setup_results_dict()
     
 
-    def set_dynamics_func(self):
-        '''Updates symbolic dynamics with actual control frequency.'''
-        self.dynamics_func = rk_discrete(self.model.fc_func,
-                                         self.model.nx,
-                                         self.model.nu,
-                                         self.dt)
+    # def set_dynamics_func(self):
+    #     '''Updates symbolic dynamics with actual control frequency.'''
+    #     self.dynamics_func = rk_discrete(self.model.fc_func,
+    #                                      self.model.nx,
+    #                                      self.model.nu,
+    #                                      self.dt)
     
     def compute_initial_guess(self, init_state, goal_states):
         time_before = time.time()
@@ -169,7 +200,7 @@ class SQPMPC(MPC):
             print('=============Warm-starting fails=============')
             x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
 
-        self.x_prev, self.u_prev = x_val, u_val
+        self.x_guess, self.u_guess = x_val, u_val
         time_after = time.time()
         print('MPC _compute_initial_guess time: ', time_after - time_before)
 
@@ -182,184 +213,177 @@ class SQPMPC(MPC):
         Ad, Bd = discretize_linear_system(dfdx, dfdu, self.dt, exact=True)
         return Ad, Bd
 
-    def setup_sqp_optimizer(self, init_state, solver='qrqp'):
-        '''Setup the optimizer for the SQP MPC.'''
-        # create the refernce trajectory for linearization
-        # print('env.__dir__()', self.env.__dir__())
-        
-        if self.x_prev is None or self.u_prev is None:
-            # TODO: compute the initial guess in select_action
-            self.compute_initial_guess(init_state, self.get_references())
-        x_guess, u_guess = self.x_prev, self.u_prev
-        
+    def setup_optimizer(self):
+        '''Sets up convex optimization problem.
+
+        Including cost objective, variable bounds and dynamics constraints.
+        '''
         nx, nu = self.model.nx, self.model.nu
         T = self.T
-
-        # Define the optimizer and variables.
-        if self.qp_solver in ['qrqp', 'qpoases']:
+        # Define optimizer and variables.
+        if self.solver in ['qrqp', 'qpoases']:
             opti = cs.Opti('conic')
         else:
             opti = cs.Opti()
-
-        # states
-        dx_var = opti.variable(nx, T+1)
-        # inputs
-        du_var = opti.variable(nu, T)
-        # initial state
+        # States.
+        x_var = opti.variable(nx, T + 1)
+        x_guess_var = opti.variable(nx, T + 1)
+        # Inputs.
+        u_var = opti.variable(nu, T)
+        u_guess_var = opti.variable(nu, T)
+        # Initial state.
         x_init = opti.parameter(nx, 1)
         # Reference (equilibrium point or trajectory, last step for terminal cost).
         x_ref = opti.parameter(nx, T + 1)
-        # Add slack variables 
+        # Add slack variables
         state_slack = opti.variable(len(self.state_constraints_sym))
         input_slack = opti.variable(len(self.input_constraints_sym))
 
-        # cost 
-        # quadratic term
-        S, state_cost_lin, input_cost_lin = get_cost(self.R, self.Q, T)
-        # linear term
-        f_1 = 2 * input_cost_lin @ u_guess # input cost
-        f_2 = 2 * input_cost_lin @ (x_guess - x_ref) # state cost
-        H = 2 * S
-        f = cs.vertcat(f_1, f_2)
-        assert f_1.shape[0] == nu * T
-        assert f_2.shape[0] == nx * (T + 1) 
-        assert H.shape[0] == nx * (T + 1) + nu * T 
-        assert H.shape[0] == H.shape[1]
-
-        dz = cs.vertcat(du_var, dx_var)
-        cost = 0.5 * cs.mtimes(dz.T, cs.mtimes(H, dz)) + cs.mtimes(f.T, dz)
-
-
-        # # linearized system dynamics constraints
-        # A_bar = np.zeros((nx * (T + 1), nx * (T + 1)))
-        # B_bar = np.zeros((nx * (T + 1), nu * T))
-        # for i in range(T):
-        #     Ad, Bd = self.compute_linearized_dynamics(x_guess[:, i], u_guess[:, i])
-        #     A_bar[i * nx:(i + 1) * nx, (i) * nx:(i + 1) * nx] = Ad
-        #     B_bar[i * nx:(i + 1) * nx, i * nu:(i + 1) * nu] = Bd
-
-        # A_bar = np.block([[np.zeros(nx, nx*T), np.zeros((nx))],
-        #                   [A_bar,        np.zeros((nx * T, nx))]])
-        # B_bar = np.block([np.zeros((nx, nu * T)), B_bar])
-        # assert A_bar.shape[0] == nx * (T + 1)
-        # assert B_bar.shape[0] == nx * (T + 1) and B_bar.shape[1] == nu * T
-        # H_bar = np.zeros((nx * (T + 1), nx))
-        # H_bar[:nx, :] = np.eye(nx)
-        # delta_x_init = x_init - x_guess # enforce the initial state constraint
-        # Aeq = np.concatenate([-B_bar, np.eye(nx * (T + 1))-A_bar], axis=1)
-        # beq = H_bar @ delta_x_init
-        # opti.subject_to(cs.mtimes(Aeq, cs.vertcat(du_var, dx_var)) == beq)
-
+        # cost (cumulative)
+        cost = 0
+        cost_func = self.model.loss
+        for i in range(T):
+            cost += cost_func(x=x_var[:, i] + x_guess_var[:, i],
+                              u=u_var[:, i] + u_guess_var[:, i],
+                              Xr=x_ref[:, i],
+                              Ur=np.zeros((nu, 1)),
+                              Q=self.Q,
+                              R=self.R)['l']
+        # Terminal cost.
+        cost += cost_func(x=x_var[:, -1] + x_guess_var[:, -1],
+                          u=np.zeros((nu, 1)) + u_guess_var[:, -1],
+                          Xr=x_ref[:, -1],
+                          Ur=np.zeros((nu, 1)),
+                          Q=self.Q,
+                          R=self.R)['l']
         for i in range(self.T):
-            # dynamics constraints
-            Ad, Bd = self.compute_linearized_dynamics(x_guess[:, i], u_guess[:, i])
-            next_dx = Ad @ dx_var[:, i] + Bd @ du_var[:, i]
-            opti.subject_to(dx_var[:, i + 1] == next_dx)
+            # Dynamics constraints.
+            self.set_dynamics_func(x_guess=x_guess_var[:, i], u_guess=u_guess_var[:, i])
+            next_state = self.linear_dynamics_func(x0=x_var[:, i], p=u_var[:, i])['xf']
+            opti.subject_to(x_var[:, i + 1] == next_state)
 
-            # state and input constraints
+            # State and input constraints
             soft_con_coeff = 10
-            for sc_i, state_constraints in enumerate(self.state_constraints_sym):
+            for sc_i, state_constraint in enumerate(self.state_constraints_sym):
                 if self.soft_constraints:
-                    opti.subject_to(state_constraints(dx_var[:, i] + x_guess[:, i]) <= state_slack[sc_i])
+                    opti.subject_to(state_constraint(x_var[:, i] + x_guess_var[:, i]) <= state_slack[sc_i])
                     cost += soft_con_coeff * state_slack[sc_i]**2
                     opti.subject_to(state_slack[sc_i] >= 0)
                 else:
-                    opti.subject_to(state_constraints(dx_var[:, i] + x_guess[:, i]) <= -self.constraint_tol)
-            
-            for ic_i, input_constraints in enumerate(self.input_constraints_sym):
+                    opti.subject_to(state_constraint(x_var[:, i] + x_guess_var[:, i]) <= -self.constraint_tol)
+
+            for ic_i, input_constraint in enumerate(self.input_constraints_sym):
                 if self.soft_constraints:
-                    opti.subject_to(input_constraints(du_var[:, i] + u_guess[:, i]) <= input_slack[ic_i])
+                    opti.subject_to(input_constraint(u_var[:, i] + u_guess_var[:, i]) <= input_slack[ic_i])
                     cost += soft_con_coeff * input_slack[ic_i]**2
                     opti.subject_to(input_slack[ic_i] >= 0)
                 else:
-                    opti.subject_to(input_constraints(du_var[:, i] + u_guess[:, i]) <= -self.constraint_tol)
+                    opti.subject_to(input_constraint(u_var[:, i] + u_guess_var[:, i]) <= -self.constraint_tol)
 
-        # final state constraint
-        for sc_i, state_constraints in enumerate(self.state_constraints_sym):
+        # final state constraints
+        for sc_i, state_constraint in enumerate(self.state_constraints_sym):
             if self.soft_constraints:
-                opti.subject_to(state_constraints(dx_var[:, -1] + x_guess[:, -1]) <= state_slack[sc_i])
-                cost += soft_con_coeff * state_slack[sc_i]**2
+                opti.subject_to(state_constraint(x_var[:, -1] + x_guess_var[:, -1]) <= state_slack[sc_i])
+                cost += soft_con_coeff * state_slack[sc_i] ** 2
                 opti.subject_to(state_slack[sc_i] >= 0)
             else:
-                opti.subject_to(state_constraints(dx_var[:, -1] + x_guess[:, -1]) <= -self.constraint_tol)
+                opti.subject_to(state_constraint(x_var[:, -1] + x_guess_var[:, -1]) <= -self.constraint_tol)
 
         # initial condition constraints
-        opti.subject_to(dx_var[:, 0] + x_guess[:, 0] == x_init)
+        opti.subject_to(x_var[:, 0] == x_init)
         opti.minimize(cost)
+        # create solver (IPOPT solver for now )
         opts = {'expand': True}
-        opti.solver(solver, opts)
-        self.opti_dict = {'opti': opti,
-                          'dx_var': dx_var,
-                          'du_var': du_var,
-                          'x_init': x_init,
-                          'x_ref': x_ref,
-                          'cost': cost
-                          }
+        if platform == 'linux':
+            opts.update({'print_time': 1, 'print_header': 0})
+            opti.solver(self.solver, opts)
+        elif platform == 'darwin':
+            opts.update({'ipopt.max_iter': 100})
+            opti.solver('ipopt', opts)
+        else:
+            print('[ERROR]: CasADi solver tested on Linux and OSX only.')
+            exit()
+        self.opti_dict = {
+            'opti': opti,
+            'x_var': x_var,
+            'u_var': u_var,
+            'x_guess_var': x_guess_var,
+            'u_guess_var': u_guess_var,
+            'x_init': x_init,
+            'x_ref': x_ref,
+            'cost': cost
+        }
         
-    def select_action(self, 
-                        obs, 
-                        info=None
-                        ):
-        '''Solve qp to get the optimal action.
+    def select_action(self,
+                      obs,
+                      info=None
+                      ):
+        '''Solve nonlinear mpc problem to get next action.
 
         Args:
-            obs (np.array): current observation.
-            info (dict): additional information.
+            obs (ndarray): Current state/observation.
+            info (dict): Current info.
+
         Returns:
-            action (np.array): Input/action to the task/env.
+            action (ndarray): Input/action to the task/env.
         '''
-        self.setup_sqp_optimizer(obs, solver=self.qp_solver)
+        if self.x_guess is None or self.u_guess is None:
+            self.compute_initial_guess(obs, self.get_references())
 
         opti_dict = self.opti_dict
         opti = opti_dict['opti']
-        dx_var = opti_dict['dx_var']
-        du_var = opti_dict['du_var']
+        x_var = opti_dict['x_var']
+        u_var = opti_dict['u_var']
+        x_guess_var = opti_dict['x_guess_var']
+        u_guess_var = opti_dict['u_guess_var']
         x_init = opti_dict['x_init']
         x_ref = opti_dict['x_ref']
 
         # Assign the initial state.
-        opti.set_value(x_init, obs)
+        opti.set_value(x_init, obs - self.x_guess)
         # Assign reference trajectory within horizon.
         goal_states = self.get_references()
         opti.set_value(x_ref, goal_states)
+        opti.set_initial(x_guess_var, self.x_guess)
+        opti.set_initial(u_guess_var, self.u_guess)
         if self.env.TASK == Task.TRAJ_TRACKING:
             self.traj_step += 1
-        if self.warmstart and self.dx_prev is not None and self.du_prev is not None:
-            opti.set_initial(dx_var, self.dx_prev)
-            opti.set_initial(du_var, self.du_prev)
+        if self.warmstart and self.u_prev is not None and self.x_prev is not None:
+            opti.set_initial(x_var, self.x_prev)
+            opti.set_initial(u_var, self.u_prev)
+        # Solve the optimization problem.
+        try:
+            sol = opti.solve()
+            x_val, u_val = sol.value(x_var), sol.value(u_var)
+            self.x_prev = x_val
+            self.u_prev = u_val
+            self.results_dict['horizon_states'].append(deepcopy(self.x_prev) + self.x_guess)
+            self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev) + self.u_guess)
+        except RuntimeError as e:
+            print(e)
+            return_status = opti.return_status()
+            if return_status == 'unknown':
+                self.terminate_loop = True
+                u_val = self.u_prev
+                if u_val is None:
+                    print('[WARN]: MPC Infeasible first step.')
+                    u_val = np.zeros((1, self.model.nu))
+            elif return_status == 'Maximum_Iterations_Exceeded':
+                self.terminate_loop = True
+                u_val = opti.debug.value(u_var)
+            elif return_status == 'Search_Direction_Becomes_Too_Small':
+                self.terminate_loop = True
+                u_val = opti.debug.value(u_var)
 
-        # try:
-        sol = opti.solve()
-        dx_val, du_val = sol.value(dx_var), sol.value(du_var)
-        self.dx_prev, self.du_prev = dx_val, du_val
-        # store the actual solution directly in x_prev and u_prev
-        self.u_prev = self.u_prev + du_val
-        self.x_prev = self.x_prev + dx_val
-        self.results_dict['horizon_states'].append(self.x_prev)
-        self.results_dict['horizon_inputs'].append(self.u_prev)
-        # except RuntimeError as e:
-        #     print(e)
-        #     return_status = opti.return_status()
-        #     if return_status == 'unknown':
-        #         self.terminate_loop = True
-        #         du_val = self.du_prev
-        #         if du_val is None:
-        #             print('[WARN]: MPC Infeasible first step.')
-        #             du_val = np.zeros((self.model.nu, self.T))
-        #     elif return_status == 'Maximum_Iterations_Exceeded':
-        #         self.terminate_loop = True
-        #         du_val = opti.debug.value(du_var)
-        #     elif return_status == 'Search_Direction_Becomes_Too_Small':
-        #         self.terminate_loop = True
-        #         du_val = opti.debug.value(du_var)
-            
         # take first one from solved action sequence
-        if du_val.ndim > 1:
-            action = du_val[:, 0]
+        if u_val.ndim > 1:
+            action = u_val[:, 0]
         else:
-            action = np.array([du_val[0]])
-        action += self.u_prev[:, 0]
+            action = np.array([u_val[0]])
+        action += self.u_guess[:, 0]
         self.prev_action = action
+        self.x_guess = x_val + self.x_guess
+        self.u_guess = u_val + self.u_guess
         return action
         
         
