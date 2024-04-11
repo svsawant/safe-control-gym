@@ -94,7 +94,6 @@ class SQPMPC(MPC):
         self.R = get_cost_weight_matrix(self.r_mpc, self.model.nu)
 
         # boolean flags
-
         self.soft_constraints = soft_constraints
         self.warmstart = warmstart
         self.terminate_run_on_done = terminate_run_on_done
@@ -103,6 +102,8 @@ class SQPMPC(MPC):
         # self.U_EQ = self.env.U_GOAL
         self.init_step_solver = 'ipopt' # for nonlinear warmstart
         self.qp_solver = 'qrqp'
+        self.max_qp_iter = 50
+        self.action_convergence_tol = 1e-3
 
     def set_lin_dynamics_func(self):
         '''Updates symbolic dynamics with actual control frequency.'''
@@ -164,8 +165,8 @@ class SQPMPC(MPC):
 
         init_state = self.env.reset()
         # print('init_state', init_state)
-        self.setup_optimizer()
-        self.setup_sqp_optimizer()
+        # self.setup_optimizer()
+        # self.setup_sqp_optimizer()
         self.setup_results_dict()
     
 
@@ -212,6 +213,7 @@ class SQPMPC(MPC):
 
         Including cost objective, variable bounds and dynamics constraints.
         '''
+        before_optimizer_setup = time.time()
         nx, nu = self.model.nx, self.model.nu
         T = self.T
         # Define optimizer and variables.
@@ -289,8 +291,38 @@ class SQPMPC(MPC):
             'x_ref': x_ref,
             'cost': cost
         }
+        after_optimizer_setup = time.time()
+        print('MPC setup_sqp_optimizer time: ', after_optimizer_setup - before_optimizer_setup)
+    
+    def select_action(self, obs, info=None):
         
-    def select_action(self,
+        if self.x_guess is None or self.u_guess is None:
+            self.compute_initial_guess(obs, self.get_references())
+
+        # solving multiple SQPs to get the optimal action
+        for i in range(self.max_qp_iter):
+            # self.setup_sqp_optimizer()
+            u_val, x_val = self.select_qp_action(obs, info)
+            # compare with previous solution
+            u_val_diff = np.linalg.norm(u_val - self.u_prev)
+            x_val_diff = np.linalg.norm(x_val - self.x_prev)
+            if u_val_diff < self.action_convergence_tol and x_val_diff < self.action_convergence_tol:
+                break
+            # update previous solution
+            self.u_prev, self.x_prev = u_val, x_val
+            self.x_guess = x_val + self.x_guess
+            self.u_guess = u_val + self.u_guess
+        print(f'%i QP iterations to converge' % i)
+        # take first one from solved action sequence
+        if u_val.ndim > 1:
+            action = u_val[:, 0]
+        else:
+            action = np.array([u_val[0]])
+        action += self.u_guess[0]
+        self.prev_action = action
+        return action
+
+    def select_qp_action(self,
                       obs,
                       info=None
                       ):
@@ -331,10 +363,11 @@ class SQPMPC(MPC):
         try:
             sol = opti.solve()
             x_val, u_val = sol.value(x_var), sol.value(u_var)
-            self.x_prev = x_val
-            self.u_prev = u_val
-            self.results_dict['horizon_states'].append(deepcopy(self.x_prev) + self.x_guess)
-            self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev) + self.u_guess)
+            # self.x_prev = x_val
+            # self.u_prev = u_val
+            # TODO: put this into select_action
+            # self.results_dict['horizon_states'].append(deepcopy(self.x_prev) + self.x_guess)
+            # self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev) + self.u_guess)
         except RuntimeError as e:
             print(e)
             return_status = opti.return_status()
@@ -352,16 +385,19 @@ class SQPMPC(MPC):
                 u_val = opti.debug.value(u_var)
             # x_val = self.x_prev
 
-        # take first one from solved action sequence
-        if u_val.ndim > 1:
-            action = u_val[:, 0]
-        else:
-            action = np.array([u_val[0]])
-        action += self.u_guess[0]
-        self.prev_action = action
-        self.x_guess = x_val + self.x_guess
-        self.u_guess = u_val + self.u_guess
-        return action
+        # self.x_guess = x_val + self.x_guess
+        # self.u_guess = u_val + self.u_guess
+
+        return u_val, x_val
+        # # take first one from solved action sequence
+        # if u_val.ndim > 1:
+        #     action = u_val[:, 0]
+        # else:
+        #     action = np.array([u_val[0]])
+
+        # action += self.u_guess[0]
+        # self.prev_action = action
+        # return action
         
         
         
