@@ -13,7 +13,7 @@ from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gai
 from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
-from safe_control_gym.controllers.mpc.sqp_mpc_utils import get_cost
+# from safe_control_gym.controllers.mpc.sqp_mpc_utils import get_cost
 
 class SQPMPC(MPC):
 
@@ -232,6 +232,9 @@ class SQPMPC(MPC):
         x_init = opti.parameter(nx, 1)
         # Reference (equilibrium point or trajectory, last step for terminal cost).
         x_ref = opti.parameter(nx, T + 1)
+        # Add slack variables for soft constraints.
+        state_slack = opti.variable(len(self.state_constraints_sym))
+        input_slack = opti.variable(len(self.input_constraints_sym))
 
         # cost (cumulative)
         cost = 0
@@ -256,20 +259,36 @@ class SQPMPC(MPC):
                                                    x_guess=x_guess_var[:,i], u_guess=u_guess_var[:,i])['xf']
             opti.subject_to(x_var[:, i + 1] == next_state)
             # State and input constraints
+            soft_con_coeff = 10
             for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-                opti.subject_to(state_constraint(x_var[:, i] + x_guess_var[:, i]) <= -self.constraint_tol)
+                if self.soft_constraints:
+                    opti.subject_to(state_constraint(x_var[:, i] + x_guess_var[:, i]) <= state_slack[sc_i])
+                    cost += soft_con_coeff * state_slack[sc_i] ** 2
+                    opti.subject_to(state_slack[sc_i] >= 0)
+                else:
+                    opti.subject_to(state_constraint(x_var[:, i] + x_guess_var[:, i]) <= -self.constraint_tol)
 
             for ic_i, input_constraint in enumerate(self.input_constraints_sym):
-                opti.subject_to(input_constraint(u_var[:, i] + u_guess_var[:, i]) <= -self.constraint_tol)
+                if self.soft_constraints:
+                    opti.subject_to(input_constraint(u_var[:, i] + u_guess_var[:, i]) <= input_slack[ic_i])
+                    cost += soft_con_coeff * input_slack[ic_i] ** 2
+                    opti.subject_to(input_slack[ic_i] >= 0)
+                else:
+                    opti.subject_to(input_constraint(u_var[:, i] + u_guess_var[:, i]) <= -self.constraint_tol)
 
         # final state constraints
         for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-            opti.subject_to(state_constraint(x_var[:, -1] + x_guess_var[:, -1]) <= -self.constraint_tol)
+            if self.soft_constraints:
+                opti.subject_to(state_constraint(x_var[:, -1] + x_guess_var[:, -1]) <= state_slack[sc_i])
+                cost += soft_con_coeff * state_slack[sc_i] ** 2
+                opti.subject_to(state_slack[sc_i] >= 0)
+            else:
+                opti.subject_to(state_constraint(x_var[:, -1] + x_guess_var[:, -1]) <= -self.constraint_tol)
 
         # initial condition constraints
         opti.subject_to(x_var[:, 0] + x_guess_var[:, 0] == x_init)
         opti.minimize(cost)
-        # create solver (IPOPT solver for now )
+        # create solver 
         opts = {'expand': True}
         # if platform == 'linux':
         #     opts.update({'print_time': 1, 'print_header': 0})
@@ -295,7 +314,7 @@ class SQPMPC(MPC):
         print('MPC setup_sqp_optimizer time: ', after_optimizer_setup - before_optimizer_setup)
     
     def select_action(self, obs, info=None):
-        
+        before_select_action = time.time()
         if self.x_guess is None or self.u_guess is None:
             self.compute_initial_guess(obs, self.get_references())
 
@@ -320,6 +339,9 @@ class SQPMPC(MPC):
             action = np.array([u_val[0]])
         action += self.u_guess[0]
         self.prev_action = action
+
+        after_select_action = time.time()
+        print('SQP MPC select_action time: ', after_select_action - before_select_action)
         return action
 
     def select_qp_action(self,
