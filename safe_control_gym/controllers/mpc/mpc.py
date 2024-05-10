@@ -123,6 +123,7 @@ class MPC(BaseController):
         self.env.close()
 
     def reset(self):
+        print('=================Resetting MPC=================')
         '''Prepares for training or evaluation.'''
         # Setup reference input.
         if self.env.TASK == Task.STABILIZATION:
@@ -140,7 +141,6 @@ class MPC(BaseController):
         # Previously solved states & inputs, useful for warm start.
         self.x_prev = None
         self.u_prev = None
-
         self.setup_results_dict()
 
     def set_dynamics_func(self):
@@ -157,24 +157,24 @@ class MPC(BaseController):
                                          self.model.nu,
                                          self.dt)
 
-    # def compute_initial_guess(self, init_state, goal_states, x_lin, u_lin):
-    #     '''Use LQR to get an initial guess of the '''
-    #     dfdxdfdu = self.model.df_func(x=x_lin, u=u_lin)
-    #     dfdx = dfdxdfdu['dfdx'].toarray()
-    #     dfdu = dfdxdfdu['dfdu'].toarray()
-    #     lqr_gain, _, _ = compute_discrete_lqr_gain_from_cont_linear_system(dfdx, dfdu, self.Q, self.R, self.dt)
+    def compute_lqr_initial_guess(self, init_state, goal_states, x_lin, u_lin):
+        '''Use LQR to get an initial guess of the '''
+        dfdxdfdu = self.model.df_func(x=x_lin, u=u_lin)
+        dfdx = dfdxdfdu['dfdx'].toarray()
+        dfdu = dfdxdfdu['dfdu'].toarray()
+        lqr_gain, _, _ = compute_discrete_lqr_gain_from_cont_linear_system(dfdx, dfdu, self.Q, self.R, self.dt)
         
-    #     # initialize the guess solutions
-    #     x_guess = np.zeros((self.model.nx, self.T + 1))
-    #     u_guess = np.zeros((self.model.nu, self.T))
-    #     x_guess[:, 0] = init_state
-    #     # add the lqr gain and states to the guess
-    #     for i in range(self.T):
-    #         u = lqr_gain @ (x_guess[:, i] - goal_states[:, i]) + u_lin
-    #         u_guess[:, i] = u
-    #         x_guess[:, i + 1, None] = self.dynamics_func(x0=x_guess[:, i], p=u)['xf'].toarray()
+        # initialize the guess solutions
+        x_guess = np.zeros((self.model.nx, self.T + 1))
+        u_guess = np.zeros((self.model.nu, self.T))
+        x_guess[:, 0] = init_state
+        # add the lqr gain and states to the guess
+        for i in range(self.T):
+            u = lqr_gain @ (x_guess[:, i] - goal_states[:, i]) + u_lin
+            u_guess[:, i] = u
+            x_guess[:, i + 1, None] = self.dynamics_func(x0=x_guess[:, i], p=u)['xf'].toarray()
 
-    #     return x_guess, u_guess
+        return x_guess, u_guess
     
     def compute_initial_guess(self, init_state, goal_states):
         time_before = time.time()
@@ -195,8 +195,12 @@ class MPC(BaseController):
         if self.mode == 'tracking':
             self.traj_step += 1
          # Solve the optimization problem.
-        sol = opti.solve()
-        x_val, u_val = sol.value(x_var), sol.value(u_var)
+        try:
+            sol = opti.solve()
+            x_val, u_val = sol.value(x_var), sol.value(u_var)
+        except RuntimeError:
+            print('=============Warm-starting fails=============')
+            x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
 
         x_guess = x_val
         u_guess = u_val
@@ -211,6 +215,7 @@ class MPC(BaseController):
 
     def setup_optimizer(self, solver='qrsqp'):
         '''Sets up nonlinear optimization problem.'''
+        print('=================Setting up optimizer=================')
         nx, nu = self.model.nx, self.model.nu
         T = self.T
         # Define optimizer and variables.
@@ -330,7 +335,8 @@ class MPC(BaseController):
             self.traj_step += 1
 
         if self.warmstart and self.x_prev is None and self.u_prev is None:
-        #    x_guess, u_guess = self.compute_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
+        #    x_guess, u_guess = self.compute_lqr_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
+           print(f'computing initial guess with {self.init_solver}')
            x_guess, u_guess = self.compute_initial_guess(obs, goal_states)
            opti.set_initial(x_var, x_guess)
            opti.set_initial(u_var, u_guess) # Initial guess for optimization problem.
@@ -343,10 +349,16 @@ class MPC(BaseController):
             u_guess[:-1] = u_guess[1:]
             opti.set_initial(x_var, x_guess)
             opti.set_initial(u_var, u_guess)
-        # exit()
         # Solve the optimization problem.
-        sol = opti.solve()
-        x_val, u_val = sol.value(x_var), sol.value(u_var)
+        try:
+            sol = opti.solve()
+            x_val, u_val = sol.value(x_var), sol.value(u_var)
+        except RuntimeError:
+            print('=============Infeasible MPC Problem=============')
+            x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+        skip = 8
+        print('x_val: ', x_val[:,::skip])
+        print('u_val: ', u_val[::skip])
         self.x_prev = x_val
         self.u_prev = u_val
         self.results_dict['horizon_states'].append(deepcopy(self.x_prev))
@@ -467,10 +479,10 @@ class MPC(BaseController):
 
             common_metric += info['mse']
             print(i, '-th step.')
-            print(action)
-            print(obs)
-            print(reward)
-            print(done)
+            print('action:', action)
+            print('obs', obs)
+            print('reward', reward)
+            print('done', done)
             print(info)
             print()
             if render:
@@ -510,3 +522,15 @@ class MPC(BaseController):
         '''
         # called once at the _evaluation_reset()
         self.reset()
+
+    def wrap_sym(self, X):
+        '''Wrap angle to [-pi, pi] when used in observation.
+
+        Args:
+            X (ndarray): The state to be wrapped.
+
+        Returns:
+            X_wrapped (ndarray): The wrapped state.
+        '''
+        X_wrapped = cs.fmod(X[0] + cs.pi, 2 * cs.pi) - cs.pi
+        return X_wrapped
