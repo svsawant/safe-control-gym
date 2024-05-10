@@ -198,6 +198,10 @@ class GPMPC(MPC):
         self.gp_soft_constraints = self.soft_constraints_params['gp_soft_constraints']
         self.gp_soft_constraints_coeff = self.soft_constraints_params['gp_soft_constraints_coeff']
 
+        self.init_solver = 'ipopt'
+        self.sqp_solver = 'qrsqp'
+        # self.sqp_solver = 'ipopt'
+
     def setup_prior_dynamics(self):
         '''Computes the LQR gain used for propograting GP uncertainty from the prior model dynamics.'''
         # Determine the LQR gain K to propogate the input uncertainty (doing this at each timestep will increase complexity).
@@ -408,12 +412,13 @@ class GPMPC(MPC):
         return mean_post_factor.detach().numpy(), Sigma_inv.detach().numpy(), K_zind_zind_inv.detach().numpy(), z_ind
         # return mean_post_factor.detach().numpy(), Sigma.detach().numpy(), K_zind_zind_inv.detach().numpy(), z_ind
 
-    def setup_gp_optimizer(self, n_ind_points):
+    def setup_gp_optimizer(self, n_ind_points, solver='ipopt'):
         '''Sets up nonlinear optimization problem including cost objective, variable bounds and dynamics constraints.
 
         Args:
             n_ind_points (int): Number of inducing points.
         '''
+        print(f'Setting up GP MPC with {solver} solver.') 
         nx, nu = self.model.nx, self.model.nu
         T = self.T
         # Define optimizer and variables.
@@ -528,13 +533,15 @@ class GPMPC(MPC):
         # Initial condition constraints.
         opti.subject_to(x_var[:, 0] == x_init)
         # Create solver (IPOPT solver in this version).
-        opts = {'ipopt.print_level': 4,
-                'ipopt.sb': 'yes',
-                'ipopt.max_iter': 100,  # 100,
-                'print_time': 1,
-                'expand': True,
-                'verbose': True}
-        opti.solver('ipopt', opts)
+        # opts = {'ipopt.print_level': 4,
+        #         'ipopt.sb': 'yes',
+        #         'ipopt.max_iter': 100,  # 100,
+        #         'print_time': 1,
+        #         'expand': True,
+        #         'verbose': True}
+        opts = {'expand': True,}
+        # opti.solver('ipopt', opts)
+        opti.solver(solver, opts)
         self.opti_dict = {
             'opti': opti,
             'x_var': x_var,
@@ -607,9 +614,14 @@ class GPMPC(MPC):
         opti.set_value(z_ind, z_ind_val)
         # Initial guess for the optimization problem.
         if self.warmstart and self.x_prev is None and self.u_prev is None:
-            x_guess, u_guess = self.prior_ctrl.compute_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
+            if self.gaussian_process is None:
+                x_guess, u_guess = self.prior_ctrl.compute_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
+            else:
+                x_guess, u_guess = self.compute_initial_guess(obs, goal_states)
+                # set the solver back
+                self.setup_gp_optimizer(n_ind_points=n_ind_points,
+                                        solver=self.sqp_solver)
             opti.set_initial(x_var, x_guess)
-            u_guess = np.clip(u_guess, 0.06, 0.26)
             opti.set_initial(u_var, u_guess)  # Initial guess for optimization problem.
         elif self.warmstart and self.x_prev is not None and self.u_prev is not None:
             # shift previous solutions by 1 step
@@ -623,8 +635,30 @@ class GPMPC(MPC):
         try:
             sol = opti.solve()
             x_val, u_val = sol.value(x_var), sol.value(u_var)
+            self.u_prev = u_val
+            self.x_prev = x_val
         except RuntimeError:
-            x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+            # sol = opti.solve()
+            # x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+            return_status = opti.return_status()
+            print(f'Optimization failed with status: {return_status}')
+            if return_status == 'unknown':
+                # self.terminate_loop = True
+                u_val = self.u_prev
+                x_val = self.x_prev
+                if u_val is None:
+                    print('[WARN]: MPC Infeasible first step.')
+                    u_val = u_guess
+                    x_val = x_guess
+            elif return_status == 'Maximum_Iterations_Exceeded':
+                self.terminate_loop = True
+                u_val = opti.debug.value(u_var)
+                x_val = opti.debug.value(x_var)
+            elif return_status == 'Search_Direction_Becomes_Too_Small':
+                self.terminate_loop = True
+                u_val = opti.debug.value(u_var)
+                x_val = opti.debug.value(x_var)
+
         u_val = np.atleast_2d(u_val)
         self.x_prev = x_val
         self.u_prev = u_val
@@ -830,23 +864,19 @@ class GPMPC(MPC):
         Returns:
             action (ndarray): Desired policy action.
         '''
-        try:
-            if self.gaussian_process is None:
-                action = self.prior_ctrl.select_action(obs)
-            else:
-                if (self.last_obs is not None and self.last_action is not None and self.online_learning):
-                    print('[ERROR]: Not yet supported.')
-                    exit()
-                t1 = time.perf_counter()
-                action = self.select_action_with_gp(obs)
-                t2 = time.perf_counter()
-                print(f'GP SELECT ACTION TIME: {(t2 - t1)}')
-                self.last_obs = obs
-                self.last_action = action
-        except Exception as e:
-            print(f'[ERROR]: gp_mpc.select_action: {e}')
-            print('using the last action')
-            action = self.last_action
+        # try:
+        if self.gaussian_process is None:
+            action = self.prior_ctrl.select_action(obs)
+        else:
+            # if (self.last_obs is not None and self.last_action is not None and self.online_learning):
+            #     print('[ERROR]: Not yet supported.')
+            #     exit()
+            t1 = time.perf_counter()
+            action = self.select_action_with_gp(obs)
+            t2 = time.perf_counter()
+            print(f'GP SELECT ACTION TIME: {(t2 - t1)}')
+            self.last_obs = obs
+            self.last_action = action
         return action
 
     def close(self):
@@ -893,3 +923,79 @@ class GPMPC(MPC):
         # Previously solved states & inputs, useful for warm start.
         self.x_prev = None
         self.u_prev = None
+
+    def compute_initial_guess(self, init_state, goal_states):
+        print('Computing initial guess for GP MPC.')
+        if self.gaussian_process is not None:
+            if self.sparse_gp and self.train_data['train_targets'].shape[0] <= self.n_ind_points:
+                n_ind_points = self.train_data['train_targets'].shape[0]
+            elif self.sparse_gp:
+                n_ind_points = self.n_ind_points
+            else:
+                n_ind_points = self.train_data['train_targets'].shape[0]
+        self.setup_gp_optimizer(n_ind_points, solver=self.init_solver)
+        time_before = time.time()
+        '''Use IPOPT to get an initial guess of the '''
+
+        opti_dict = self.opti_dict
+        opti = opti_dict['opti']
+        x_var = opti_dict['x_var']
+        u_var = opti_dict['u_var']
+        x_init = opti_dict['x_init']
+        x_ref = opti_dict['x_ref']
+        state_constraint_set = opti_dict['state_constraint_set']
+        input_constraint_set = opti_dict['input_constraint_set']
+        mean_post_factor = opti_dict['mean_post_factor']
+        # print('mean_post_factor:', mean_post_factor)
+        # print('type(mean_post_factor):', type(mean_post_factor))
+        # exit()
+        z_ind = opti_dict['z_ind']
+        n_ind_points = opti_dict['n_ind_points']
+        # Assign the initial state.
+        opti.set_value(x_init, init_state)
+        # Assign reference trajectory within horizon.
+        goal_states = self.get_references()
+        opti.set_value(x_ref, goal_states)
+        if self.mode == 'tracking':
+            self.traj_step += 1
+        # Set the probabilistic state and input constraint set limits.
+        state_constraint_set_prev, input_constraint_set_prev = self.precompute_probabilistic_limits()
+
+        for si in range(len(self.constraints.state_constraints)):
+            opti.set_value(state_constraint_set[si], state_constraint_set_prev[si])
+        for ui in range(len(self.constraints.input_constraints)):
+            opti.set_value(input_constraint_set[ui], input_constraint_set_prev[ui])
+        if self.recalc_inducing_points_at_every_step:
+            mean_post_factor_val, _, _, z_ind_val = self.precompute_sparse_gp_values(n_ind_points)
+            self.results_dict['inducing_points'].append(z_ind_val)
+        else:
+            mean_post_factor_val = self.mean_post_factor_val
+            z_ind_val = self.z_ind_val
+            self.results_dict['inducing_points'] = [z_ind_val]
+
+        opti.set_value(mean_post_factor, mean_post_factor_val)
+        opti.set_value(z_ind, z_ind_val)
+         # Solve the optimization problem.
+        try:
+            sol = opti.solve()
+            x_val, u_val = sol.value(x_var), sol.value(u_var)
+            print('=============Warm-starting successes=============')
+        except RuntimeError:
+            print('=============Warm-starting fails=============')
+            x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+
+        self.x_guess = x_val
+        self.u_guess = u_val
+        self.x_prev, self.u_prev = x_val, u_val
+        x_guess = x_val
+        u_guess = u_val
+
+        # # set the solver back
+        # self.setup_gp_optimizer(n_ind_points=n_ind_points,
+        #                         solver=self.sqp_solver)
+        
+        time_after = time.time()
+        print('MPC _compute_initial_guess time: ', time_after - time_before)
+
+        return x_guess, u_guess
+    

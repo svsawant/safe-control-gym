@@ -195,6 +195,7 @@ class GaussianProcessCollection:
         self.K_plus_noise = gp_K_plus_noise
         self.K_plus_noise_inv = gp_K_plus_noise_inv
         self.casadi_predict = self.make_casadi_predict_func()
+        self.casadi_linearized_predict = self.make_casadi_linearized_predict_func()
 
     def get_hyperparameters(self,
                             as_numpy=False
@@ -260,6 +261,7 @@ class GaussianProcessCollection:
         self.K_plus_noise = gp_K_plus_noise
         self.K_plus_noise_inv = gp_K_plus_noise_inv
         self.casadi_predict = self.make_casadi_predict_func()
+        self.casadi_linearized_predict = self.make_casadi_linearized_predict_func()
 
     def predict(self,
                 x,
@@ -311,6 +313,26 @@ class GaussianProcessCollection:
                                      ['z'],
                                      ['mean'])
         return casadi_predict
+
+    def make_casadi_linearized_predict_func(self):
+        '''
+        Assume train_inputs and train_tergets are already
+        '''
+        Nz = len(self.input_mask)
+        Ny = len(self.target_mask)
+        z = ca.SX.sym('z1', Nz)
+        dmu = ca.SX.zeros(Nz, Ny)
+        for gp_ind, gp in enumerate(self.gp_list):
+            dmu[:, gp_ind] = gp.casadi_linearized_predict(z=z)['mean']
+        A, B = dmu.T[:, :Ny], dmu.T[:, Ny:]
+        assert A.shape == (Ny, Ny), ValueError('A matrix has wrong shape.')
+        assert B.shape == (Ny, Nz-Ny), ValueError('B matrix has wrong shape.')
+        casadi_lineaized_predict = ca.Function('linearized_pred',
+                                                  [z],
+                                                  [dmu, A, B],
+                                                  ['z'],
+                                                  ['mean', 'A', 'B'])
+        return casadi_lineaized_predict
 
     def prediction_jacobian(self,
                             query
@@ -477,6 +499,8 @@ class GaussianProcess:
         self.model.double()  # needed otherwise loads state_dict as float32
         self._compute_GP_covariances(train_inputs)
         self.casadi_predict = self.make_casadi_prediction_func(train_inputs, train_targets)
+        self.casadi_linearized_predict = \
+            self.make_casadi_linearized_prediction_func(train_inputs, train_targets)
 
     def train(self,
               train_input_data,
@@ -570,6 +594,9 @@ class GaussianProcess:
         self.model.load_state_dict(torch.load(fname))
         self._compute_GP_covariances(train_x)
         self.casadi_predict = self.make_casadi_prediction_func(train_x, train_y)
+        self.casadi_linearized_predict = \
+            self.make_casadi_linearized_prediction_func(train_x, train_y)
+
 
     def predict(self,
                 x,
@@ -635,6 +662,148 @@ class GaussianProcess:
                               ['z'],
                               ['mean'])
         return predict
+    
+    # def make_se_kernel_derivative_func(self,
+    #                           train_x):
+    #     '''Get the derivative of the SE kernel with respect to the input.
+    #        See Berkenkamp and Schoellig, 2015, eq. (8) (9).
+
+    #        Args:
+    #             train_x (torch.Tensor): input training data (input_dim X N samples).
+    #        Outputs:
+    #             dkdx (np.array): Derivative of the kernel with respect to the input.
+    #             d2kdx2 (np.array): Second derivative of the kernel with respect to the input.
+    #     '''
+    #     train_x = train_x.numpy()
+    #     lengthscale = self.model.covar_module.base_kernel.lengthscale.detach().numpy()
+    #     output_scale = self.model.covar_module.outputscale.detach().numpy()
+
+    #     M = np.diag(lengthscale.reshape(-1))
+    #     M_inv = np.linalg.inv(M)
+    #     M_inv = ca.DM(M_inv)
+    #     assert M.shape[0] == train_x.shape[1], ValueError('Mismatch in input dimensions')
+    #     Nx = len(self.input_mask) # number of input dimension
+    #     num_data = train_x.shape[0] 
+    #     z = ca.SX.sym('z', Nx) # query point
+    #     # compute 1st derivative of the kernel (8)
+    #     dkdx = ca.SX.zeros(Nx, num_data)
+    #     for i in range(num_data):
+    #         dkdx[:, i] = (train_x[i] - z) * \
+    #                   covSEard(z, train_x[i].T, lengthscale.T, output_scale)
+    #     dkdx = M_inv**2 @ dkdx
+    #     # compute 2nd derivative of the kernel (9)
+    #     d2kdx2 = M_inv**2  * output_scale ** 2
+        
+    #     dkdx_func = ca.Function('dkdx',
+    #                             [z],
+    #                             [dkdx],
+    #                             ['z'],
+    #                             ['dkdx'])
+    #     d2kdx2_func = ca.Function('d2kdx2',
+    #                                 [z],
+    #                                 [d2kdx2],
+    #                                 ['z'],
+    #                                 ['d2kdx2'])
+    #     return dkdx_func, d2kdx2_func
+    
+    def make_casadi_linearized_prediction_func(self, train_inputs, train_targets):
+        '''Get the linearized prediction casadi function.
+           See Berkenkamp and Schoellig, 2015, eq. (8) (9) for the derivative
+           of the SE kernel with respect to the input.
+           Assumes train_inputs and train_targets are already masked.
+
+           Args:
+                train_x (torch.Tensor): input training data (input_dim X N samples).
+           Outputs:
+                dkdx (np.array): Derivative of the kernel with respect to the input.
+                d2kdx2 (np.array): Second derivative of the kernel with respect to the input.
+        '''
+        train_inputs = train_inputs.numpy()
+        train_targets = train_targets.numpy()
+        lengthscale = self.model.covar_module.base_kernel.lengthscale.detach().numpy()
+        output_scale = self.model.covar_module.outputscale.detach().numpy()
+        M = np.diag(lengthscale.reshape(-1))
+        M_inv = np.linalg.inv(M)
+        M_inv = ca.DM(M_inv)
+        assert M.shape[0] == train_inputs.shape[1], ValueError('Mismatch in input dimensions')
+        num_data = train_inputs.shape[0]
+        z = ca.SX.sym('z', len(self.input_mask)) # query point
+        # compute 1st derivative of the kernel (8)
+        dkdx = ca.SX.zeros(len(self.input_mask), num_data)
+        for i in range(num_data):
+            dkdx[:, i] = (train_inputs[i] - z) * \
+                      covSEard(z, train_inputs[i].T, lengthscale.T, output_scale)
+        dkdx = M_inv**2 @ dkdx
+        # compute 2nd derivative of the kernel (9)
+        d2kdx2 = M_inv**2  * output_scale ** 2
+        
+        dkdx_func = ca.Function('dkdx',
+                                [z],
+                                [dkdx],
+                                ['z'],
+                                ['dkdx'])
+        d2kdx2_func = ca.Function('d2kdx2',
+                                    [z],
+                                    [d2kdx2],
+                                    ['z'],
+                                    ['d2kdx2'])
+        mean = dkdx_func(z) \
+                   @ self.model.K_plus_noise_inv.detach().numpy() @ train_targets
+        linearized_predict = ca.Function('linearized_predict',
+                                            [z],
+                                            [mean],
+                                            ['z'],
+                                            ['mean'])
+        return linearized_predict
+
+    # def linearized_prediction(self,
+    #                           x, 
+    #                           requires_grad=False,
+    #                           return_pred=True
+    #                           ):
+    #     '''
+    #     Linearized predictions: 
+    #     See Berkenkamp and Schoellig, 2015, eq. (10) (11).
+
+    #     Args:
+    #         x : torch.Tensor (N_samples x input DIM).
+
+    #     Returns:
+    #         Predictions
+    #             mean : torch.tensor (nx X N_samples).
+    #             lower : torch.tensor (nx X N_samples).
+    #             upper : torch.tensor (nx X N_samples).
+    #     '''
+    #     self.model.eval()
+    #     self.likelihood.eval()
+    #     if isinstance(x, np.ndarray):
+    #         x = torch.from_numpy(x).double()
+    #     if self.input_mask is not None:
+    #         x = x[:, self.input_mask]
+    #     if self.NORMALIZE:
+    #         x = torch.from_numpy(self.scaler.transform(x))
+    #     if requires_grad:
+    #         predictions = self.likelihood(self.model(x))
+    #         mean = self.first_kernel_der(x) \
+    #                @ self.model.K_plus_noise_inv \
+    #                @ self.model.train_targets
+    #         cov = self.second_kernel_der(x) \
+    #             - self.first_kernel_der(x) @ self.model.K_plus_noise_inv @ self.first_kernel_der(x).T
+    #     else:
+    #         with torch.no_grad(), gpytorch.settings.fast_pred_var(state=True), \
+    #              gpytorch.settings.fast_pred_samples(state=True):
+    #             predictions = self.likelihood(self.model(x))
+    #             print('x: ', x)
+    #             print('self.first_kernel_der(x): ', self.first_kernel_der(x))
+    #             mean = self.first_kernel_der(x) \
+    #                @ self.model.K_plus_noise_inv \
+    #                @ self.model.train_targets
+    #             cov = self.second_kernel_der(x) \
+    #             - self.first_kernel_der(x) @ self.model.K_plus_noise_inv @ self.first_kernel_der(x).T
+    #     if return_pred:
+    #         return mean, cov, predictions
+    #     else:
+    #         return mean, cov
 
     def plot_trained_gp(self,
                         inputs,
