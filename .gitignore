@@ -150,3 +150,7 @@ dmypy.json
 
 
 safe_control_gym/experiments/ROA_brute/ROA_data/results_*
+safe_control_gym/experiments/arxiv/cartpole_performance/data
+safe_control_gym/experiments/arxiv/cartpole_performance/temp-data
+safe_control_gym/experiments/arxiv/cartpole_constraint/data
+safe_control_gym/experiments/arxiv/cartpole_constraint/temp-data

@@ -36,7 +36,7 @@ def compute_lqr_gain(model, x_0, u_0, Q, R, discrete_dynamics=True):
         P = scipy.linalg.solve_continuous_are(A, B, Q, R)
         gain = np.dot(np.linalg.inv(R), np.dot(B.T, P))
 
-    return gain, P
+    return gain
 
 
 def discretize_linear_system(A, B, dt, exact=False):
