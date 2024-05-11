@@ -141,7 +141,9 @@ def make_plots(test_runs, train_runs, num_inds, dir):
                                                                  train_runs)
     plot_constraint_violation(num_points_per_epoch, viol, fig_dir)
     avg_maxs = get_avg_of_max_viol_theta_dot(maximums)
+    abg_maxs_theta = get_avg_of_max_viol_theta(maximums)
     plot_average_peak_theta_dot_viol(num_points_per_epoch, avg_maxs, fig_dir)
+    plot_average_peak_theta_viol(num_points_per_epoch, abg_maxs_theta, fig_dir)
 
     # Plot Learning Curves
     avg_rmse_error = get_average_rmse_error(test_runs)
@@ -280,10 +282,13 @@ def get_constraint_violations(test_runs,
             n_train_samples_per_epoch += len(train_runs[epoch][train_episode]['info'])
         num_test_episodes_per_epoch = len(test_runs[epoch].keys())
         for test_episode in range(num_test_episodes_per_epoch):
+            # violations in a single episode
             violations = 0
             max_violations = np.zeros(test_runs[epoch][test_episode]['info'][0]['constraint_values'].shape)
             n = len(test_runs[epoch][test_episode]['info'])
             for i in range(n):
+                # print('test_runs[epoch][test_episode][info][i][constraint_values]', test_runs[epoch][test_episode]['info'][i]['constraint_values'])
+                # input('press enter to continue')
                 #violations += test_runs[epoch][test_episode]['info'][i]['constraint_violation'] # Due to bug.
                 violations += int(np.any(test_runs[epoch][test_episode]['info'][i]['constraint_values'] > 0))
                 max_violations = np.maximum(max_violations,
@@ -329,7 +334,17 @@ def get_avg_of_max_viol_theta_dot(maximums):
     num_epochs = len(maximums)
     max_avgs = []
     for epoch in range(num_epochs):
-        max_avgs.append(np.mean(np.max(maximums[epoch][:,[3,7]], axis=1)))
+        # print('maximums[epoch]', maximums[epoch])
+        max_avgs.append(np.mean(np.max(maximums[epoch][:,[5,9]], axis=1)))
+    return max_avgs
+
+def get_avg_of_max_viol_theta(maximums):
+    """ get the average of the max violations in theta across episodes for each epoch."""
+    num_epochs = len(maximums)
+    max_avgs = []
+    for epoch in range(num_epochs):
+        # print('maximums[epoch]', maximums[epoch])
+        max_avgs.append(np.mean(np.max(maximums[epoch][:,[4,8]], axis=1)))
     return max_avgs
 
 def plot_average_peak_theta_dot_viol(train_sample, avg_max, dir):
@@ -348,6 +363,23 @@ def plot_average_peak_theta_dot_viol(train_sample, avg_max, dir):
                data,
                delimiter=',',
                header='Train Time (s),Avg peak violation (rad/s)')
+    
+def plot_average_peak_theta_viol(train_sample, avg_max, dir):
+    plt.plot(train_sample, avg_max)
+    plt.xlabel('Training Time (s)')
+    plt.ylabel('Avg Peak Violation (rad)')
+    plt.title('Theta Average Peak Violation')
+    stem = 'peak_viol_theta'
+    fname = os.path.join(dir, stem + '.png')
+    plt.savefig(fname)
+    plt.cla()
+    plt.clf()
+    data = np.vstack((train_sample, avg_max)).T
+    fname = os.path.join(dir, stem + '.csv')
+    np.savetxt(fname,
+               data,
+               delimiter=',',
+               header='Train Time (s),Avg peak violation (rad)')
 
 def plot_robustness(runs, pole_lengths, label, dir):
     num_coeff = len(runs)

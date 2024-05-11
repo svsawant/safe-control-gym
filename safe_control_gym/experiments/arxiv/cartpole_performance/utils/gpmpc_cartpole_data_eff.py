@@ -28,6 +28,7 @@ import sys
 import os.path as path
 sys.path.append(path.abspath(path.join(__file__, "../../../utils/")))
 from gpmpc_plotting_utils import make_plots, gather_training_samples, plot_data_eff_from_csv
+import time
 
 def main(config):
     env_func = partial(make,
@@ -70,10 +71,15 @@ def main(config):
         test_env.action_space.seed(config.seed)
         test_envs = [test_env]*num_epochs
 
-
+    # print the class of ctrl.prior_ctrl
+    print('ctrl.prior_ctrl', ctrl.prior_ctrl)
+    # exit()
     for episode in range(num_train_episodes_per_epoch):
         run_results = ctrl.prior_ctrl.run(env=train_envs[0],
                                           terminate_run_on_done=config.terminate_train_on_done)
+        # print('run_results.key', run_results.keys())
+        # print('run_results[obs]', run_results['obs'].shape)
+        # exit()
         train_runs[0].update({episode: munch.munchify(run_results)})
         ctrl.reset()
     for test_ep in range(num_test_episodes_per_epoch):
@@ -88,8 +94,11 @@ def main(config):
             x_seq, actions, x_next_seq = gather_training_samples(train_runs, epoch-1, num_samples, train_envs[epoch-1].np_random)
         else:
             x_seq, actions, x_next_seq = gather_training_samples(train_runs, epoch-1, num_samples)
+        # print('x_seq', x_seq.shape)
+
         train_inputs, train_outputs = ctrl.preprocess_training_data(x_seq, actions, x_next_seq)
         _ = ctrl.learn(input_data=train_inputs, target_data=train_outputs)
+        # exit()
 
         # Test new policy.
         test_runs[epoch] = {}
@@ -129,12 +138,48 @@ def main(config):
                  test_data=ctrl.test_data,
                  data_inputs=ctrl.data_inputs,
                  data_targets=ctrl.data_targets)
-
+        # ctrl.reset()
+        # x_guess = np.zeros((ctrl.model.x_sym.shape[0], 1))
+        # u_guess = np.zeros((ctrl.model.u_sym.shape[0], 1))
+        # test_delta_x = np.zeros((ctrl.model.x_sym.shape[0], 1))
+        # test_delta_u = np.zeros((ctrl.model.u_sym.shape[0], 1))
+        # z = np.concatenate((test_delta_x, test_delta_u), axis=0)
+        # Ad_true = np.array([[1, 0.0666667, 00, 00],
+        #                     [00, 1, -0.0478049, 0],
+        #                     [00, 00, 1, 0.0666667],
+        #                     [00, 00, 1.05171, 1]])
+        # Bd_dtrue = np.array([[00],
+        #                     [0.0666667],
+        #                     [00],
+        #                     [-0.097561]])
+        # Ad0 = ctrl.prior_ctrl.linear_dynamics_func(x0=test_delta_x, p=test_delta_u,
+        #                                            x_guess=x_guess, u_guess=u_guess)['Ad']
+        # Bd0 = ctrl.prior_ctrl.linear_dynamics_func(x0=test_delta_x, p=test_delta_u,
+        #                                             x_guess=x_guess, u_guess=u_guess)['Bd']
+        # prior_error_A = np.linalg.norm(Ad0 - Ad_true)
+        # prior_error_B = np.linalg.norm(Bd0 - Bd_dtrue)
+        # Ad = ctrl.linear_gp_dynamics_func(x0=test_delta_x, p=test_delta_u,
+        #                                     x_guess=x_guess, u_guess=u_guess,
+        #                                     z=z)['A']
+        # Bd = ctrl.linear_gp_dynamics_func(x0=test_delta_x, p=test_delta_u,
+        #                                     x_guess=x_guess, u_guess=u_guess,
+        #                                     z=z)['B']
+        # posterior_error_A = np.linalg.norm(Ad - Ad_true)
+        # posterior_error_B = np.linalg.norm(Bd - Bd_dtrue)
+        # print('Ad0', Ad0)
+        # print('Bd0', Bd0)
+        # print('Ad', Ad)
+        # print('Bd', Bd)
+        # print('prior_error_A', prior_error_A)
+        # print('prior_error_B', prior_error_B)
+        # print('posterior_error_A', posterior_error_A)
+        # print('posterior_error_B', posterior_error_B)
+        # input('Press Enter to continue...')
         make_plots(test_runs, train_runs, train_envs[0].state_dim, config.output_dir)
 
     fname = os.path.join(config.output_dir, 'figs', 'avg_rmse_cost_learning_curve.csv')
-    plot_data_eff_from_csv(fname,
-                           'Cartpole Data Efficiency')
+    # plot_data_eff_from_csv(fname,
+    #                        'Cartpole Data Efficiency')
     #plot_runs(test_runs, num_epochs)
     return train_runs, test_runs
 
@@ -149,10 +194,12 @@ if __name__ == "__main__":
     with open(os.path.join(config.output_dir, 'config.yaml'), "w") as file:
         yaml.dump(munch.unmunchify(config), file, default_flow_style=False)
 
-
+    time_start = time.time()
     if config.plot_dir == '':
         train_runs, test_runs = main(config)
     else:
         fname = config.plot_dir
         plot_data_eff_from_csv(fname,
                                  'Cartpole Data Efficiency')
+    time_end = time.time()
+    print('Time taken: ', time_end - time_start)

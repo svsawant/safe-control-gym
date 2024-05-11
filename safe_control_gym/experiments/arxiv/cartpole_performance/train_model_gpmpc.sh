@@ -20,7 +20,7 @@ rm -r -f ./temp-data/
 # move the results from temp_data/ into data/
 # rm -r -f ./data/
 
-python3 ./utils/gpmpc_cartpole_data_eff.py --algo gp_mpc --task cartpole --overrides ./config_overrides/gpmpc_cartpole_data_eff_l_1000.yaml
+python3 ./utils/gpmpc_cartpole_data_eff.py --algo gp_mpc --task cartpole --overrides ./config_overrides/gpmpc_cartpole_data_eff_M_true.yaml
 
 mv ./temp-data/cartpole_data_eff/* ./data/cartpole_data_eff/
 

@@ -1,1 +1,0 @@
-./utils/gpmpc_cartpole_data_eff.py --algo gp_mpc --task cartpole --overrides ./config_overrides/gpmpc_cartpole_data_eff_150.yaml

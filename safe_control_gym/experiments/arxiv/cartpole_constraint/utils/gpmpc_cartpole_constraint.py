@@ -135,8 +135,8 @@ def main(config):
                  )
         make_plots(test_runs, train_runs, train_envs[0].state_dim, config.output_dir)
     fname = os.path.join(config.output_dir, 'figs', 'number_viol.csv')
-    plot_constraint_from_csv(fname,
-                             'Cartpole Constraint Violations')
+    # plot_constraint_from_csv(fname,
+    #                          'Cartpole Constraint Violations')
 
     return train_runs, test_runs
 

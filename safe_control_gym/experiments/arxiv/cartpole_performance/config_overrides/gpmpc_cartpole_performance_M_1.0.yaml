@@ -2,15 +2,15 @@ algo: gp_mpc
 algo_config:
   additional_constraints: null
   deque_size: 10
-  eval_batch_size: 10 #10
+  eval_batch_size: 10
   gp_approx: mean_eq
   gp_model_path: null
-  horizon: 50
+  horizon: 30
   prior_info:
     prior_prop:
+        cart_mass: 1.0 # M true = 1.0
         pole_length: 0.5 # l true = 0.5
         pole_mass: 0.1 # m true = 0.1
-        cart_mass: 1.0 # M true = 1.0
   initial_rollout_std: 0.0
   input_mask: null
   learing_rate: null
@@ -23,23 +23,22 @@ algo_config:
   online_learning: false
   optimization_itarations: bull
   optimization_iterations:
-  - 100 #3000
-  - 100 #3000
-  - 100 #3000
-  - 100 #3000
+  - 3000
+  - 3000
+  - 3000
+  - 3000
   output_dir: reslts/temp-data/
   overwrite_saved_data: false
   prior_param_coeff: 1.
   prob: 0.95
   q_mpc:
-  - 1 #10
+  - 1
   - 0.1
-  - 1 #10
+  - 1
   - 0.1
   r_mpc:
   - 0.1
-  # sparse_gp: true
-  sparse_gp: false
+  sparse_gp: true # false # true
   n_ind_points: 30
   inducing_point_selection_method: 'kmeans'
   recalc_inducing_points_at_every_step: false
@@ -55,11 +54,11 @@ algo_config:
   use_prev_start: true
   warmstart: true
 device: cuda
-num_epochs: 20
-num_samples: 10
-num_test_episodes_per_epoch:  1 #5
-num_train_episodes_per_epoch: 1 #5
-output_dir: temp-data/M_1000/
+num_epochs: 6
+num_samples: 30
+num_test_episodes_per_epoch: 1
+num_train_episodes_per_epoch: 1
+output_dir: temp-data/
 restore: null
 same_test_initial_state: true
 same_train_initial_state: True # false
@@ -71,7 +70,7 @@ tag: cartpole_data_eff
 task: cartpole
 task_config:
   adversary_disturbance: null
-  adversary_disturbance_scale: 0.01
+  adversary_disturbance_scale: 0.001
   constraint_penalty: -1
   constraints:
     - constraint_form: default_constraint
@@ -80,8 +79,8 @@ task_config:
       upper_bounds: [ 9]
     - constraint_form: default_constraint
       constrained_variable: state
-      upper_bounds: [10, 3, 10, 10]
-      lower_bounds: [-10, -3, -10, -10]
+      upper_bounds: [10, 5, 10, 10]
+      lower_bounds: [-10, -5, -10, -10]
   cost: quadratic
   ctrl_freq: 15
   disturbances:
@@ -89,7 +88,8 @@ task_config:
       - disturbance_func: white_noise
         std: 0.0001
   done_on_violation: false
-  episode_len_sec: 1 # 5
+  done_on_out_of_bound: false
+  episode_len_sec: 5
   gui: false
   inertial_prop:
     cart_mass: 1.0
@@ -101,17 +101,25 @@ task_config:
   init_state_randomization_info:
     init_theta:
       distrib: uniform
-      high: 0.1
-      low: -0.1
+      high: 0.05
+      low:  -0.05
     init_x:
       distrib: uniform
-      high: 0.3
-      low: -0.3
+      high: 0.5
+      low:  0.5
+    init_x_dot:
+      distrib: uniform
+      high: 0.05
+      low: -0.05
+    init_theta_dot:
+      distrib: uniform
+      high: 0.05
+      low: -0.05
   normalized_rl_action_space: false
-  prior_prop:
-    cart_mass: 1.0
-    pole_length: 0.5
-    pole_mass: 0.1
+  # prior_prop:
+  #   cart_mass: 1.0
+  #   pole_length: 0.5
+  #   pole_mass: 0.1
   pyb_freq: 750
   randomized_inertial_prop: false
   randomized_init: false #true
