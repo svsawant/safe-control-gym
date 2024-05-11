@@ -58,14 +58,14 @@ action = data['trajs_data']['action'][0]
 state_small = data_small['trajs_data']['obs'][0]
 action_small = data_small['trajs_data']['action'][0]
 input_small = data_small['train_inputs']
-target_small = data_small['train_targets'][:,-1]
+target_small = data_small['train_targets']# [:,-1]
 num_data = input_small.shape[0]
 
 
 state_large = data_large['trajs_data']['obs'][0]
 action_large = data_large['trajs_data']['action'][0]
 input_large = data_large['train_inputs']
-target_large = data_large['train_targets'][:,-1]
+target_large = data_large['train_targets']# [:,-1]
 # sample num_data data points from the large dataset with a sequantial index
 idx = np.random.choice(np.arange(input_large.shape[0]), num_data, replace=False)
 idx = np.sort(idx)
@@ -138,45 +138,45 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
     likelihood = gpytorch.likelihoods.GaussianLikelihood(
             noise_constraint=gpytorch.constraints.GreaterThan(1e-6),
         ).double()
-    normalize = True
-    GP_small = GaussianProcess(model_type,
-                               deepcopy(likelihood),
-                               input_mask=[0, 1, 2],
-                               normalize=normalize)
-    GP_large = GaussianProcess(model_type,
-                                deepcopy(likelihood),
-                                input_mask=[0, 1, 2],
-                                normalize=normalize)
-    n_iter = 1000
-    learning_rate = 0.1
-    gpu = False
-    GP_name_small = 'GP_small.pth'
-    GP_name_large = 'GP_large.pth'
-    abs_GP_path = os.path.join(current_dir, GP_name_small)
-    print('abs_GP_path: ', abs_GP_path)
-    print('os.path.exists(abs_GP_path): ', os.path.exists(abs_GP_path))
-    # exit()
-    # if os.path.exists(os.path.join(current_dir, GP_name_small)) and \
-    #     os.path.exists(os.path.join(current_dir, GP_name_large)):
-    if os.path.exists(os.path.join(current_dir, GP_name_small)):
-        print('===== Loading the trained GP model =====')
-        GP_small.init_with_hyperparam(train_input_small, train_target_small, 
-                                      path_to_statedict=GP_name_small)
-        # GP_large.init_with_hyperparam(train_input_large, train_target_large, 
-        #                               path_to_statedict=GP_name_large)
-    else:
-        print('===== Training the GP model =====')
-        GP_small.train(train_input_small, train_target_small,\
-                        test_input_small, test_target_small,\
-                        n_train=n_iter, learning_rate=learning_rate, gpu=gpu,
-                        fname='GP_small.pth')
-        # # GP_small.plot_trained_gp(input_small, target_small, output_label='small', fig_count=1)
-        # GP_large.train(train_input_large, train_target_large,\
-        #                     test_input_large, test_target_large,\
-        #                     n_train=n_iter, learning_rate=learning_rate, gpu=gpu,
-        #                     fname='GP_large.pth')
-        # GP_large.plot_trained_gp(input_large, target_large, output_label='large', fig_count=2)
-    # sample 2 random states from the large dataset
+    # normalize = True
+    # GP_small = GaussianProcess(model_type,
+    #                            deepcopy(likelihood),
+    #                            input_mask=[0, 1, 2],
+    #                            normalize=normalize)
+    # GP_large = GaussianProcess(model_type,
+    #                             deepcopy(likelihood),
+    #                             input_mask=[0, 1, 2],
+    #                             normalize=normalize)
+    # n_iter = 1000
+    # learning_rate = 0.1
+    # gpu = False
+    # GP_name_small = 'GP_small.pth'
+    # GP_name_large = 'GP_large.pth'
+    # abs_GP_path = os.path.join(current_dir, GP_name_small)
+    # print('abs_GP_path: ', abs_GP_path)
+    # print('os.path.exists(abs_GP_path): ', os.path.exists(abs_GP_path))
+    # # exit()
+    # # if os.path.exists(os.path.join(current_dir, GP_name_small)) and \
+    # #     os.path.exists(os.path.join(current_dir, GP_name_large)):
+    # if os.path.exists(os.path.join(current_dir, GP_name_small)):
+    #     print('===== Loading the trained GP model =====')
+    #     GP_small.init_with_hyperparam(train_input_small, train_target_small, 
+    #                                   path_to_statedict=GP_name_small)
+    #     # GP_large.init_with_hyperparam(train_input_large, train_target_large, 
+    #     #                               path_to_statedict=GP_name_large)
+    # else:
+    #     print('===== Training the GP model =====')
+    #     GP_small.train(train_input_small, train_target_small,\
+    #                     test_input_small, test_target_small,\
+    #                     n_train=n_iter, learning_rate=learning_rate, gpu=gpu,
+    #                     fname='GP_small.pth')
+    #     # # GP_small.plot_trained_gp(input_small, target_small, output_label='small', fig_count=1)
+    #     # GP_large.train(train_input_large, train_target_large,\
+    #     #                     test_input_large, test_target_large,\
+    #     #                     n_train=n_iter, learning_rate=learning_rate, gpu=gpu,
+    #     #                     fname='GP_large.pth')
+    #     # GP_large.plot_trained_gp(input_large, target_large, output_label='large', fig_count=2)
+    # # sample 2 random states from the large dataset
     print('train_input_small.shape: ', train_input_small.shape)
     # idx = np.random.choice(np.arange(train_input_small.shape[0]), 2, replace=False)
     idx = np.random.choice(np.arange(train_input_small.shape[0]), 1, replace=False) 
@@ -209,8 +209,18 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
                                                           target_mask=target_mask,
                                                           normalize=normalize_training_data
                                                           )
+    gaussian_process.train(train_input_small, train_target_small,\
+                            test_input_small, test_target_small,\
+                            n_train=[100, 100], \
+                            learning_rate=[0.1, 0.1], gpu=False,
+                            )
+    A = gaussian_process.casadi_linearized_predict(z=input_large_picked)['A']
+    B = gaussian_process.casadi_linearized_predict(z=input_large_picked)['B']
+    dmu = gaussian_process.casadi_linearized_predict(z=input_large_picked)['mean']
+    print('A: ', A)
+    print('B: ', B)
+    # print('dmu: ', dmu)
     
-
     return 1
 
 

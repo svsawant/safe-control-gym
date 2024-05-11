@@ -2,26 +2,23 @@
 
 # LQR Experiment.
 
-# SYS='cartpole'
-SYS='pendulum'
+SYS='cartpole'
 # SYS='quadrotor_2D'
 # SYS='quadrotor_3D'
 
 TASK='stabilization'
 # TASK='tracking'
 
-# ALGO='lqr'
-# ALGO='linear_mpc'
-ALGO='sqp_mpc'
-# ALGO='ilqr'
+ALGO='gp_mpc'
 
-if [ "$SYS" == 'pendulum' ]; then
+
+if [ "$SYS" == 'cartpole' ]; then
     SYS_NAME=$SYS
 else
     SYS_NAME='quadrotor'
 fi
 
-python3 ./lqr_experiment.py \
+python3 ./test_cartpole_swingup_gp_mpc.py \
     --task ${SYS_NAME} \
     --algo ${ALGO} \
     --overrides \

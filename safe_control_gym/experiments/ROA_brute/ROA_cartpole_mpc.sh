@@ -9,7 +9,7 @@ SYS='cartpole'
 TASK='stabilization'
 # TASK='tracking'
 
-ALGO='mpc'
+ALGO='linear_mpc'
 # ALGO='ilqr'
 
 if [ "$SYS" == 'cartpole' ]; then

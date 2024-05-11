@@ -13,10 +13,12 @@ from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.experiments.base_experiment import BaseExperiment
 from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
+from safe_control_gym.lyapunov.lyapunov import GridWorld
 
+import time
 
 def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
-    '''The main function running LQR and iLQR experiments.
+    '''The main function running MPC experiments.
 
     Args:
         gui (bool): Whether to display the gui and plot graphs.
@@ -28,6 +30,8 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
     # Create the configuration dictionary.
     CONFIG_FACTORY = ConfigFactory()
     config = CONFIG_FACTORY.merge()
+    # print(config)
+    # exit()
 
     # Create an environment
     env_func = partial(make,
@@ -35,42 +39,52 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
                        **config.task_config
                        )
     random_env = env_func(gui=False)
-    # print('random_env.__dir__: ', random_env.__dir__())
+    # print('env_func.func.__dir__()', env_func.func.__dir__())
+    print('random_env.__dir__()', random_env.__dir__())
+    print('random_env.INERTIAL_PROP', random_env.INERTIAL_PROP)
+    print('random_env.POLE_MASS', random_env.POLE_MASS)
+    print('random_env.POLE_LENGTH', random_env.EFFECTIVE_POLE_LENGTH)
+    print('random_env.CART_MASS', random_env.CART_MASS)
     # exit()
-
     # Create controller.
     ctrl = make(config.algo,
                 env_func,
                 **config.algo_config
                 )
-    # print('ctrl.__dir__: \n', ctrl.__dir__())
-    # print('ctrl.model.__dir__: \n', ctrl.model.__dir__())
-    # print('ctrl.env.__dir__: \n', ctrl.env.__dir__())
-    # print('ctrl.env.obs_wrap_angle: \n', ctrl.env.obs_wrap_angle)
-    # loss = ctrl.model.loss(x=np.pi * 2,
+    # print(ctrl.__dir__())
+    print('ctrl.model.__dir__()', ctrl.model.__dir__())
+    print('ctrl.model.pole_mass', ctrl.model.pole_mass)
+    print('ctrl.model.pole_length', ctrl.model.pole_length)
+    print('ctrl.model.cart_mass', ctrl.model.cart_mass)
+    # print(ctrl.model.x_sym.shape[0])
     # exit()
-
     all_trajs = defaultdict(list)
     n_episodes = 1 if n_episodes is None else n_episodes
-
+    
+    # ctrl.
+    grids = gridding(ctrl.model.x_sym.shape[0], )
+    
+    
     # Run the experiment.
     for _ in range(n_episodes):
         # Get initial state and create environments
         init_state, _ = random_env.reset()
+
         static_env = env_func(gui=gui, randomized_init=False, init_state=init_state)
         static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
 
         # Create experiment, train, and run evaluation
         experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
-        experiment.launch_training()
+        experiment.launch_training() 
 
+        time_before = time.time()
         if n_steps is None:
             trajs_data, _ = experiment.run_evaluation(training=True, n_episodes=1)
         else:
             trajs_data, _ = experiment.run_evaluation(training=True, n_steps=n_steps)
+        time_after = time.time()
 
-        # if gui:
-        # print('Time taken:', time_after - time_before)
+        print('Time taken:', time_after - time_before)
         print('goal reached', trajs_data['info'][-1][-1]['goal_reached'])
         post_analysis(trajs_data['obs'][0], trajs_data['action'][0], ctrl.env)
 
@@ -81,18 +95,6 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
         # Merge in new trajectory data
         for key, value in trajs_data.items():
             all_trajs[key] += value
-    
-    # # preprocess traning data
-    # x_obs = trajs_data['obs'][0]
-    # x_seq = x_obs[:-1, :]
-    # x_next_seq = x_obs[1:, :]
-    # u_seq = trajs_data['action'][0]
-    # print('x_seq.shape: ', x_seq.shape)
-    # print('x_next_seq.shape: ', x_next_seq.shape)
-    # print('u_seq.shape: ', u_seq.shape)
-    # train_inputs, train_targets = ctrl.preprocess_GP_training_data(x_seq, u_seq, x_next_seq)
-    # print('train_inputs.shape: ', train_inputs.shape)
-    # print('train_targets.shape: ', train_targets.shape)
 
     ctrl.close()
     random_env.close()
@@ -100,14 +102,32 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
     all_trajs = dict(all_trajs)
 
     if save_data:
-        results = {'trajs_data': all_trajs, 'metrics': metrics, 'train_inputs': train_inputs, 'train_targets': train_targets}
+        results = {'trajs_data': all_trajs, 'metrics': metrics}
         path_dir = os.path.dirname('./temp-data/')
         os.makedirs(path_dir, exist_ok=True)
         with open(f'./temp-data/{config.algo}_data_{config.task}_{config.task_config.task}.pkl', 'wb') as file:
             pickle.dump(results, file)
 
     print('FINAL METRICS - ' + ', '.join([f'{key}: {value}' for key, value in metrics.items()]))
+    
+    
+def gridding(state_dim, use_zero_threshold = True):
+    # Number of states along each dimension
+    num_states = 251
 
+    # State grid
+    grid_limits = np.array([[-1., 1.], ] * state_dim)
+    state_discretization = GridWorld(grid_limits, num_states)
+
+    # Discretization constant
+    if use_zero_threshold:
+        tau = 0.0
+    else:
+        tau = np.sum(state_discretization.unit_maxes) / 2
+
+    print('Grid size: {}'.format(state_discretization.nindex))
+    print('Discretization constant (tau): {}'.format(tau))
+    return state_discretization
 
 def post_analysis(state_stack, input_stack, env):
     '''Plots the input and states to determine iLQR's success.
@@ -170,4 +190,4 @@ def wrap2pi_vec(angle_vec):
 
 
 if __name__ == '__main__':
-    run(save_data=False)
+    run()

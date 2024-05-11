@@ -13,7 +13,7 @@ from safe_control_gym.experiments.base_experiment import BaseExperiment
 from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 
-from utilities import *
+from safe_control_gym.lyapunov.utilities import *
 import multiprocessing
 import time
 import json
@@ -125,8 +125,8 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
     # grid_constraints = np.vstack((-1 * grid_constraints, \
     #                                     grid_constraints_ub)).T
 
-    prec = [3, 41, 51, 41]
-    # prec = [2, 2, 2, 2]
+    # prec = [3, 41, 51, 41]
+    prec = [2, 2, 2, 2]
     grids = gridding(dim_grid, grid_constraints, prec)
     ################### parallel processing code here ###################
     # roa = compute_roa_fix_par(grids, env_func, ctrl, no_traj=True)

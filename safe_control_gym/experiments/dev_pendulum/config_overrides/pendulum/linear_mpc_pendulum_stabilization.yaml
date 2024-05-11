@@ -1,4 +1,4 @@
-algo: mpc
+algo: linear_mpc
 algo_config:
   horizon: 20
   r_mpc:
@@ -9,13 +9,13 @@ algo_config:
   # Prior info
   prior_info:
     prior_prop: 
-      pole_length: 0.5
+      pole_length: 1.0
       pole_mass: 0.15
     # prior_prop: null
     randomize_prior_prop: False
     prior_prop_rand_info: null
   warmstart: True
-  solver: ipopt
-  # solver: qrsqp
+  # solver: ipopt
+  solver: qrqp
 
   

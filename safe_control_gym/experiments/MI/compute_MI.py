@@ -334,7 +334,8 @@ if __name__ == '__main__':
     if plot_result:
         # load_result
         MI_collection_small = np.load('MI_collection_small_same.npy')
-        MI_collection_large = np.load('MI_collection_large_same.npy')
+        MI_collection_large = np.load('MI_collection_large_same.np        print('obs:', obs)
+        print('action:', action)y')
         # print('MI_collection_small: ', MI_collection_small)
         # print('MI_collection_large: ', MI_collection_large)
         s = 2 # times of standard deviation
