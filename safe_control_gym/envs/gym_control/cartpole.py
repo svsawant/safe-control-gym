@@ -405,6 +405,13 @@ class CartPole(BenchmarkEnv):
         U = cs.MX.sym('U')
         nx = 4
         nu = 1
+        # extra simbolic x dot for acados
+        x_dot_acados = cs.MX.sym('x_dot_acados')
+        theta_dot_acados = cs.MX.sym('theta_dot_acados')
+        x_dot_dot_acados = cs.MX.sym('x_dot_dot_acados')
+        theta_dot_dot_acados = cs.MX.sym('theta_dot_dot_acados')
+        X_dot_acados = cs.vertcat(x_dot_acados, x_dot_dot_acados,\
+                                  theta_dot_acados, theta_dot_dot_acados)
         # Dynamics.
         temp_factor = (U + ml * theta_dot**2 * cs.sin(theta)) / Mm
         theta_dot_dot = ((g * cs.sin(theta) - cs.cos(theta) * temp_factor) / (length * (4.0 / 3.0 - m * cs.cos(theta)**2 / Mm)))
@@ -418,7 +425,7 @@ class CartPole(BenchmarkEnv):
         Ur = cs.MX.sym('Ur', nu, 1)
         cost_func = 0.5 * (X - Xr).T @ Q @ (X - Xr) + 0.5 * (U - Ur).T @ R @ (U - Ur)
         # Define dynamics and cost dictionaries.
-        dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}}
+        dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}, 'acados_vars': X_dot_acados}
         cost = {'cost_func': cost_func, 'vars': {'X': X, 'U': U, 'Xr': Xr, 'Ur': Ur, 'Q': Q, 'R': R}}
         # Additional params to cache
         params = {

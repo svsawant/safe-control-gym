@@ -154,3 +154,7 @@ safe_control_gym/experiments/arxiv/cartpole_performance/data
 safe_control_gym/experiments/arxiv/cartpole_performance/temp-data
 safe_control_gym/experiments/arxiv/cartpole_constraint/data
 safe_control_gym/experiments/arxiv/cartpole_constraint/temp-data
+safe_control_gym/envs/test_shower
+safe_control_gym/experiments/dev_sqp_gp
+c_generated_code
+acados_ocp_nlp.json
