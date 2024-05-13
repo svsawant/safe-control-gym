@@ -87,8 +87,15 @@ class MPC_ACADOS(BaseController):
         # NOTE: The naming X_EQ and U_EQ can be confusing 
         self.X_EQ = self.env.X_GOAL
         self.U_EQ = self.env.U_GOAL
+        
+        # warm-starting
+        self.init_solver = 'ipopt'
+        self.x_guess = None
+        self.u_guess = None
+
+        self.set_dynamics_func()
         self.set_up_acados_ode_model()
-        self.setup_optimizer()
+        self.setup_acados_optimizer()
         self.acados_ocp_solver = AcadosOcpSolver(self.ocp) # , \
                                     # json_file=f'acados_{self.ocp.model.name}.json')
 
@@ -136,8 +143,10 @@ class MPC_ACADOS(BaseController):
             self.traj_step = 0
         # Dynamics model.
         self.set_dynamics_func()
+        self.set_up_acados_ode_model
         # CasADi optimizer.
-        self.setup_optimizer()
+        # self.setup_optimizer()
+        self.setup_acados_optimizer()
         # Previously solved states & inputs, useful for warm start.
         self.x_prev = None
         self.u_prev = None
@@ -160,24 +169,32 @@ class MPC_ACADOS(BaseController):
     def set_up_acados_ode_model(self) -> AcadosModel:
 
         model_name = self.env.NAME
-        # f_expl = self.model.fc_func
-        f_expl = self.model.x_dot
-        f_impl = self.model.x_dot_acados - f_expl
+        
+        acados_model = AcadosModel()
+        acados_model.x = self.model.x_sym
+        acados_model.xdot = self.model.x_dot_acados # must be symbolic
+        acados_model.u = self.model.u_sym
+        acados_model.name = model_name
 
-        model = AcadosModel()
-        model.f_impl_expr = f_impl
-        model.f_expl_expr = f_expl
-        model.x = self.model.x_sym
-        model.xdot = self.model.x_dot_acados # must be symbolic
-        model.u = self.model.u_sym
-        model.name = model_name
+        # set up rk4
+        k1 = self.model.fc_func(acados_model.x, acados_model.u)
+        k2 = self.model.fc_func(acados_model.x + self.dt/2 * k1, acados_model.u)
+        k3 = self.model.fc_func(acados_model.x + self.dt/2 * k2, acados_model.u)
+        k4 = self.model.fc_func(acados_model.x + self.dt * k3, acados_model.u)
+        f_disc = acados_model.x + self.dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+
+        acados_model.disc_dyn_expr = f_disc
+        # f_expl = self.model.x_dot
+        # f_impl = self.model.x_dot_acados - f_expl
+        # model.f_impl_expr = f_impl
+        # model.f_expl_expr = f_expl
 
         # store meta information # NOTE: unit is missing
-        model.x_labels = self.env.STATE_LABELS
-        model.u_labels = self.env.ACTION_LABELS
-        model.t_label = 'time'
+        acados_model.x_labels = self.env.STATE_LABELS
+        acados_model.u_labels = self.env.ACTION_LABELS
+        acados_model.t_label = 'time'
 
-        self.acados_ode_model = model
+        self.acados_ode_model = acados_model
         
 
     # def compute_lqr_initial_guess(self, init_state, goal_states, x_lin, u_lin):
@@ -198,44 +215,38 @@ class MPC_ACADOS(BaseController):
     #         x_guess[:, i + 1, None] = self.dynamics_func(x0=x_guess[:, i], p=u)['xf'].toarray()
     #     return x_guess, u_guess
     
-    # def compute_initial_guess(self, init_state, goal_states):
-    #     time_before = time.time()
-    #     '''Use IPOPT to get an initial guess of the '''
-    #     self.setup_optimizer(solver=self.init_solver)
-    #     opti_dict = self.opti_dict
-    #     opti = opti_dict['opti']
-    #     x_var = opti_dict['x_var'] # optimization variables
-    #     u_var = opti_dict['u_var'] # optimization variables
-    #     x_init = opti_dict['x_init'] # initial state
-    #     x_ref = opti_dict['x_ref'] # reference state/trajectory
+    def compute_initial_guess(self, init_state, goal_states):
+        time_before = time.time()
+        '''Use IPOPT to get an initial guess of the '''
+        self.setup_optimizer(solver=self.init_solver)
+        opti_dict = self.opti_dict
+        opti = opti_dict['opti']
+        x_var = opti_dict['x_var'] # optimization variables
+        u_var = opti_dict['u_var'] # optimization variables
+        x_init = opti_dict['x_init'] # initial state
+        x_ref = opti_dict['x_ref'] # reference state/trajectory
 
-    #     # Assign the initial state.
-    #     opti.set_value(x_init, init_state) # initial state should have dim (nx,)
-    #     # Assign reference trajectory within horizon.
-    #     goal_states = self.get_references()
-    #     opti.set_value(x_ref, goal_states)
-    #     if self.mode == 'tracking':
-    #         self.traj_step += 1
-    #      # Solve the optimization problem.
-    #     try:
-    #         sol = opti.solve()
-    #         x_val, u_val = sol.value(x_var), sol.value(u_var)
-    #     except RuntimeError:
-    #         print('=============Warm-starting fails=============')
-    #         x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+        # Assign the initial state.
+        opti.set_value(x_init, init_state) # initial state should have dim (nx,)
+        # Assign reference trajectory within horizon.
+        goal_states = self.get_references()
+        opti.set_value(x_ref, goal_states)
+        if self.mode == 'tracking':
+            self.traj_step += 1
+         # Solve the optimization problem.
+        try:
+            sol = opti.solve()
+            x_val, u_val = sol.value(x_var), sol.value(u_var)
+        except RuntimeError:
+            print('=============Warm-starting fails=============')
+            x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
 
-    #     x_guess = x_val
-    #     u_guess = u_val
+        self.x_guess = x_val
+        self.u_guess = u_val
+        time_after = time.time()
+        print('MPC _compute_initial_guess time: ', time_after - time_before)
 
-    #     # set the solver back
-    #     self.setup_optimizer(solver=self.solver)
-        
-    #     time_after = time.time()
-    #     print('MPC _compute_initial_guess time: ', time_after - time_before)
-
-    #     return x_guess, u_guess
-
-    def setup_optimizer(self):
+    def setup_acados_optimizer(self):
         '''Sets up nonlinear optimization problem.'''
         print('=================Setting up acados optimizer=================')
         nx, nu = self.model.nx, self.model.nu
@@ -263,10 +274,22 @@ class MPC_ACADOS(BaseController):
         ocp.cost.yref = np.zeros((ny, ))
         ocp.cost.yref_e = np.zeros((ny_e, ))
 
-        # set upt constraints
-        ocp.constraints.lbu = self.env.action_space.low
-        ocp.constraints.ubu = self.env.action_space.high
+        # bounded input constraints
+        ocp.constraints.Jbu = np.eye(nu)
+        ocp.constraints.lbu = self.env.constraints.input_constraints[0].lower_bounds
+        ocp.constraints.ubu = self.env.constraints.input_constraints[0].upper_bounds
         ocp.constraints.idxbu = np.arange(nu)
+        # bounded state constraints
+        ocp.constraints.Jbx = np.eye(nx)
+        ocp.constraints.lbx = self.env.constraints.state_constraints[0].lower_bounds
+        ocp.constraints.ubx = self.env.constraints.state_constraints[0].upper_bounds
+        ocp.constraints.idxbx = np.arange(nx)
+        # bounded terminal state constraints
+        ocp.constraints.Jbx_e = np.eye(nx)
+        ocp.constraints.lbx_e = self.env.constraints.state_constraints[0].lower_bounds
+        ocp.constraints.ubx_e = self.env.constraints.state_constraints[0].upper_bounds
+        ocp.constraints.idxbx_e = np.arange(nx)
+
         # placeholder initial state constraint
         x_init = np.zeros((nx))
         ocp.constraints.x0 = x_init
@@ -274,28 +297,13 @@ class MPC_ACADOS(BaseController):
         # set up solver options
         ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'
         ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
-        ocp.solver_options.integrator_type = 'IRK'
+        ocp.solver_options.integrator_type = 'DISCRETE'
         ocp.solver_options.nlp_solver_type = 'SQP'
         ocp.solver_options.nlp_solver_max_iter = 5000
         # prediction horizon
         ocp.solver_options.tf = self.T * self.dt
 
         self.ocp = ocp
-
-
-        # # Define optimizer and variables.
-        # opti = cs.Opti()
-        # # States.
-        # x_var = opti.variable(nx, T + 1)
-        # # Inputs.
-        # u_var = opti.variable(nu, T)
-        # # Initial state.
-        # x_init = opti.parameter(nx, 1)
-        # # Reference (equilibrium point or trajectory, last step for terminal cost).
-        # x_ref = opti.parameter(nx, T + 1)
-        # # Add slack variables
-        # state_slack = opti.variable(len(self.state_constraints_sym))
-        # input_slack = opti.variable(len(self.input_constraints_sym))
 
         # # Constraints
         # for i in range(self.T):
@@ -372,13 +380,22 @@ class MPC_ACADOS(BaseController):
         # set initial condition (0-th state)
         self.acados_ocp_solver.set(0, "lbx", obs)
         self.acados_ocp_solver.set(0, "ubx", obs)
-        # initialize solver
-        for idx in range(self.T + 1):
-            self.acados_ocp_solver.set(idx, "x", 0 * np.ones(obs.shape))
-        for idx in range(self.T):
-            init_u = np.zeros((nu,))
-            self.acados_ocp_solver.set(idx, "u", init_u)
-        
+
+        # warm-starting solver (otherwise, zeros by default)
+        if self.warmstart:
+            if self.x_guess is None or self.u_guess is None:   
+                # compute initial guess with IPOPT 
+                self.compute_initial_guess(obs, self.get_references())
+            for idx in range(self.T + 1):
+                init_x = self.x_guess[:, idx]
+                self.acados_ocp_solver.set(idx, "x", init_x)
+            for idx in range(self.T):
+                if nu == 1:
+                    init_u = np.array([self.u_guess[idx]])
+                else:
+                    init_u = self.u_guess[:, idx]
+                self.acados_ocp_solver.set(idx, "u", init_u)
+
         # set reference for the control horizon
         goal_states = self.get_references()
         for idx in range(self.T):
@@ -449,7 +466,7 @@ class MPC_ACADOS(BaseController):
         #     action = np.array([u_val[0]])
         # self.prev_action = action
         time_after = time.time()
-        print('MPC _select_action time: ', time_after - time_before)
+        print('Acados MPC _select_action time: ', time_after - time_before)
         return action
 
     def get_references(self):
@@ -469,6 +486,88 @@ class MPC_ACADOS(BaseController):
         else:
             raise Exception('Reference for this mode is not implemented.')
         return goal_states  # (nx, T+1).
+
+    def setup_optimizer(self, solver='ipopt'):
+        '''Sets up nonlinear optimization problem.'''
+        print('=================Setting up MPC optimizer=================')
+        nx, nu = self.model.nx, self.model.nu
+        T = self.T
+        # Define optimizer and variables.
+        opti = cs.Opti()
+        # States.
+        x_var = opti.variable(nx, T + 1)
+        # Inputs.
+        u_var = opti.variable(nu, T)
+        # Initial state.
+        x_init = opti.parameter(nx, 1)
+        # Reference (equilibrium point or trajectory, last step for terminal cost).
+        x_ref = opti.parameter(nx, T + 1)
+        # Add slack variables
+        state_slack = opti.variable(len(self.state_constraints_sym))
+        input_slack = opti.variable(len(self.input_constraints_sym))
+
+        # cost (cumulative)
+        cost = 0
+        cost_func = self.model.loss
+        for i in range(T):
+            # Can ignore the first state cost since fist x_var == x_init.
+            cost += cost_func(x=x_var[:, i],
+                              u=u_var[:, i],
+                              Xr=x_ref[:, i],
+                              Ur=np.zeros((nu, 1)),
+                              Q=self.Q,
+                              R=self.R)['l']
+        # Terminal cost.
+        cost += cost_func(x=x_var[:, -1],
+                          u=np.zeros((nu, 1)),
+                          Xr=x_ref[:, -1],
+                          Ur=np.zeros((nu, 1)),
+                          Q=self.Q,
+                          R=self.R)['l']
+        # Constraints
+        for i in range(self.T):
+            # Dynamics constraints.
+            next_state = self.dynamics_func(x0=x_var[:, i], p=u_var[:, i])['xf']
+            opti.subject_to(x_var[:, i + 1] == next_state)
+
+            for sc_i, state_constraint in enumerate(self.state_constraints_sym):
+                if self.soft_constraints:
+                    opti.subject_to(state_constraint(x_var[:, i]) <= state_slack[sc_i])
+                    cost += 10000 * state_slack[sc_i]**2
+                    opti.subject_to(state_slack[sc_i] >= 0)
+                else:
+                    opti.subject_to(state_constraint(x_var[:, i]) < -self.constraint_tol)
+            for ic_i, input_constraint in enumerate(self.input_constraints_sym):
+                if self.soft_constraints:
+                    opti.subject_to(input_constraint(u_var[:, i]) <= input_slack[ic_i])
+                    cost += 10000 * input_slack[ic_i]**2
+                    opti.subject_to(input_slack[ic_i] >= 0)
+                else:
+                    opti.subject_to(input_constraint(u_var[:, i]) < -self.constraint_tol)
+
+        # Final state constraints.
+        for sc_i, state_constraint in enumerate(self.state_constraints_sym):
+            if self.soft_constraints:
+                opti.subject_to(state_constraint(x_var[:, -1]) <= state_slack[sc_i])
+                cost += 10000 * state_slack[sc_i] ** 2
+                opti.subject_to(state_slack[sc_i] >= 0)
+            else:
+                opti.subject_to(state_constraint(x_var[:, -1]) <= -self.constraint_tol)
+        # initial condition constraints
+        opti.subject_to(x_var[:, 0] == x_init)
+
+        opti.minimize(cost)
+        opts = {'expand': True, 'error_on_fail': False}
+        opti.solver(solver, opts)
+
+        self.opti_dict = {
+            'opti': opti,
+            'x_var': x_var,
+            'u_var': u_var,
+            'x_init': x_init,
+            'x_ref': x_ref,
+            'cost': cost
+        }
 
     def setup_results_dict(self):
         '''Setup the results dictionary to store run information.'''
