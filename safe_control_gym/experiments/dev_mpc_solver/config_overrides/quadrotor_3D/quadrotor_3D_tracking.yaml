@@ -68,7 +68,13 @@ task_config:
     trajectory_scale: 0.75
     proj_point: [0, 0, 0.5]
     proj_normal: [0, 1, 1]
-
   episode_len_sec: 6
   cost: quadratic
   done_on_out_of_bound: True
+  constraints:
+  - constraint_form: default_constraint
+    constrained_variable: input
+  - constraint_form: default_constraint
+    constrained_variable: state
+  done_on_violation: False
+  disturbances: null

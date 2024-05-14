@@ -43,3 +43,29 @@ task_config:
   episode_len_sec: 6
   cost: quadratic
   done_on_out_of_bound: True
+
+
+
+  constraints:
+  - constraint_form: default_constraint
+    constrained_variable: input
+  - constraint_form: default_constraint
+    constrained_variable: state
+  # - constraint_form: bounded_constraint
+  #   constrained_variable: input
+  #   active_dims: [0, 1]
+  #   lower_bounds: [-1000, -1000]
+  #   upper_bounds: [ 1000, 1000]
+  #   tolerance: [0.05, 0.05, 0.05, 0.05]
+
+  # - constraint_form: bounded_constraint
+  #   constrained_variable: state
+  #   active_dims: [0, 1, 2, 3, 4, 5]
+  #   lower_bounds: [-100, -100, -100, -100, -100, -100]
+  #   upper_bounds: [ 100, 100,  100,  100,  100,  100]
+  #   tolerance: [0.05, 0.05, 
+  #               0.05, 0.05, 
+  #               0.05, 0.05, 
+  #               0.05, 0.05, 
+  #               0.05, 0.05, 
+  #               0.05, 0.05]

@@ -34,6 +34,7 @@ class MPC_ACADOS(BaseController):
             additional_constraints: list = None,
             use_gpu: bool = False,
             seed: int = 0,
+            use_RTI: bool = False,
             **kwargs
     ):
         '''Creates task and controller.
@@ -93,6 +94,7 @@ class MPC_ACADOS(BaseController):
         self.x_guess = None
         self.u_guess = None
 
+        self.use_RTI = use_RTI
         self.set_dynamics_func()
         self.set_up_acados_ode_model()
         self.setup_acados_optimizer()
@@ -298,7 +300,7 @@ class MPC_ACADOS(BaseController):
         ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'
         ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
         ocp.solver_options.integrator_type = 'DISCRETE'
-        ocp.solver_options.nlp_solver_type = 'SQP'
+        ocp.solver_options.nlp_solver_type = 'SQP' if not self.use_RTI else 'SQP_RTI'
         ocp.solver_options.nlp_solver_max_iter = 5000
         # prediction horizon
         ocp.solver_options.tf = self.T * self.dt
@@ -407,14 +409,25 @@ class MPC_ACADOS(BaseController):
         self.acados_ocp_solver.set(self.T, "yref", y_ref_e)
 
         # solve the optimization problem
-        status = self.acados_ocp_solver.solve()
-        if status not in [0, 2]:
-            self.acados_ocp_solver.print_statistics()
-            raise Exception(f'acados returned status {status}. Exiting.')
-            # print(f"acados returned status {status}. ")
-        if status == 2:
-            print(f"acados returned status {status}. ")
-        action = self.acados_ocp_solver.get(0, "u")
+        if self.use_RTI:
+            # preparation phase
+            self.acados_ocp_solver.options_set('rti_phase', 1)
+            status = self.acados_ocp_solver.solve()
+
+            # feedback phase
+            self.acados_ocp_solver.options_set('rti_phase', 2) 
+            status = self.acados_ocp_solver.solve()
+            action = self.acados_ocp_solver.get(0, "u")
+
+        elif not self.use_RTI:
+            status = self.acados_ocp_solver.solve()
+            if status not in [0, 2]:
+                self.acados_ocp_solver.print_statistics()
+                raise Exception(f'acados returned status {status}. Exiting.')
+                # print(f"acados returned status {status}. ")
+            if status == 2:
+                print(f"acados returned status {status}. ")
+            action = self.acados_ocp_solver.get(0, "u")
 
         # opti_dict = self.opti_dict
         # opti = opti_dict['opti']
