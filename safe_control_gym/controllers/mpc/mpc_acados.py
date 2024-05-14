@@ -172,11 +172,11 @@ class MPC_ACADOS(BaseController):
         
         acados_model = AcadosModel()
         acados_model.x = self.model.x_sym
-        acados_model.xdot = self.model.x_dot_acados # must be symbolic
+        # acados_model.xdot = self.model.x_dot_acados # must be symbolic
         acados_model.u = self.model.u_sym
         acados_model.name = model_name
 
-        # set up rk4
+        # set up rk4 (acados need symbolic expression, not function
         k1 = self.model.fc_func(acados_model.x, acados_model.u)
         k2 = self.model.fc_func(acados_model.x + self.dt/2 * k1, acados_model.u)
         k3 = self.model.fc_func(acados_model.x + self.dt/2 * k2, acados_model.u)
@@ -398,6 +398,8 @@ class MPC_ACADOS(BaseController):
 
         # set reference for the control horizon
         goal_states = self.get_references()
+        if self.mode == 'tracking':
+            self.traj_step += 1
         for idx in range(self.T):
             y_ref = np.concatenate((goal_states[:, idx], np.zeros((nu,))))
             self.acados_ocp_solver.set(idx, "yref", y_ref)
@@ -409,6 +411,7 @@ class MPC_ACADOS(BaseController):
         if status not in [0, 2]:
             self.acados_ocp_solver.print_statistics()
             raise Exception(f'acados returned status {status}. Exiting.')
+            # print(f"acados returned status {status}. ")
         if status == 2:
             print(f"acados returned status {status}. ")
         action = self.acados_ocp_solver.get(0, "u")

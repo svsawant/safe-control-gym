@@ -69,7 +69,7 @@ def run(config, gui=False, n_episodes=1, n_steps=None, save_data=False):
     # print('Ad', Ad)
     # print('Bd', Bd)
     # print('Ad.shape', Ad.shape)
-    # print('Ad type', type(Ad))
+    # print('Ad type', type(Ad))d
     # exit()
     all_trajs = defaultdict(list)
     n_episodes = 1 if n_episodes is None else n_episodes
@@ -205,7 +205,7 @@ def wrap2pi_vec(angle_vec):
 if __name__ == '__main__':
     # check whether the config yaml file exists
     ctrl_config_file_name = './config_overrides/cartpole/mpc_acados_cartpole_stabilization.yaml'
-    env_config_file_name = './config_overrides/cartpole/cartpole_stabilization_test.yaml'
+    env_config_file_name = './config_overrides/cartpole/cartpole_stabilization.yaml'
     current_script_path = os.path.dirname(os.path.realpath(__file__))
     abs_ctrl_config_file_path = os.path.join(current_script_path, ctrl_config_file_name)
     abs_env_config_file_path = os.path.join(current_script_path, env_config_file_name)

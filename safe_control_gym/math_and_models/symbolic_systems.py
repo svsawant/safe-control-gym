@@ -27,7 +27,6 @@ class SymbolicModel():
         self.x_sym = dynamics['vars']['X']
         self.u_sym = dynamics['vars']['U']
         self.x_dot = dynamics['dyn_eqn']
-        self.x_dot_acados = dynamics['acados_vars']
         if dynamics['obs_eqn'] is None:
             self.y_sym = self.x_sym
         else:
