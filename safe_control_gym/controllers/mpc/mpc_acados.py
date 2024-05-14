@@ -96,7 +96,7 @@ class MPC_ACADOS(BaseController):
 
         self.use_RTI = use_RTI
         self.set_dynamics_func()
-        self.set_up_acados_ode_model()
+        self.setup_acados_model()
         self.setup_acados_optimizer()
         self.acados_ocp_solver = AcadosOcpSolver(self.ocp) # , \
                                     # json_file=f'acados_{self.ocp.model.name}.json')
@@ -145,7 +145,7 @@ class MPC_ACADOS(BaseController):
             self.traj_step = 0
         # Dynamics model.
         self.set_dynamics_func()
-        self.set_up_acados_ode_model
+        self.setup_acados_model()
         # CasADi optimizer.
         # self.setup_optimizer()
         self.setup_acados_optimizer()
@@ -168,7 +168,7 @@ class MPC_ACADOS(BaseController):
                                          self.model.nu,
                                          self.dt)
 
-    def set_up_acados_ode_model(self) -> AcadosModel:
+    def setup_acados_model(self) -> AcadosModel:
 
         model_name = self.env.NAME
         
@@ -277,10 +277,14 @@ class MPC_ACADOS(BaseController):
         ocp.cost.yref_e = np.zeros((ny_e, ))
 
         # bounded input constraints
-        ocp.constraints.Jbu = np.eye(nu)
-        ocp.constraints.lbu = self.env.constraints.input_constraints[0].lower_bounds
-        ocp.constraints.ubu = self.env.constraints.input_constraints[0].upper_bounds
-        ocp.constraints.idxbu = np.arange(nu)
+        # ocp.constraints.Jbu = np.eye(nu)
+        # ocp.constraints.lbu = self.env.constraints.input_constraints[0].lower_bounds
+        # ocp.constraints.ubu = self.env.constraints.input_constraints[0].upper_bounds
+        
+        # # merged_filter = np.sum(self.env.constraints.input_constraints[0].constraint_filter, axis=0)
+        # # find which index in the filter are not zero
+        # # idxbu = np.where(merged_filter != 0)[0]
+        # ocp.constraints.idxbu = np.arange(nu)
         # bounded state constraints
         ocp.constraints.Jbx = np.eye(nx)
         ocp.constraints.lbx = self.env.constraints.state_constraints[0].lower_bounds
@@ -291,6 +295,46 @@ class MPC_ACADOS(BaseController):
         ocp.constraints.lbx_e = self.env.constraints.state_constraints[0].lower_bounds
         ocp.constraints.ubx_e = self.env.constraints.state_constraints[0].upper_bounds
         ocp.constraints.idxbx_e = np.arange(nx)
+
+        # Constraints
+        h_expr_list = []
+        h_expr_ub_list = []
+        for sc_i, state_constraint in enumerate(self.state_constraints_sym):
+            pass
+            # if self.soft_constraints:
+            #     opti.subject_to(state_constraint(x_var[:, i]) <= state_slack[sc_i])
+            #     cost += 10000 * state_slack[sc_i]**2
+            #     opti.subject_to(state_slack[sc_i] >= 0)
+            # else:
+            #     opti.subject_to(state_constraint(x_var[:, i]) < -self.constraint_tol)
+        for ic_i, input_constraint in enumerate(self.input_constraints_sym):
+            if self.soft_constraints:
+                # opti.subject_to(input_constraint(u_var[:, i]) <= input_slack[ic_i])
+                # cost += 10000 * input_slack[ic_i]**2
+                # opti.subject_to(input_slack[ic_i] >= 0)
+                pass
+            else:
+                # pass
+                h_expr_list.append(input_constraint(ocp.model.u))
+                # opti.subject_to(input_constraint(u_var[:, i]) < -self.constraint_tol)
+        h_expr = cs.vertcat(*h_expr_list)
+        # h_expr = cs.vertcat(-1 - ocp.model.u, -1 + ocp.model.u)
+        h_ub = 0 * np.ones(h_expr.shape) 
+        h_lb = -1e15 * np.ones(h_expr.shape)
+        # slack variables for nonlinear constraints
+        ocp.constraints.Jsh = np.eye(h_expr.shape[0])
+        L2_pen = 0.01
+        L1_pen = 0.01
+        ocp.cost.Zu = L2_pen * np.ones(h_expr.shape[0])
+        ocp.cost.Zl = L2_pen * np.ones(h_expr.shape[0])
+        ocp.cost.zl = L1_pen * np.ones(h_expr.shape[0]) 
+        ocp.cost.zu = L1_pen * np.ones(h_expr.shape[0])
+
+        # pass the constraints to the ocp object
+        ocp.model.con_h_expr = h_expr
+        ocp.dims.nh = h_expr.shape[0]
+        ocp.constraints.uh = h_ub
+        ocp.constraints.lh = h_lb
 
         # placeholder initial state constraint
         x_init = np.zeros((nx))
