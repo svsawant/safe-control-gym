@@ -61,3 +61,7 @@ register(idx='sqp_gp_mpc',
 register(idx='mpc_acados',
             entry_point='safe_control_gym.controllers.mpc.mpc_acados:MPC_ACADOS',
             config_entry_point='safe_control_gym.controllers.mpc:mpc_acados.yaml')
+
+register(idx='gpmpc_acados',
+            entry_point='safe_control_gym.controllers.mpc.gpmpc_acados:GPMPC_ACADOS',
+            config_entry_point='safe_control_gym.controllers.mpc:gpmpc_acados.yaml')
