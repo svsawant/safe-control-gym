@@ -94,6 +94,7 @@ class MPC_ACADOS(BaseController):
         self.x_guess = None
         self.u_guess = None
 
+        # acados settings
         self.use_RTI = use_RTI
         self.set_dynamics_func()
         self.setup_acados_model()
@@ -178,7 +179,7 @@ class MPC_ACADOS(BaseController):
         acados_model.u = self.model.u_sym
         acados_model.name = model_name
 
-        # set up rk4 (acados need symbolic expression, not function
+        # set up rk4 (acados need symbolic expression of dynamics, not function)
         k1 = self.model.fc_func(acados_model.x, acados_model.u)
         k2 = self.model.fc_func(acados_model.x + self.dt/2 * k1, acados_model.u)
         k3 = self.model.fc_func(acados_model.x + self.dt/2 * k2, acados_model.u)
@@ -196,9 +197,8 @@ class MPC_ACADOS(BaseController):
         acados_model.u_labels = self.env.ACTION_LABELS
         acados_model.t_label = 'time'
 
-        self.acados_ode_model = acados_model
+        self.acados_model = acados_model
         
-
     # def compute_lqr_initial_guess(self, init_state, goal_states, x_lin, u_lin):
     #     '''Use LQR to get an initial guess of the '''
     #     dfdxdfdu = self.model.df_func(x=x_lin, u=u_lin)
@@ -257,12 +257,12 @@ class MPC_ACADOS(BaseController):
 
         # create ocp object to formulate the OCP
         ocp = AcadosOcp()
-        ocp.model = self.acados_ode_model
+        ocp.model = self.acados_model
 
         # set dimensions
         ocp.dims.N = self.T # prediction horizon
 
-        # set cost 
+        # set cost (NOTE: safe-control-gym uses quadratic cost)
         ocp.cost.cost_type = 'LINEAR_LS'
         ocp.cost.cost_type_e = 'LINEAR_LS'
         ocp.cost.W = scipy.linalg.block_diag(self.Q, self.R)
@@ -276,66 +276,58 @@ class MPC_ACADOS(BaseController):
         ocp.cost.yref = np.zeros((ny, ))
         ocp.cost.yref_e = np.zeros((ny_e, ))
 
-        # bounded input constraints
+        # Constraints
+        # # bounded input constraints
+        # idxbu = np.where(np.sum(self.env.constraints.input_constraints[0].constraint_filter, axis=0) != 0)[0]
         # ocp.constraints.Jbu = np.eye(nu)
         # ocp.constraints.lbu = self.env.constraints.input_constraints[0].lower_bounds
-        # ocp.constraints.ubu = self.env.constraints.input_constraints[0].upper_bounds
-        
-        # # merged_filter = np.sum(self.env.constraints.input_constraints[0].constraint_filter, axis=0)
-        # # find which index in the filter are not zero
-        # # idxbu = np.where(merged_filter != 0)[0]
-        # ocp.constraints.idxbu = np.arange(nu)
-        # bounded state constraints
-        ocp.constraints.Jbx = np.eye(nx)
-        ocp.constraints.lbx = self.env.constraints.state_constraints[0].lower_bounds
-        ocp.constraints.ubx = self.env.constraints.state_constraints[0].upper_bounds
-        ocp.constraints.idxbx = np.arange(nx)
-        # bounded terminal state constraints
-        ocp.constraints.Jbx_e = np.eye(nx)
-        ocp.constraints.lbx_e = self.env.constraints.state_constraints[0].lower_bounds
-        ocp.constraints.ubx_e = self.env.constraints.state_constraints[0].upper_bounds
-        ocp.constraints.idxbx_e = np.arange(nx)
+        # ocp.constraints.ubu = self.env.constraints.input_constraints[0].upper_bounds 
+        # ocp.constraints.idxbu = idxbu # active constraints dimension
+        # # bounded state constraints
+        # idxbx = np.where(np.sum(self.env.constraints.state_constraints[0].constraint_filter, axis=0) != 0)[0]
+        # ocp.constraints.Jbx = np.eye(nx)
+        # ocp.constraints.lbx = self.env.constraints.state_constraints[0].lower_bounds
+        # ocp.constraints.ubx = self.env.constraints.state_constraints[0].upper_bounds
+        # ocp.constraints.idxbx = idxbx
+        # # bounded terminal state constraints
+        # ocp.constraints.Jbx_e = np.eye(nx)
+        # ocp.constraints.lbx_e = self.env.constraints.state_constraints[0].lower_bounds
+        # ocp.constraints.ubx_e = self.env.constraints.state_constraints[0].upper_bounds
+        # ocp.constraints.idxbx_e = idxbx
 
-        # Constraints
-        h_expr_list = []
-        h_expr_ub_list = []
+        # general constraint expressions
+        state_constraint_expr_list = []
+        input_constraint_expr_list = []
         for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-            pass
-            # if self.soft_constraints:
-            #     opti.subject_to(state_constraint(x_var[:, i]) <= state_slack[sc_i])
-            #     cost += 10000 * state_slack[sc_i]**2
-            #     opti.subject_to(state_slack[sc_i] >= 0)
-            # else:
-            #     opti.subject_to(state_constraint(x_var[:, i]) < -self.constraint_tol)
+            state_constraint_expr_list.append(state_constraint(ocp.model.x))
         for ic_i, input_constraint in enumerate(self.input_constraints_sym):
-            if self.soft_constraints:
-                # opti.subject_to(input_constraint(u_var[:, i]) <= input_slack[ic_i])
-                # cost += 10000 * input_slack[ic_i]**2
-                # opti.subject_to(input_slack[ic_i] >= 0)
-                pass
-            else:
-                # pass
-                h_expr_list.append(input_constraint(ocp.model.u))
-                # opti.subject_to(input_constraint(u_var[:, i]) < -self.constraint_tol)
+            input_constraint_expr_list.append(input_constraint(ocp.model.u))
+
+        h_expr_list = state_constraint_expr_list + input_constraint_expr_list
         h_expr = cs.vertcat(*h_expr_list)
-        # h_expr = cs.vertcat(-1 - ocp.model.u, -1 + ocp.model.u)
-        h_ub = 0 * np.ones(h_expr.shape) 
-        h_lb = -1e15 * np.ones(h_expr.shape)
-        # slack variables for nonlinear constraints
-        ocp.constraints.Jsh = np.eye(h_expr.shape[0])
-        L2_pen = 0.01
-        L1_pen = 0.01
-        ocp.cost.Zu = L2_pen * np.ones(h_expr.shape[0])
-        ocp.cost.Zl = L2_pen * np.ones(h_expr.shape[0])
-        ocp.cost.zl = L1_pen * np.ones(h_expr.shape[0]) 
-        ocp.cost.zu = L1_pen * np.ones(h_expr.shape[0])
-
+        h0_expr = cs.vertcat(*h_expr_list)
+        he_expr = cs.vertcat(*state_constraint_expr_list) # terminal constraints are only state constraints
         # pass the constraints to the ocp object
-        ocp.model.con_h_expr = h_expr
-        ocp.dims.nh = h_expr.shape[0]
-        ocp.constraints.uh = h_ub
-        ocp.constraints.lh = h_lb
+        ocp = self.processing_acados_constraints_expression(ocp, h0_expr, h_expr, he_expr)
 
+        # slack costs for nonlinear constraints
+        if self.soft_constraints:
+            # slack variables for all constraints
+            ocp.constraints.Jsh_0 = np.eye(h0_expr.shape[0])
+            ocp.constraints.Jsh = np.eye(h_expr.shape[0])
+            ocp.constraints.Jsh_e = np.eye(he_expr.shape[0])
+            # slack penalty
+            L2_pen = 1e4
+            L1_pen = 1e4
+            ocp.cost.Zu = L2_pen * np.ones(h_expr.shape[0])
+            ocp.cost.Zl = L2_pen * np.ones(h_expr.shape[0])
+            ocp.cost.zl = L1_pen * np.ones(h_expr.shape[0]) 
+            ocp.cost.zu = L1_pen * np.ones(h_expr.shape[0])
+            ocp.cost.Zl_e = L2_pen * np.ones(he_expr.shape[0])
+            ocp.cost.Zu_e = L2_pen * np.ones(he_expr.shape[0])
+            ocp.cost.zl_e = L1_pen * np.ones(he_expr.shape[0])
+            ocp.cost.zu_e = L1_pen * np.ones(he_expr.shape[0])
+        
         # placeholder initial state constraint
         x_init = np.zeros((nx))
         ocp.constraints.x0 = x_init
@@ -351,60 +343,61 @@ class MPC_ACADOS(BaseController):
 
         self.ocp = ocp
 
-        # # Constraints
-        # for i in range(self.T):
-        #     # Dynamics constraints.
-        #     next_state = self.dynamics_func(x0=x_var[:, i], p=u_var[:, i])['xf']
-        #     opti.subject_to(x_var[:, i + 1] == next_state)
-
-        #     for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-        #         if self.soft_constraints:
-        #             opti.subject_to(state_constraint(x_var[:, i]) <= state_slack[sc_i])
-        #             cost += 10000 * state_slack[sc_i]**2
-        #             opti.subject_to(state_slack[sc_i] >= 0)
-        #         else:
-        #             opti.subject_to(state_constraint(x_var[:, i]) < -self.constraint_tol)
-        #     for ic_i, input_constraint in enumerate(self.input_constraints_sym):
-        #         if self.soft_constraints:
-        #             opti.subject_to(input_constraint(u_var[:, i]) <= input_slack[ic_i])
-        #             cost += 10000 * input_slack[ic_i]**2
-        #             opti.subject_to(input_slack[ic_i] >= 0)
-        #         else:
-        #             opti.subject_to(input_constraint(u_var[:, i]) < -self.constraint_tol)
-
-        # # Final state constraints.
-        # for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-        #     if self.soft_constraints:
-        #         opti.subject_to(state_constraint(x_var[:, -1]) <= state_slack[sc_i])
-        #         cost += 10000 * state_slack[sc_i] ** 2
-        #         opti.subject_to(state_slack[sc_i] >= 0)
-        #     else:
-        #         opti.subject_to(state_constraint(x_var[:, -1]) <= -self.constraint_tol)
-        # # initial condition constraints
-        # opti.subject_to(x_var[:, 0] == x_init)
-
-        # opti.minimize(cost)
-        # # Create solver (IPOPT solver in this version)
-        # # opts = {'ipopt.print_level': 0, 'ipopt.sb': 'yes', 'print_time': 0}
-        # # opts = {'expand': True}
-        # opts = {'expand': True, 'error_on_fail': False}
-        # # solver_opts = {'error_on_fail': False}
-        # # opti.solver('ipopt', opts)
-        # # opti.solver('sqpmethod', opts)
-        # opti.solver(solver, opts)
-        # # opti.solver('feasibleSQP', opts)
-
-        # # print(opti)
-        # # exit()
+    def processing_acados_constraints_expression(self, ocp: AcadosOcp, h0_expr, h_expr, he_expr) -> dict:
+        '''Preprocess the constraints to be compatible with acados.
+            Args: 
+                h0_expr (casadi expression): initial state constraints
+                h_expr (casadi expression): state and input constraints
+                he_expr (casadi expression): terminal state constraints
+            Returns:
+                ub (dict): upper bound of the constraints
+                lb: lower bound of the constraints
         
-        # self.opti_dict = {
-        #     'opti': opti,
-        #     'x_var': x_var,
-        #     'u_var': u_var,
-        #     'x_init': x_init,
-        #     'x_ref': x_ref,
-        #     'cost': cost
-        # }
+        Note:
+        all constraints in safe-control-gym are defined as g(x, u) <= constraint_tol
+        However, acados requires the constraints to be defined as lb <= g(x, u) <= ub
+        Thus, a large negative number (-1e8) is used as the lower bound.
+        See: https://github.com/acados/acados/issues/650 
+
+        An alternative way to set the constraints is to use bounded constraints of acados:
+        # bounded input constraints
+        idxbu = np.where(np.sum(self.env.constraints.input_constraints[0].constraint_filter, axis=0) != 0)[0]
+        ocp.constraints.Jbu = np.eye(nu)
+        ocp.constraints.lbu = self.env.constraints.input_constraints[0].lower_bounds
+        ocp.constraints.ubu = self.env.constraints.input_constraints[0].upper_bounds 
+        ocp.constraints.idxbu = idxbu # active constraints dimension
+        '''
+        # lambda functions to set the upper and lower bounds of the constraints
+        constraint_ub = lambda constraint: self.constraint_tol * np.ones(constraint.shape)
+        constraint_lb = lambda constraint: -1e8 * np.ones(constraint.shape) 
+        ub = {'h': constraint_ub(h_expr), 'h0': constraint_ub(h0_expr), 'he': constraint_ub(he_expr)}
+        lb = {'h': constraint_lb(h_expr), 'h0': constraint_lb(h0_expr), 'he': constraint_lb(he_expr)}
+
+        # make sure all the ub and lb are 1D numpy arrays 
+        # (see: https://discourse.acados.org/t/infeasible-qps-when-using-nonlinear-casadi-constraint-expressions/1595/5?u=mxche)
+        for key in ub.keys():
+            ub[key] = ub[key].flatten() if ub[key].ndim != 1 else ub[key]
+            lb[key] = lb[key].flatten() if lb[key].ndim != 1 else lb[key]
+        # check ub and lb dimensions
+        for key in ub.keys():
+            assert ub[key].ndim == 1, f'ub[{key}] is not 1D numpy array'
+            assert lb[key].ndim == 1, f'lb[{key}] is not 1D numpy array'
+        assert ub['h'].shape == lb['h'].shape, 'h_ub and h_lb have different shapes'
+
+        # pass the constraints to the ocp object
+        ocp.model.con_h_expr_0, ocp.model.con_h_expr, ocp.model.con_h_expr_e = \
+                                                            h0_expr, h_expr, he_expr
+        ocp.dims.nh_0, ocp.dims.nh, ocp.dims.nh_e = \
+                                h0_expr.shape[0], h_expr.shape[0], he_expr.shape[0]
+        # assign constraints upper and lower bounds
+        ocp.constraints.uh_0 = ub['h0']
+        ocp.constraints.lh_0 = lb['h0']
+        ocp.constraints.uh = ub['h']
+        ocp.constraints.lh = lb['h']
+        ocp.constraints.uh_e = ub['he']
+        ocp.constraints.lh_e = lb['he']
+
+        return ocp
 
     def select_action(self,
                       obs,
@@ -432,6 +425,11 @@ class MPC_ACADOS(BaseController):
             if self.x_guess is None or self.u_guess is None:   
                 # compute initial guess with IPOPT 
                 self.compute_initial_guess(obs, self.get_references())
+            elif self.x_guess is not None and self.u_guess is not None:
+                # shift previous solutions by 1 step
+                self.x_guess[:, :-1] = self.x_guess[:, 1:]
+                self.u_guess[:-1] = self.u_guess[1:]
+                
             for idx in range(self.T + 1):
                 init_x = self.x_guess[:, idx]
                 self.acados_ocp_solver.set(idx, "x", init_x)
@@ -472,6 +470,14 @@ class MPC_ACADOS(BaseController):
             if status == 2:
                 print(f"acados returned status {status}. ")
             action = self.acados_ocp_solver.get(0, "u")
+
+        self.x_prev = self.acados_ocp_solver.get(0, "x")
+        self.u_prev = self.acados_ocp_solver.get(0, "u")
+        self.x_guess = self.x_prev
+        self.u_guess = self.u_prev
+        self.results_dict['horizon_states'].append(deepcopy(self.x_prev))
+        self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev))
+        self.results_dict['goal_states'].append(deepcopy(goal_states))
 
         # opti_dict = self.opti_dict
         # opti = opti_dict['opti']
