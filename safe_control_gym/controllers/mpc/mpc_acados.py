@@ -424,12 +424,7 @@ class MPC_ACADOS(BaseController):
         if self.warmstart:
             if self.x_guess is None or self.u_guess is None:   
                 # compute initial guess with IPOPT 
-                self.compute_initial_guess(obs, self.get_references())
-            elif self.x_guess is not None and self.u_guess is not None:
-                # shift previous solutions by 1 step
-                self.x_guess[:, :-1] = self.x_guess[:, 1:]
-                self.u_guess[:-1] = self.u_guess[1:]
-                
+                self.compute_initial_guess(obs, self.get_references()) 
             for idx in range(self.T + 1):
                 init_x = self.x_guess[:, idx]
                 self.acados_ocp_solver.set(idx, "x", init_x)
@@ -471,66 +466,24 @@ class MPC_ACADOS(BaseController):
                 print(f"acados returned status {status}. ")
             action = self.acados_ocp_solver.get(0, "u")
 
-        self.x_prev = self.acados_ocp_solver.get(0, "x")
-        self.u_prev = self.acados_ocp_solver.get(0, "u")
+        # get the open-loop solution
+        self.x_prev = np.zeros((nx, self.T + 1))
+        self.u_prev = np.zeros((nu, self.T))
+        for i in range(self.T + 1):
+            self.x_prev[:, i] = self.acados_ocp_solver.get(i, "x")
+        for i in range(self.T):
+            self.u_prev[:, i] = self.acados_ocp_solver.get(i, "u")
+        if nu == 1:
+            self.u_prev = self.u_prev.flatten()
+
         self.x_guess = self.x_prev
         self.u_guess = self.u_prev
         self.results_dict['horizon_states'].append(deepcopy(self.x_prev))
         self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev))
         self.results_dict['goal_states'].append(deepcopy(goal_states))
 
-        # opti_dict = self.opti_dict
-        # opti = opti_dict['opti']
-        # x_var = opti_dict['x_var'] # optimization variables
-        # u_var = opti_dict['u_var'] # optimization variables
-        # x_init = opti_dict['x_init'] # initial state
-        # x_ref = opti_dict['x_ref'] # reference state/trajectory
-
-        # # Assign the initial state.
-        # opti.set_value(x_init, obs)
-        # # Assign reference trajectory within horizon.
-        # goal_states = self.get_references()
-        # opti.set_value(x_ref, goal_states)
-        # if self.mode == 'tracking':
-        #     self.traj_step += 1
-
-        # if self.warmstart and self.x_prev is None and self.u_prev is None:
-        # #    x_guess, u_guess = self.compute_lqr_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
-        #    print(f'computing initial guess with {self.init_solver}')
-        #    x_guess, u_guess = self.compute_initial_guess(obs, goal_states)
-        #    opti.set_initial(x_var, x_guess)
-        #    opti.set_initial(u_var, u_guess) # Initial guess for optimization problem.
-        # elif self.warmstart and self.x_prev is not None and self.u_prev is not None:
-        # # if self.warmstart and self.x_prev is not None and self.u_prev is not None:
-        #     # shift previous solutions by 1 step
-        #     x_guess = deepcopy(self.x_prev)
-        #     u_guess = deepcopy(self.u_prev)
-        #     x_guess[:, :-1] = x_guess[:, 1:]
-        #     u_guess[:-1] = u_guess[1:]
-        #     opti.set_initial(x_var, x_guess)
-        #     opti.set_initial(u_var, u_guess)
-        # # Solve the optimization problem.
-        # try:
-        #     sol = opti.solve()
-        #     x_val, u_val = sol.value(x_var), sol.value(u_var)
-        # except RuntimeError:
-        #     print('=============Infeasible MPC Problem=============')
-        #     x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
-        # skip = 8
-        # print('x_val: ', x_val[:,::skip])
-        # print('u_val: ', u_val[::skip])
-        # self.x_prev = x_val
-        # self.u_prev = u_val
-        # self.results_dict['horizon_states'].append(deepcopy(self.x_prev))
-        # self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev))
-        # self.results_dict['goal_states'].append(deepcopy(goal_states))
-        # self.results_dict['t_wall'].append(opti.stats()['t_wall_total'])
-        # # Take the first action from the solved action sequence.
-        # if u_val.ndim > 1:
-        #     action = u_val[:, 0]
-        # else:
-        #     action = np.array([u_val[0]])
-        # self.prev_action = action
+        self.prev_action = action
+        
         time_after = time.time()
         print('Acados MPC _select_action time: ', time_after - time_before)
         return action
