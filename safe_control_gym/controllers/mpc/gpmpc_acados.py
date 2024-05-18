@@ -207,40 +207,14 @@ class GPMPC_ACADOS(GPMPC):
         self.x_prev = None
         self.u_prev = None
         
-        self.use_RTI = False
+        # self.use_RTI = False
+        self.use_RTI = True
         self.setup_prior_dynamics()
         self.setup_acados_model()
         self.setup_acados_optimizer()
         self.acados_ocp_solver = AcadosOcpSolver(self.ocp)
         # exit()
     
-    # def set_lin_gp_dynamics_func(self):
-    #     '''Updates symbolic dynamics with actual control frequency.'''
-    #     # Original version, used in shooting.
-    #     delta_x = cs.MX.sym('delta_x', self.model.nx, 1)
-    #     delta_u = cs.MX.sym('delta_u', self.model.nu, 1)
-    #     x_guess = cs.MX.sym('x_guess', self.model.nx, 1)
-    #     u_guess = cs.MX.sym('u_guess', self.model.nu, 1)
-    #     dfdxdfdu = self.model.df_func(x=x_guess, u=u_guess)
-    #     dfdx = dfdxdfdu['dfdx']#.toarray()
-    #     dfdu = dfdxdfdu['dfdu']#.toarray()
-    #     z = cs.MX.sym('z', self.model.nx + self.model.nu, 1) # query point (the linearization point)
-    #     Ad = cs.DM_eye(self.model.nx) + dfdx * self.dt
-    #     Bd = dfdu * self.dt
-    #     A_gp = self.gaussian_process.casadi_linearized_predict(z=z)['A']
-    #     B_gp = self.gaussian_process.casadi_linearized_predict(z=z)['B']
-    #     assert A_gp.shape == (self.model.nx, self.model.nx)
-    #     assert B_gp.shape == (self.model.nx, self.model.nu)
-    #     A = Ad + A_gp # TODO: check why Bd is used here correctly
-    #     B = Bd + B_gp
-    #     x_dot_lin = A @ delta_x + B @ delta_u
-    #     self.linear_gp_dynamics_func = cs.Function('linear_dynamics_func', 
-    #                                             [delta_x, delta_u, x_guess, u_guess, z], 
-    #                                             [x_dot_lin, A, B],
-    #                                             ['x0', 'p', 'x_guess', 'u_guess', 'z'],
-    #                                             ['xf', 'A', 'B'])
-    #     self.dfdx = A
-    #     self.dfdu = B
     def setup_acados_model(self) -> AcadosModel:
 
         model_name = self.env.NAME
@@ -250,16 +224,24 @@ class GPMPC_ACADOS(GPMPC):
         acados_model.u = self.model.u_sym
         acados_model.name = model_name
 
-        A_lin = self.discrete_dfdx
-        B_lin = self.discrete_dfdu
 
         if self.gaussian_process is None:
-            f_disc = A_lin @ (acados_model.x - self.X_EQ) + B_lin @ (acados_model.u - self.U_EQ)
+            f_disc = self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] \
+                + self.prior_ctrl.X_EQ[:, None]
         else:
-            f_disc = A_lin @ (acados_model.x - self.X_EQ) \
-                + B_lin @ (acados_model.u - self.U_EQ) \
-                + self.Bd @ self.gaussian_process.casadi_predict(z=cs.vertcat(acados_model.x, acados_model.u))['mean']
-        
+            z = cs.vertcat(acados_model.x, acados_model.u) # GP prediction point
+            if self.sparse_gp:
+                raise NotImplementedError('Sparse GP not implemented for acados.')
+                # f_disc = \
+                #      self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] + \
+                #    + self.prior_ctrl.X_EQ[:, None] \
+                #    + self.Bd @ cs.sum2(self.K_z_zind_func(z1=z.T, z2=z_ind)['K'] * mean_post_factor)
+            else:
+                f_disc = \
+                     self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] + \
+                   + self.prior_ctrl.X_EQ[:, None] \
+                   + self.Bd @ self.gaussian_process.casadi_predict(z=z)['mean']
+
         acados_model.disc_dyn_expr = f_disc
 
         acados_model.x_labels = self.env.STATE_LABELS
@@ -297,7 +279,8 @@ class GPMPC_ACADOS(GPMPC):
         ocp.cost.yref = np.zeros((ny, ))
         ocp.cost.yref_e = np.zeros((ny_e, ))
 
-        # bounded input constraints
+        # Constraints
+        # # bounded input constraints
         ocp.constraints.Jbu = np.eye(nu)
         ocp.constraints.lbu = self.env.constraints.input_constraints[0].lower_bounds
         ocp.constraints.ubu = self.env.constraints.input_constraints[0].upper_bounds
@@ -312,6 +295,36 @@ class GPMPC_ACADOS(GPMPC):
         ocp.constraints.lbx_e = self.env.constraints.state_constraints[0].lower_bounds
         ocp.constraints.ubx_e = self.env.constraints.state_constraints[0].upper_bounds
         ocp.constraints.idxbx_e = np.arange(nx)
+
+        # general constraint expressions
+        state_constraint_expr_list = []
+        input_constraint_expr_list = []
+        state_tighten_list = []
+        input_tighten_list = []
+        for sc_i, state_constraint in enumerate(self.state_constraints_sym):
+            state_constraint_expr_list.append(state_constraint(ocp.model.x))
+            # chance state constraint tightening
+            state_tighten_list.append(cs.MX.sym(f'state_tighten_{sc_i}', state_constraint(ocp.model.x).shape[0], 1))
+        for ic_i, input_constraint in enumerate(self.input_constraints_sym):
+            input_constraint_expr_list.append(input_constraint(ocp.model.u))
+            # chance input constraint tightening
+            input_tighten_list.append(cs.MX.sym(f'input_tighten_{ic_i}', input_constraint(ocp.model.u).shape[0], 1))
+        
+        h_expr_list = state_constraint_expr_list + input_constraint_expr_list
+        h_expr = cs.vertcat(*h_expr_list)
+        h0_expr = cs.vertcat(*h_expr_list)
+        he_expr = cs.vertcat(*state_constraint_expr_list) # terminal constraints are only state constraints
+        # pass the constraints to the ocp object
+        ocp = self.processing_acados_constraints_expression(ocp, h0_expr, h_expr, he_expr, state_tighten_list, input_tighten_list)
+        # pass the tightening variables to the ocp object as parameters
+        tighten_var = cs.vertcat(*state_tighten_list, *input_tighten_list)
+        ocp.model.p = tighten_var 
+        ocp.parameter_values = np.zeros((tighten_var.shape[0], )) # dummy values
+
+        # slack costs for nonlinear constraints
+        if self.gp_soft_constraints:
+            raise NotImplementedError('Soft constraints not implemented for acados.')
+        
 
         # placeholder initial state constraint
         x_init = np.zeros((nx))
@@ -328,133 +341,164 @@ class GPMPC_ACADOS(GPMPC):
 
         self.ocp = ocp
 
-        # T = self.T
-        # if self.qp_solver in ['qrqp', 'qpoases']:
-        #     opti = cs.Opti('conic')
-        # else:
-        #     opti = cs.Opti()
-        # # States and inputs.
-        # x_var = opti.variable(nx, T + 1)
-        # u_var = opti.variable(nu, T)
-        # # Linearization reference
-        # x_guess = opti.parameter(nx, T + 1)
-        # u_guess = opti.parameter(nu, T)
-        # # Initial state.
-        # x_init = opti.parameter(nx, 1)
-        # # Reference trajectory (equilibrium point or trajectory, last step for terminal cost).
-        # # essentially goal states
-        # x_ref = opti.parameter(nx, T + 1)
-        # # Add slack variables for soft constraints.
-        # # if self.gp_soft_constraints:
-        # #     state_slack_list = []
-        # #     for state_constraint in self.constraints.state_constraints:
-        # #         state_slack_list.append(opti.variable(state_constraint.num_constraints, T + 1))
-        # #     input_slack_list = []
-        # #     for input_constraint in self.constraints.input_constraints:
-        # #         input_slack_list.append(opti.variable(input_constraint.num_constraints, T))
-        # #     soft_con_coeff = self.gp_soft_constraints_coeff
-        # # # Chance constraint limits.
-        # # state_constraint_set = []
-        # # for state_constraint in self.constraints.state_constraints:
-        # #     state_constraint_set.append(state_constraint.constraint_set)
-        # # input_constraint_set = []
-        # # for input_constraint in self.constraints.input_constraints:
-        # #     input_constraint_set.append(opti.parameter(input_constraint.num_constraints, T))
-
-
-
-        # # Sparse GP mean postfactor matrix. (not used here!)
-        # # TODO: check if this is needed
-        # mean_post_factor = opti.parameter(len(self.target_mask), self.train_data['train_targets'].shape[0])
+    def processing_acados_constraints_expression(self, ocp: AcadosOcp, h0_expr, h_expr, he_expr, \
+                                                 state_tighten_list, input_tighten_list) -> AcadosOcp:
+        '''Preprocess the constraints to be compatible with acados.
+            Args: 
+                h0_expr (casadi expression): initial state constraints
+                h_expr (casadi expression): state and input constraints
+                he_expr (casadi expression): terminal state constraints
+                state_tighten_list (list): list of casadi SX variables for state constraint tightening
+                input_tighten_list (list): list of casadi SX variables for input constraint tightening
+            Returns:
+                ocp (AcadosOcp): acados ocp object with constraints set
         
-        # # cost (cumulative)
-        # cost = 0
-        # cost_func = self.model.loss
-        # for i in range(T):
-        #     cost += cost_func(x=x_var[:, i] + x_guess[:, i],
-        #                       u=u_var[:, i] + u_guess[:, i],
-        #                       Xr=x_ref[:, i],
-        #                       Ur=np.zeros((nu, 1)),
-        #                       Q=self.Q,
-        #                       R=self.R)['l']
-        # # Terminal cost.
-        # cost += cost_func(x=x_var[:, -1] + x_guess[:, -1],
-        #                   u=np.zeros((nu, 1)) + u_guess[:, -1],
-        #                   Xr=x_ref[:, -1],
-        #                   Ur=np.zeros((nu, 1)),
-        #                   Q=self.Q,
-        #                   R=self.R)['l']
-        # # query point
-        # # z = cs.vertcat(x_var[:, :-1]+x_guess[:,:-1], u_var+u_guess)
-        # z = cs.vertcat(x_guess[:, :-1], u_guess)
-        # z = z[self.input_mask, :]
-        # # Constraints
-        # for i in range(self.T):
-        #     # Dynamics constraints using the dynamics of the prior and the mean of the GP.
-        #     next_state = self.linear_gp_dynamics_func(x0=x_var[:, i], p=u_var[:, i], \
-        #                                          x_guess=x_guess[:,i], u_guess=u_guess[:,i], \
-        #                                          z=z[:, i])['xf']
-        #     opti.subject_to(x_var[:, i + 1] == next_state)
-        #     # TODO: probablistic constraints tightening
-        #     for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-        #         opti.subject_to(state_constraint(x_var[:, i] + x_guess[:, i]) <= -self.constraint_tol)
-                
-        #     for ic_i, input_constraint in enumerate(self.input_constraints_sym):
-        #         opti.subject_to(input_constraint(u_var[:, i] + u_guess[:, i]) <= -self.constraint_tol)
+        Note:
+        all constraints in safe-control-gym are defined as g(x, u) <= constraint_tol
+        However, acados requires the constraints to be defined as lb <= g(x, u) <= ub
+        Thus, a large negative number (-1e8) is used as the lower bound.
+        See: https://github.com/acados/acados/issues/650 
 
-        # # final state constraint
-        # for sc_i, state_constraint in enumerate(self.state_constraints_sym):
-        #     opti.subject_to(state_constraint(x_var[:, -1] + x_guess[:, -1]) <= -self.constraint_tol)
-        # # initial condiiton constraints
-        # opti.subject_to(x_var[:, 0] + x_guess[:, 0] == x_init)
-        # opti.minimize(cost)
-        # # create solver 
-        # opts = {'expand': True}
-        # opti.solver(self.qp_solver, opts)
-        # self.opti_dict = {
-        #     'opti': opti,
-        #     'x_var': x_var,
-        #     'u_var': u_var,
-        #     'x_guess_var': x_guess,
-        #     'u_guess_var': u_guess,
-        #     'x_init': x_init,
-        #     'x_ref': x_ref,
-        #     'cost': cost
-        # }
-        # after_optimizer_setup = time.time()
-        # print('MPC setup_sqp_optimizer time: ', after_optimizer_setup - before_optimizer_setup)
+        An alternative way to set the constraints is to use bounded constraints of acados:
+        # bounded input constraints
+        idxbu = np.where(np.sum(self.env.constraints.input_constraints[0].constraint_filter, axis=0) != 0)[0]
+        ocp.constraints.Jbu = np.eye(nu)
+        ocp.constraints.lbu = self.env.constraints.input_constraints[0].lower_bounds
+        ocp.constraints.ubu = self.env.constraints.input_constraints[0].upper_bounds 
+        ocp.constraints.idxbu = idxbu # active constraints dimension
+        '''
+        # NOTE: only the upper bound is tightened due to constraint are defined in the 
+        # form of g(x, u) <= constraint_tol in safe-control-gym
+
+        # lambda functions to set the upper and lower bounds of the chance constraints
+        constraint_ub_chance = lambda constraint: -self.constraint_tol * np.ones(constraint.shape) 
+        constraint_lb_chance = lambda constraint: -1e8 * np.ones(constraint.shape)
+        state_tighten_var = cs.vertcat(*state_tighten_list)
+        input_tighten_var = cs.vertcat(*input_tighten_list)
+        
+        ub = {'h': constraint_ub_chance(h_expr - cs.vertcat(state_tighten_var, input_tighten_var)), \
+              'h0': constraint_ub_chance(h0_expr - cs.vertcat(state_tighten_var, input_tighten_var)),\
+              'he': constraint_ub_chance(he_expr - state_tighten_var)}
+        lb = {'h': constraint_lb_chance(h_expr), 'h0': constraint_lb_chance(h0_expr),\
+              'he': constraint_lb_chance(he_expr)}
+
+        # make sure all the ub and lb are 1D casaadi SX variables
+        # (see: https://discourse.acados.org/t/infeasible-qps-when-using-nonlinear-casadi-constraint-expressions/1595/5?u=mxche)
+        for key in ub.keys():
+            ub[key] = ub[key].flatten() if ub[key].ndim != 1 else ub[key]
+            lb[key] = lb[key].flatten() if lb[key].ndim != 1 else lb[key]
+        # check ub and lb dimensions
+        for key in ub.keys():
+            assert ub[key].ndim == 1, f'ub[{key}] is not 1D numpy array'
+            assert lb[key].ndim == 1, f'lb[{key}] is not 1D numpy array'
+        assert ub['h'].shape == lb['h'].shape, 'h_ub and h_lb have different shapes'
+
+        # pass the constraints to the ocp object
+        ocp.model.con_h_expr_0 = h0_expr - cs.vertcat(state_tighten_var, input_tighten_var)
+        ocp.model.con_h_expr = h_expr - cs.vertcat(state_tighten_var, input_tighten_var)
+        ocp.model.con_h_expr_e = he_expr - state_tighten_var
+        ocp.dims.nh_0, ocp.dims.nh, ocp.dims.nh_e = \
+                                h0_expr.shape[0], h_expr.shape[0], he_expr.shape[0]
+        # assign constraints upper and lower bounds
+        ocp.constraints.uh_0 = ub['h0']
+        ocp.constraints.lh_0 = lb['h0']
+        ocp.constraints.uh = ub['h']
+        ocp.constraints.lh = lb['h']
+        ocp.constraints.uh_e = ub['he']
+        ocp.constraints.lh_e = lb['he']
+
+        return ocp
 
     def select_action(self, obs, info=None):
         print('current obs:', obs)
         time_before = time.time()
-        nx, nu = self.model.nx, self.model.nu
-        ny = nx + nu
-        ny_e = nx
         if self.gaussian_process is None:
             action = self.prior_ctrl.select_action(obs)
         else:
-            # set initial condition (0-th state)
-            self.acados_ocp_solver.set(0, "lbx", obs)
-            self.acados_ocp_solver.set(0, "ubx", obs)
+            action = self.select_action_with_gp(obs)
+            self.last_obs = obs
+            self.last_action = action
+        time_after = time.time()
+        print('gpmpc acados action selection time:', time_after - time_before)
+        return action
+    
+    def select_action_with_gp(self, obs):
+        nx, nu = self.model.nx, self.model.nu
+        ny = nx + nu
+        ny_e = nx
 
+        # set initial condition (0-th state)
+        self.acados_ocp_solver.set(0, "lbx", obs)
+        self.acados_ocp_solver.set(0, "ubx", obs)
+        if self.warmstart:
+            if self.x_guess is None or self.u_guess is None:
+                # compute initial guess with IPOPT
+                self.compute_initial_guess(obs, self.get_references())
             for idx in range(self.T + 1):
-                init_x = np.zeros(nx)
+                init_x = self.x_guess[:, idx]
                 self.acados_ocp_solver.set(idx, "x", init_x)
             for idx in range(self.T):
-                init_u = np.zeros(nu)
+                if nu == 1:
+                    init_u = np.array([self.u_guess[idx]])
+                else:
+                    init_u = self.u_guess[:, idx]
                 self.acados_ocp_solver.set(idx, "u", init_u)
-
-            # set reference for the control horizon
-            goal_states = self.get_references()
-            if self.mode == 'tracking':
-                self.traj_step += 1
+        else:
+            for idx in range(self.T + 1):
+                self.acados_ocp_solver.set(idx, "x", obs)
             for idx in range(self.T):
-                y_ref = np.concatenate((goal_states[:, idx], np.zeros((nu,))))
-                self.acados_ocp_solver.set(idx, "yref", y_ref)
-            y_ref_e = goal_states[:, -1] 
-            self.acados_ocp_solver.set(self.T, "yref", y_ref_e)
+                self.acados_ocp_solver.set(idx, "u", np.zeros((nu,)))
 
-            # solve the optimization problem
+        # Set the probabilistic state and input constraint set limits.
+        # Tightening at the first step is possible if self.compute_initial_guess is used 
+        time_before = time.time()
+        state_constraint_set_prev, input_constraint_set_prev = self.precompute_probabilistic_limits()
+        time_after = time.time()
+        print('precompute_probabilistic_limits time:', time_after - time_before)
+        
+        # for si in range(len(self.constraints.state_constraints)):
+        # tighten initial and path constraints
+        for idx in range(self.T):
+            state_constraint_set = state_constraint_set_prev[0][:, idx]
+            input_constraint_set = input_constraint_set_prev[0][:, idx]
+            tighten_value = np.concatenate((state_constraint_set, input_constraint_set))
+            self.acados_ocp_solver.set(idx, "p", tighten_value)
+        # set terminal state constraints
+        tighten_value = np.concatenate((state_constraint_set_prev[0][:, self.T], np.zeros((2 * nu,))))
+        self.acados_ocp_solver.set(self.T, "p", tighten_value)
+        # print('tighten_value:', tighten_value)
+        # print('state_constraint_set_prev[0][:, self.T]:', state_constraint_set_prev[0][:, self.T])
+
+        # set reference for the control horizon
+        goal_states = self.get_references()
+        if self.mode == 'tracking':
+            self.traj_step += 1
+        for idx in range(self.T):
+            y_ref = np.concatenate((goal_states[:, idx], np.zeros((nu,))))
+            self.acados_ocp_solver.set(idx, "yref", y_ref)
+        y_ref_e = goal_states[:, -1] 
+        self.acados_ocp_solver.set(self.T, "yref", y_ref_e)
+
+        # solve the optimization problem
+        if self.use_RTI:
+            # preparation phase
+            self.acados_ocp_solver.options_set('rti_phase', 1)
+            status = self.acados_ocp_solver.solve()
+
+            # feedback phase
+            self.acados_ocp_solver.options_set('rti_phase', 2) 
+            status = self.acados_ocp_solver.solve()
+            
+            if status not in [0, 2]:
+                self.acados_ocp_solver.print_statistics()
+                raise Exception(f'acados returned status {status}. Exiting.')
+                # print(f"acados returned status {status}. ")
+            if status == 2:
+                print(f"acados returned status {status}. ")
+            
+            action = self.acados_ocp_solver.get(0, "u")
+
+        else:
             status = self.acados_ocp_solver.solve()
             if status not in [0, 2]:
                 self.acados_ocp_solver.print_statistics()
@@ -463,10 +507,8 @@ class GPMPC_ACADOS(GPMPC):
             if status == 2:
                 print(f"acados returned status {status}. ")
             action = self.acados_ocp_solver.get(0, "u")
-        time_after = time.time()
-        print('gpmpc acados action selection time:', time_after - time_before)
+
         return action
-    
  
     def reset(self):
         '''Reset the controller before running.'''

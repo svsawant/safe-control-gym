@@ -207,9 +207,11 @@ class SQPGPMPC(GPMPC):
         self.init_step_solver = 'ipopt'
         self.qp_solver = 'qrqp'
         self.max_qp_iter = 50
-        self.action_convergence_tol = 1e-3
+        self.action_convergence_tol = 1e-5
         self.x_guess = None
         self.u_guess = None
+        self.x_prev = None
+        self.u_prev = None
         # exit()
     
     def set_lin_gp_dynamics_func(self):
@@ -227,8 +229,8 @@ class SQPGPMPC(GPMPC):
         Bd = dfdu * self.dt
         A_gp = self.gaussian_process.casadi_linearized_predict(z=z)['A']
         B_gp = self.gaussian_process.casadi_linearized_predict(z=z)['B']
-        # print('A_gp: ', A_gp)
-        # print('B_gp: ', B_gp)
+        assert A_gp.shape == (self.model.nx, self.model.nx)
+        assert B_gp.shape == (self.model.nx, self.model.nu)
         A = Ad + A_gp # TODO: check why Bd is used here correctly
         B = Bd + B_gp
         x_dot_lin = A @ delta_x + B @ delta_u
@@ -301,7 +303,8 @@ class SQPGPMPC(GPMPC):
                           Q=self.Q,
                           R=self.R)['l']
         # query point
-        z = cs.vertcat(x_var[:, :-1]+x_guess[:,:-1], u_var+u_guess)
+        # z = cs.vertcat(x_var[:, :-1]+x_guess[:,:-1], u_var+u_guess)
+        z = cs.vertcat(x_guess[:, :-1], u_guess)
         z = z[self.input_mask, :]
         # Constraints
         for i in range(self.T):
@@ -340,11 +343,27 @@ class SQPGPMPC(GPMPC):
         print('MPC setup_sqp_optimizer time: ', after_optimizer_setup - before_optimizer_setup)
 
     def select_action(self, obs, info=None):
+        print('current obs:', obs)
         if self.gaussian_process is None:
             action = self.prior_ctrl.select_action(obs)
         else:
             t1 = time.perf_counter()
-            action = self.select_action_with_sqp_gp(obs)
+            # action = self.select_action_with_sqp_gp(obs)
+            for i in range(self.max_qp_iter):
+                u_val, x_val = self.select_action_with_sqp_gp(obs)
+                self.u_guess = u_val + self.u_guess
+                self.x_guess = x_val + self.x_guess
+                if np.linalg.norm(u_val - self.u_prev) < self.action_convergence_tol\
+                    and np.linalg.norm(x_val - self.x_prev) < self.action_convergence_tol:
+                    break
+                self.u_prev, self.x_prev = u_val, x_val
+            print(f'Number of SQP iterations: {i}')
+            if u_val.ndim > 1:
+                action = self.u_guess[:, 0]
+            else:
+                action = np.array([self.u_guess[0]])
+            print('u_guess:', self.u_guess.T)
+            print('x_guess:', self.x_guess.T)
             t2 = time.perf_counter()
             print(f'GP SELECT ACTION TIME: {(t2 - t1)}')
             self.last_obs = obs
@@ -377,43 +396,43 @@ class SQPGPMPC(GPMPC):
         if self.warmstart and self.u_prev is not None and self.x_prev is not None:
             opti.set_initial(x_var, self.x_prev)
             opti.set_initial(u_var, self.u_prev)
-        try:
-            sol = opti.solve()
-            # print('Optimization successful:', sol.stats()['success'])
-            x_val, u_val = sol.value(x_var), sol.value(u_var)
-        except RuntimeError as e:
-            print(e)
-            return_status = opti.return_status()
-            if return_status == 'unknown':
-                self.terminate_loop = True
-                u_val = self.u_prev
-                x_val = self.x_prev
-                if u_val is None:
-                    print('[WARN]: MPC Infeasible first step.')
-                    u_val = np.zeros((1, self.model.nu))
-                    x_val = np.zeros((1, self.model.nx))
-            elif return_status == 'Maximum_Iterations_Exceeded':
-                self.terminate_loop = True
-                u_val = opti.debug.value(u_var)
-                x_val = opti.debug.value(x_var)
-            elif return_status == 'Search_Direction_Becomes_Too_Small':
-                self.terminate_loop = True
-                u_val = opti.debug.value(u_var)
-                x_val = opti.debug.value(x_var)
+        # try:
+        sol = opti.solve()
+        print('Optimization successful:', sol.stats()['success'])
+        x_val, u_val = sol.value(x_var), sol.value(u_var)
+        # except RuntimeError as e:
+        #     print(e)
+        #     return_status = opti.return_status()
+        #     if return_status == 'unknown':
+        #         self.terminate_loop = True
+        #         u_val = self.u_prev
+        #         x_val = self.x_prev
+        #         if u_val is None:
+        #             print('[WARN]: MPC Infeasible first step.')
+        #             u_val = np.zeros((1, self.model.nu))
+        #             x_val = np.zeros((1, self.model.nx))
+        #     elif return_status == 'Maximum_Iterations_Exceeded':
+        #         self.terminate_loop = True
+        #         u_val = opti.debug.value(u_var)
+        #         x_val = opti.debug.value(x_var)
+        #     elif return_status == 'Search_Direction_Becomes_Too_Small':
+        #         self.terminate_loop = True
+        #         u_val = opti.debug.value(u_var)
+        #         x_val = opti.debug.value(x_var)
 
-        # TODO: move it to the qp iterations
-        self.u_prev, self.x_prev = u_val, x_val
-        self.x_guess = x_val + self.x_guess
-        self.u_guess = u_val + self.u_guess
-        if u_val.ndim > 1:
-            action = u_val[:, 0]
-        else:
-            action = np.array([u_val[0]])
-        # action += self.u_guess[0]
-        action = self.u_guess[0]
-        self.prev_action = action
-        return action
-        # return u_val, x_val
+        # # TODO: move it to the qp iterations
+        # self.u_prev, self.x_prev = u_val, x_val
+        # self.x_guess = x_val + self.x_guess
+        # self.u_guess = u_val + self.u_guess
+        # if u_val.ndim > 1:
+        #     action = u_val[:, 0]
+        # else:
+        #     action = np.array([u_val[0]])
+        # # action += self.u_guess[0]
+        # action = self.u_guess[0]
+        # self.prev_action = action
+        # return action
+        return u_val, x_val
 
     def reset(self):
         '''Reset the controller before running.'''
@@ -440,3 +459,27 @@ class SQPGPMPC(GPMPC):
         self.x_guess = None
         self.u_guess = None
 
+    def preprocess_training_data(self,
+                                 x_seq,
+                                 u_seq,
+                                 x_next_seq
+                                 ):
+        '''Converts trajectory data for GP trianing.
+
+        Args:
+            x_seq (list): state sequence of np.array (nx,).
+            u_seq (list): action sequence of np.array (nu,).
+            x_next_seq (list): next state sequence of np.array (nx,).
+
+        Returns:
+            np.array: inputs for GP training, (N, nx+nu).
+            np.array: targets for GP training, (N, nx).
+        '''
+        print("=========== Preprocessing training data for SQP ===========")
+        # Get the predicted dynamics. This is a linear prior, thus we need to account for the fact that
+        # it is linearized about an eq using self.X_GOAL and self.U_GOAL.
+        x_pred_seq = self.prior_dynamics_func(x0=x_seq.T,
+                                              p=u_seq.T)['xf'].toarray()
+        targets = (x_next_seq.T - x_pred_seq).transpose()  # (N, nx).
+        inputs = np.hstack([x_seq, u_seq])  # (N, nx+nu).
+        return inputs, targets
