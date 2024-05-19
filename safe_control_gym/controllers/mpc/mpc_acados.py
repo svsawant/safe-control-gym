@@ -343,15 +343,14 @@ class MPC_ACADOS(BaseController):
 
         self.ocp = ocp
 
-    def processing_acados_constraints_expression(self, ocp: AcadosOcp, h0_expr, h_expr, he_expr) -> dict:
+    def processing_acados_constraints_expression(self, ocp: AcadosOcp, h0_expr, h_expr, he_expr) -> AcadosOcp:
         '''Preprocess the constraints to be compatible with acados.
             Args: 
                 h0_expr (casadi expression): initial state constraints
                 h_expr (casadi expression): state and input constraints
                 he_expr (casadi expression): terminal state constraints
             Returns:
-                ub (dict): upper bound of the constraints
-                lb: lower bound of the constraints
+                ocp (AcadosOcp): acados ocp object with constraints set.
         
         Note:
         all constraints in safe-control-gym are defined as g(x, u) <= constraint_tol
@@ -368,7 +367,7 @@ class MPC_ACADOS(BaseController):
         ocp.constraints.idxbu = idxbu # active constraints dimension
         '''
         # lambda functions to set the upper and lower bounds of the constraints
-        constraint_ub = lambda constraint: self.constraint_tol * np.ones(constraint.shape)
+        constraint_ub = lambda constraint: -self.constraint_tol * np.ones(constraint.shape)
         constraint_lb = lambda constraint: -1e8 * np.ones(constraint.shape) 
         ub = {'h': constraint_ub(h_expr), 'h0': constraint_ub(h0_expr), 'he': constraint_ub(he_expr)}
         lb = {'h': constraint_lb(h_expr), 'h0': constraint_lb(h0_expr), 'he': constraint_lb(he_expr)}
@@ -434,6 +433,11 @@ class MPC_ACADOS(BaseController):
                 else:
                     init_u = self.u_guess[:, idx]
                 self.acados_ocp_solver.set(idx, "u", init_u)
+        else:
+            for idx in range(self.T + 1):
+                self.acados_ocp_solver.set(idx, "x", obs)
+            for idx in range(self.T):
+                self.acados_ocp_solver.set(idx, "u", np.zeros((nu,)))
 
         # set reference for the control horizon
         goal_states = self.get_references()
@@ -454,6 +458,14 @@ class MPC_ACADOS(BaseController):
             # feedback phase
             self.acados_ocp_solver.options_set('rti_phase', 2) 
             status = self.acados_ocp_solver.solve()
+            
+            if status not in [0, 2]:
+                self.acados_ocp_solver.print_statistics()
+                raise Exception(f'acados returned status {status}. Exiting.')
+                # print(f"acados returned status {status}. ")
+            if status == 2:
+                print(f"acados returned status {status}. ")
+            
             action = self.acados_ocp_solver.get(0, "u")
 
         elif not self.use_RTI:

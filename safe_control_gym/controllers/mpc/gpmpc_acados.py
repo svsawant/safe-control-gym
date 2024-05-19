@@ -224,9 +224,12 @@ class GPMPC_ACADOS(GPMPC):
         acados_model.u = self.model.u_sym
         acados_model.name = model_name
 
+        A_lin = self.discrete_dfdx
+        B_lin = self.discrete_dfdu
 
         if self.gaussian_process is None:
-            f_disc = self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] \
+            # f_disc = self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] \
+            f_disc = A_lin @ (acados_model.x - self.X_EQ) + B_lin @ (acados_model.u - self.U_EQ)\
                 + self.prior_ctrl.X_EQ[:, None]
         else:
             z = cs.vertcat(acados_model.x, acados_model.u) # GP prediction point
@@ -237,8 +240,9 @@ class GPMPC_ACADOS(GPMPC):
                 #    + self.prior_ctrl.X_EQ[:, None] \
                 #    + self.Bd @ cs.sum2(self.K_z_zind_func(z1=z.T, z2=z_ind)['K'] * mean_post_factor)
             else:
-                f_disc = \
-                     self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] + \
+                # f_disc = \
+                #      self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] + \
+                f_disc = A_lin @ (acados_model.x - self.X_EQ) + B_lin @ (acados_model.u - self.U_EQ)\
                    + self.prior_ctrl.X_EQ[:, None] \
                    + self.Bd @ self.gaussian_process.casadi_predict(z=z)['mean']
 
@@ -416,9 +420,9 @@ class GPMPC_ACADOS(GPMPC):
             action = self.prior_ctrl.select_action(obs)
         else:
             action = self.select_action_with_gp(obs)
-            self.last_obs = obs
-            self.last_action = action
         time_after = time.time()
+        self.last_obs = obs
+        self.last_action = action
         print('gpmpc acados action selection time:', time_after - time_before)
         return action
     
