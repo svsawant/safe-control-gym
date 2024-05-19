@@ -278,6 +278,9 @@ class GaussianProcessCollection:
                 lower : torch.tensor (nx X N_samples).
                 upper : torch.tensor (nx X N_samples).
         '''
+        num_batch = x.shape[0]
+        dim_input = len(self.input_mask)
+        dim_output = len(self.target_mask)
         means_list = []
         cov_list = []
         pred_list = []
@@ -288,13 +291,28 @@ class GaussianProcessCollection:
             else:
                 mean, cov = gp.predict(x, requires_grad=requires_grad, return_pred=return_pred)
             means_list.append(mean)
-            cov_list.append(cov)
-        means = torch.tensor(means_list)
-        cov = torch.diag(torch.cat(cov_list).squeeze())
+            # cov_list.append(cov)
+            cov_list.append(torch.diag(cov))
+        means = torch.zeros(num_batch, dim_output)
+        for i in range(dim_output):
+            means[:, i] = means_list[i].squeeze()
+        assert means.shape == (num_batch, dim_output), ValueError('Means have wrong shape.')
+        covs = torch.zeros(num_batch, dim_output, dim_output)
+        for i in range(dim_output):
+            covs[:, i, i] = cov_list[i].squeeze()
+        assert covs.shape == (num_batch, dim_output, dim_output), ValueError('Covariances have wrong shape.')
+
+        # squeeze the means if num_batch == 1
+        if num_batch == 1:
+            means = means.squeeze()
+            covs = covs.squeeze()
+
+        # means = torch.tensor(means_list)
+        # covs = torch.diag(torch.cat(cov_list).squeeze())
         if return_pred:
-            return means, cov, pred_list
+            return means, covs, pred_list
         else:
-            return means, cov
+            return means, covs
 
     def make_casadi_predict_func(self):
         '''

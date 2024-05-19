@@ -298,6 +298,14 @@ class GPMPC(MPC):
         if self.x_prev is not None and self.u_prev is not None:
             # cov_x = np.zeros((nx, nx))
             cov_x = np.diag([self.initial_rollout_std**2] * nx)
+            z_batch = np.hstack((self.x_prev[:, :-1].T, self.u_prev.T)) # (T, input_dim)
+            # Compute the covariance of the dynamics at each time step.
+            time_before = time.time()
+            _, cov_d_tensor_batch = self.gaussian_process.predict(z_batch, return_pred=False)
+            cov_d_batch = cov_d_tensor_batch.detach().numpy()
+            time_after = time.time()
+            print('Batch Time to compute cov_d:', time_after - time_before)
+            time_before = time.time()
             for i in range(T):
                 state_covariances[i] = cov_x
                 cov_u = self.lqr_gain @ cov_x @ self.lqr_gain.T
@@ -307,9 +315,21 @@ class GPMPC(MPC):
                 if self.gp_approx == 'taylor':
                     raise NotImplementedError('Taylor GP approximation is currently not working.')
                 elif self.gp_approx == 'mean_eq':
-                    _, cov_d_tensor = self.gaussian_process.predict(z[None, :], return_pred=False)
-                    cov_d = cov_d_tensor.detach().numpy()
                     # TODO: Addition of noise here! And do we still need initial_rollout_std
+                    # _, cov_d_tensor = self.gaussian_process.predict(z[None, :], return_pred=False)
+                    # cov_d = cov_d_tensor.detach().numpy()
+                    if False: # if self.sparse_gp:
+                        dim_gp_outputs = len(self.target_mask)
+                        cov_d = np.zeros((dim_gp_outputs, dim_gp_outputs))
+                        K_z_z = self.gaussian_process.kernel(torch.from_numpy(z[None, self.input_mask]).double()).detach().numpy()
+                        K_z_zind = self.gaussian_process.kernel(torch.from_numpy(z[None, self.input_mask]).double(),
+                                                                torch.tensor(z_ind).double()).detach().numpy()
+                        for i in range(dim_gp_outputs):
+                            Q_z_z = K_z_zind[i, :, :] @ K_zind_zind_inv[i, :, :] @ K_z_zind[i, :, :].T
+                            cov_d[i, i] = K_z_z[i, 0] - Q_z_z  +\
+                                self.K_z_zind_func(z1=z, z2=z_ind)['K'][i, :].toarray() @ Sigma_inv[i] @ self.K_z_zind_func(z1=z, z2=z_ind)['K'][i, :].T.toarray()
+                    else: 
+                        cov_d = cov_d_batch[i, :, :]
                     _, _, cov_noise, _ = self.gaussian_process.get_hyperparameters()
                     cov_d = cov_d + np.diag(cov_noise.detach().numpy())
                 else:
@@ -332,6 +352,8 @@ class GPMPC(MPC):
                         self.Bd @ cov_d @ self.Bd.T
                 else:
                     raise NotImplementedError('gp_approx method is incorrect or not implemented')
+            time_after = time.time()
+            # print('Time to compute cov_d:', time_after - time_before)
             # Udate Final covariance.
             for si, state_constraint in enumerate(self.constraints.state_constraints):
                 state_constraint_set[si][:, -1] = -1 * self.inverse_cdf * \
@@ -615,7 +637,8 @@ class GPMPC(MPC):
         # Initial guess for the optimization problem.
         if self.warmstart and self.x_prev is None and self.u_prev is None:
             if self.gaussian_process is None:
-                x_guess, u_guess = self.prior_ctrl.compute_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
+                x_guess, u_guess \
+                    = self.prior_ctrl.compute_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
             else:
                 x_guess, u_guess = self.compute_initial_guess(obs, goal_states)
                 # set the solver back
@@ -664,7 +687,7 @@ class GPMPC(MPC):
         self.u_prev = u_val
         self.results_dict['horizon_states'].append(deepcopy(self.x_prev))
         self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev))
-        self.results_dict['t_wall'].append(opti.stats()['t_wall_total'])
+        # self.results_dict['t_wall'].append(opti.stats()['t_wall_total'])
         zi = np.hstack((x_val[:, 0], u_val[:, 0]))
         zi = zi[self.input_mask]
         gp_contribution = np.sum(self.K_z_zind_func(z1=zi, z2=z_ind_val)['K'].toarray() * mean_post_factor_val, axis=1)
@@ -986,13 +1009,12 @@ class GPMPC(MPC):
 
         self.x_guess = x_val
         self.u_guess = u_val
+        if u_val.ndim == 1:
+            # if u_val is 1D, convert to 2D. (for constraint-tightening)
+            u_val = np.atleast_2d(u_val)
         self.x_prev, self.u_prev = x_val, u_val
         x_guess = x_val
         u_guess = u_val
-
-        # # set the solver back
-        # self.setup_gp_optimizer(n_ind_points=n_ind_points,
-        #                         solver=self.sqp_solver)
         
         time_after = time.time()
         print('MPC _compute_initial_guess time: ', time_after - time_before)
