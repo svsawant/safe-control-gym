@@ -247,6 +247,7 @@ class Pendulum(BenchmarkEnv):
         #     (p.getJointState(self.CARTPOLE_ID, jointIndex=0,
         #                      physicsClientId=self.PYB_CLIENT)[0:2], p.getJointState(self.CARTPOLE_ID, jointIndex=1, physicsClientId=self.PYB_CLIENT)[0:2]))
         self.state = np.array(p.getJointState(self.PENDULUM_ID, jointIndex=0, physicsClientId=self.PYB_CLIENT)[0:2])
+        self.state[0] = normalize_angle(self.state[0]) if self.obs_wrap_angle else self.state[0]
         # print('state in step', self.state)
         # print('state type', type(self.state))
         # exit()
@@ -357,6 +358,7 @@ class Pendulum(BenchmarkEnv):
         self.state = np.hstack(
             (p.getJointState(self.PENDULUM_ID, jointIndex=0,
                              physicsClientId=self.PYB_CLIENT)[0:2]))
+        self.state[0] = normalize_angle(self.state[0]) if self.obs_wrap_angle else self.state[0]
         # print('state in reset', self.state)
         # Debug visualization if GUI enabled
         self.line = None
@@ -479,12 +481,13 @@ class Pendulum(BenchmarkEnv):
     def _set_observation_space(self):
         '''Sets the observation space of the environment.'''
         # Angle at which to fail the episode.
-        self.theta_threshold_radians = 90 * math.pi / 180
+        self.theta_threshold_radians = 180 * math.pi / 180
+        self.theta_dot_threshold_radian = 10
         # NOTE: different value in PyBullet gym (0.4) and OpenAI gym (2.4).
         # self.x_threshold = 2.4
         # Limit set to 2x: i.e. a failing observation is still within bounds.
         # obs_bound = np.array([self.x_threshold * 2, np.finfo(np.float32).max, self.theta_threshold_radians * 2, np.finfo(np.float32).max])
-        obs_bound = np.array([self.theta_threshold_radians * 2, np.finfo(np.float32).max])
+        obs_bound = np.array([self.theta_threshold_radians * 2, self.theta_dot_threshold_radian])
         self.state_space = spaces.Box(low=-obs_bound, high=obs_bound, dtype=np.float32)
 
         # Concatenate goal info for RL
@@ -700,6 +703,9 @@ class Pendulum(BenchmarkEnv):
         '''
         # Done if goal reached for stabilization task with quadratic cost.
         if self.TASK == Task.STABILIZATION:
+            # print('state in done', self.state)
+            # print('goal in done', self.X_GOAL)
+            # print('diff in done', np.linalg.norm(self.state - self.X_GOAL))
             self.goal_reached = bool(np.linalg.norm(self.state - self.X_GOAL) < self.TASK_INFO['stabilization_goal_tolerance'])
             if self.goal_reached:
                 return True
