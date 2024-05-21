@@ -215,7 +215,7 @@ class MPC(BaseController):
 
     def setup_optimizer(self, solver='qrsqp'):
         '''Sets up nonlinear optimization problem.'''
-        print('=================Setting up optimizer=================')
+        print(f'=================Setting up optimizer with {solver}=================')
         nx, nu = self.model.nx, self.model.nu
         T = self.T
         # Define optimizer and variables.
@@ -355,7 +355,25 @@ class MPC(BaseController):
             x_val, u_val = sol.value(x_var), sol.value(u_var)
         except RuntimeError:
             print('=============Infeasible MPC Problem=============')
-            x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+            # x_val, u_val = opti.debug.value(x_var), opti.debug.value(u_var)
+            return_status = opti.return_status()
+            print(f'Optimization failed with status: {return_status}')
+            if return_status == 'unknown':
+                # self.terminate_loop = True
+                u_val = self.u_prev
+                x_val = self.x_prev
+                if u_val is None:
+                    print('[WARN]: MPC Infeasible first step.')
+                    u_val = u_guess
+                    x_val = x_guess
+            elif return_status == 'Maximum_Iterations_Exceeded':
+                self.terminate_loop = True
+                u_val = opti.debug.value(u_var)
+                x_val = opti.debug.value(x_var)
+            elif return_status == 'Search_Direction_Becomes_Too_Small':
+                self.terminate_loop = True
+                u_val = opti.debug.value(u_var)
+                x_val = opti.debug.value(x_var)
         skip = 8
         print('x_val: ', x_val[:,::skip])
         print('u_val: ', u_val[::skip])
@@ -364,7 +382,7 @@ class MPC(BaseController):
         self.results_dict['horizon_states'].append(deepcopy(self.x_prev))
         self.results_dict['horizon_inputs'].append(deepcopy(self.u_prev))
         self.results_dict['goal_states'].append(deepcopy(goal_states))
-        self.results_dict['t_wall'].append(opti.stats()['t_wall_total'])
+        # self.results_dict['t_wall'].append(opti.stats()['t_wall_total'])
         # Take the first action from the solved action sequence.
         if u_val.ndim > 1:
             action = u_val[:, 0]

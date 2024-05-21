@@ -107,7 +107,7 @@ class SQPMPC(MPC):
         self.x_guess = None
         self.u_guess = None
 
-    def set_lin_dynamics_func(self):
+    def set_lin_dynamics_func(self, exact=True):
         '''Updates symbolic dynamics with actual control frequency.'''
         # Original version, used in shooting.
         delta_x = cs.MX.sym('delta_x', self.model.nx, 1)
@@ -117,15 +117,27 @@ class SQPMPC(MPC):
         dfdxdfdu = self.model.df_func(x=x_guess, u=u_guess)
         dfdx = dfdxdfdu['dfdx']#.toarray()
         dfdu = dfdxdfdu['dfdu']#.toarray()
+        # if exact: # NOTE: exact is not implemented because cs.expm is not supported
+        #     # M = cs.SX.zeros(self.model.nx + self.model.nu, self.model.nx + self.model.nu)
+        #     # M[:self.model.nx, :self.model.nx] = dfdx
+        #     # M[:self.model.nx, self.model.nx:] = dfdu
+        #     M = cs.vertcat(cs.horzcat(dfdx, dfdu), cs.MX.zeros(self.model.nu, self.model.nx + self.model.nu))
+        #     assert M.shape == (self.model.nx + self.model.nu, self.model.nx + self.model.nu)
+        #     Md = cs.expm(M * self.dt)
+        #     Ad = Md[:self.model.nx, :self.model.nx]
+        #     Bd = Md[:self.model.nx, self.model.nx:]
+        # else: 
         Ad = cs.DM_eye(self.model.nx) + dfdx * self.dt
         Bd = dfdu * self.dt
+
         x_dot_lin = Ad @ delta_x + Bd @ delta_u
         self.linear_dynamics_func = cs.Function('linear_discrete_dynamics',
                                                 [delta_x, delta_u, x_guess, u_guess],
-                                                [x_dot_lin],
+                                                [x_dot_lin, Ad, Bd],
                                                 ['x0', 'p', 'x_guess', 'u_guess'],
-                                                ['xf'])
-    
+                                                ['xf', 'Ad', 'Bd'])
+        
+
     def reset(self):
         '''Prepares for training or evaluation.'''
         print('==========Resetting the controller.==========')
@@ -308,12 +320,12 @@ class SQPMPC(MPC):
             # compare with previous solution
             u_val_diff = np.linalg.norm(u_val - self.u_prev)
             x_val_diff = np.linalg.norm(x_val - self.x_prev)
+            self.x_guess = x_val + self.x_guess
+            self.u_guess = u_val + self.u_guess
             if u_val_diff < self.action_convergence_tol and x_val_diff < self.action_convergence_tol:
                 break
             # update previous solution
             self.u_prev, self.x_prev = u_val, x_val
-            self.x_guess = x_val + self.x_guess
-            self.u_guess = u_val + self.u_guess
         print(f'%i QP iterations to converge' % i)
         # take first one from solved action sequence
         if u_val.ndim > 1:
@@ -382,15 +394,19 @@ class SQPMPC(MPC):
             if return_status == 'unknown':
                 self.terminate_loop = True
                 u_val = self.u_prev
-                if u_val is None:
+                x_val = self.x_prev
+                if u_val is None or x_val is None:
                     print('[WARN]: MPC Infeasible first step.')
                     u_val = np.zeros((1, self.model.nu))
+                    x_val = np.zeros((1, self.model.nx))
             elif return_status == 'Maximum_Iterations_Exceeded':
                 self.terminate_loop = True
                 u_val = opti.debug.value(u_var)
+                x_val = opti.debug.value(x_var)
             elif return_status == 'Search_Direction_Becomes_Too_Small':
                 self.terminate_loop = True
                 u_val = opti.debug.value(u_var)
+                x_val = opti.debug.value(x_var)
             # x_val = self.x_prev
 
         # self.x_guess = x_val + self.x_guess
