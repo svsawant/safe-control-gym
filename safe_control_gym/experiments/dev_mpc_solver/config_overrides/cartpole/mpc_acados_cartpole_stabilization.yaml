@@ -9,7 +9,7 @@ algo_config:
     - 1
     - 0.1
 
-  soft_constraints: False
+  soft_constraints: True # False
   constraint_tol: 1.0e-6
 
   ############## prior ##############
@@ -22,4 +22,5 @@ algo_config:
     prior_prop_rand_info: {}
     
   obs_wrap_angle: True
+  use_RTI: False #True
   ###################################

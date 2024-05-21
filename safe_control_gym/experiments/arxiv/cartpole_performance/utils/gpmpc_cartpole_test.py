@@ -182,7 +182,9 @@ def main(config):
     return train_runs, test_runs
 
 if __name__ == "__main__":
-    config_name = './../config_overrides/gpmpc_acados_cartpole_stabilization.yaml'
+    algo = 'gpmpc_acados'
+    # algo = 'gp_mpc'
+    config_name = f'./../config_overrides/{algo}_cartpole_stabilization.yaml'
     current_script_path = os.path.dirname(os.path.realpath(__file__))
     abs_config_path = os.path.join(current_script_path, config_name)
     if not os.path.exists(abs_config_path):
@@ -190,7 +192,7 @@ if __name__ == "__main__":
         sys.exit(1)
     else:
         print(f"Config file exists.")
-    sys.argv[1:] = ['--algo', 'gpmpc_acados',
+    sys.argv[1:] = ['--algo', algo,
                     '--task', 'cartpole',
                     '--overrides',
                     abs_config_path,

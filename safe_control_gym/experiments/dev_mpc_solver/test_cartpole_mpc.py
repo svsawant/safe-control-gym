@@ -40,11 +40,11 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
                        )
     random_env = env_func(gui=False)
     # print('env_func.func.__dir__()', env_func.func.__dir__())
-    print('random_env.__dir__()', random_env.__dir__())
-    print('random_env.INERTIAL_PROP', random_env.INERTIAL_PROP)
-    print('random_env.POLE_MASS', random_env.POLE_MASS)
-    print('random_env.POLE_LENGTH', random_env.EFFECTIVE_POLE_LENGTH)
-    print('random_env.CART_MASS', random_env.CART_MASS)
+    # print('random_env.__dir__()', random_env.__dir__())
+    # print('random_env.INERTIAL_PROP', random_env.INERTIAL_PROP)
+    # print('random_env.POLE_MASS', random_env.POLE_MASS)
+    # print('random_env.POLE_LENGTH', random_env.EFFECTIVE_POLE_LENGTH)
+    # print('random_env.CART_MASS', random_env.CART_MASS)
     # exit()
     # Create controller.
     ctrl = make(config.algo,
@@ -53,9 +53,10 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
                 )
     # print(ctrl.__dir__())
     print('ctrl.model.__dir__()', ctrl.model.__dir__())
-    print('ctrl.model.pole_mass', ctrl.model.pole_mass)
-    print('ctrl.model.pole_length', ctrl.model.pole_length)
-    print('ctrl.model.cart_mass', ctrl.model.cart_mass)
+    # print('ctrl.model.pole_mass', ctrl.model.pole_mass)
+    # print('ctrl.model.pole_length', ctrl.model.pole_length)
+    # print('ctrl.model.cart_mass', ctrl.model.cart_mass)
+    # print('ctrl.model.__dir__()', ctrl.model.__dir__())
     # print(ctrl.model.x_sym.shape[0])
     # exit()
     all_trajs = defaultdict(list)
@@ -85,7 +86,9 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
         time_after = time.time()
 
         print('Time taken:', time_after - time_before)
-        print('goal reached', trajs_data['info'][-1][-1]['goal_reached'])
+        if random_env.TASK == Task.STABILIZATION:
+            print('goal reached', trajs_data['info'][-1][-1]['goal_reached'])
+        # elif random_env.TASK == Task.TRACKING:
         post_analysis(trajs_data['obs'][0], trajs_data['action'][0], ctrl.env)
 
         # Close environments

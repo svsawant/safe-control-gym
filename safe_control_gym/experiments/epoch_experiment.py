@@ -79,8 +79,12 @@ class EpochExp(BaseExperiment):
         # Check if the controller has a prior_ctrl that should be run to collect data first.
         if hasattr(self.ctrl, 'prior_ctrl'):
             # Get prior model's performance
-            eval_data = self._execute_evaluations(ctrl=self.ctrl.prior_ctrl,
-                                           env=self.test_envs[0],
+            # eval_data = self._execute_evaluations(ctrl=self.ctrl.prior_ctrl,
+            #                                env=self.test_envs[0],
+            #                                n_episodes=self.n_test_episodes_per_epoch,
+            #                                n_steps=None,
+            #                                log_freq=self.env.CTRL_FREQ)
+            eval_data = self._execute_evaluations(
                                            n_episodes=self.n_test_episodes_per_epoch,
                                            n_steps=None,
                                            log_freq=self.env.CTRL_FREQ)
@@ -96,8 +100,12 @@ class EpochExp(BaseExperiment):
                                            None,
                                            self.env.CTRL_FREQ,
                                            **kwargs)
-            eval_data = self._execute_evaluations(ctrl=self.ctrl,
-                                           env=self.test_envs[1],
+            # eval_data = self._execute_evaluations(ctrl=self.ctrl,
+            #                                env=self.test_envs[1],
+            #                                n_episodes=self.n_test_episodes_per_epoch,
+            #                                n_steps=None,
+            #                                log_freq=self.env.CTRL_FREQ)
+            eval_data = self._execute_evaluations(
                                            n_episodes=self.n_test_episodes_per_epoch,
                                            n_steps=None,
                                            log_freq=self.env.CTRL_FREQ)
@@ -125,8 +133,12 @@ class EpochExp(BaseExperiment):
                 test_env_num = episode_i + 1
             else:
                 test_env_num = episode_i
-            eval_data = self._execute_evaluations(ctrl=self.ctrl,
-                                           env=self.test_envs[test_env_num],
+            # eval_data = self._execute_evaluations(ctrl=self.ctrl,
+            #                                env=self.test_envs[test_env_num],
+            #                                n_episodes=self.n_test_episodes_per_epoch,
+            #                                n_steps=None,
+            #                                log_freq=self.env.CTRL_FREQ)
+            eval_data = self._execute_evaluations(
                                            n_episodes=self.n_test_episodes_per_epoch,
                                            n_steps=None,
                                            log_freq=self.env.CTRL_FREQ)
@@ -153,8 +165,12 @@ class EpochExp(BaseExperiment):
                                   **kwargs):
         """Defined per controller?"""
         # Training Data Collection
-        traj_data = self._execute_evaluations(ctrl=run_ctrl,
-                                       env=env,
+        # traj_data = self._execute_evaluations(ctrl=run_ctrl,
+        #                                env=env,
+        #                                n_episodes=n_episodes,
+        #                                n_steps=n_steps,
+        #                                log_freq=log_freq)
+        traj_data = self._execute_evaluations(
                                        n_episodes=n_episodes,
                                        n_steps=n_steps,
                                        log_freq=log_freq)

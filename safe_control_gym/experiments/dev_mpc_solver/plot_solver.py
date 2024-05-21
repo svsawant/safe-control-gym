@@ -5,6 +5,12 @@ import os
 
 from safe_control_gym.lyapunov.utilities import *
 
+# make the plot resolution higher and make font size bigger
+resolution = 100
+plt.rcParams['figure.dpi'] = resolution
+# plt.rcParams.update({'font.size': 20})
+
+
 dt = 0.06666666666666667
 # state constraints
 dim_grid = 4
@@ -55,6 +61,8 @@ for i in range(num_subplots):
                    color=colors[0], label=solver_name[0], linestyle=line_styles[0])
     axs[4, i].set(xlabel='time [s]', ylabel='force [N]')
 
+traj_ipopt = trajs
+
 traj_data_name = 'trajectories_' + solver_name[1] + '.npy'
 abs_traj_data_name = os.path.join(current_dir, traj_data_name)
 trajs = np.load(abs_traj_data_name, allow_pickle=True)
@@ -85,6 +93,7 @@ for i in range(num_subplots):
     axs[4, i].set(xlabel='time [s]', ylabel='force [N]')
 
 
+traj_warmp_start = trajs
 
 traj_data_name = 'trajectories_' + solver_name[2] + '.npy'
 abs_traj_data_name = os.path.join(current_dir, traj_data_name)
@@ -115,6 +124,45 @@ for i in range(num_subplots):
                    color=colors[2], label=solver_name[2], linestyle=line_styles[2], marker = 'x')
     axs[4, i].set(xlabel='time [s]', ylabel='force [N]')
 
+# make the legend font size bigger
 
-plt.legend()
+
+plt.legend(fontsize=30)
+
+
+############################### RMSE ########################################
+# compute the rmse between IPOPT and warm-starting for each state and input at each time step
+rmse = np.zeros((5, num_subplots))
+for i in range(num_subplots):
+    rmse[0, i] = np.sqrt(np.mean(np.square(traj_ipopt[i]['state_traj'][:, 0] - traj_warmp_start[i]['state_traj'][:, 0])))
+    rmse[1, i] = np.sqrt(np.mean(np.square(traj_ipopt[i]['state_traj'][:, 1] - traj_warmp_start[i]['state_traj'][:, 1])))
+    rmse[2, i] = np.sqrt(np.mean(np.square(traj_ipopt[i]['state_traj'][:, 2] - traj_warmp_start[i]['state_traj'][:, 2])))
+    rmse[3, i] = np.sqrt(np.mean(np.square(traj_ipopt[i]['state_traj'][:, 3] - traj_warmp_start[i]['state_traj'][:, 3])))
+    rmse[4, i] = np.sqrt(np.mean(np.square(traj_ipopt[i]['input_traj'][:, 0] - traj_warmp_start[i]['input_traj'][:, 0])))
+
+print('rmse.shape', rmse.shape)
+
+# plot the rmse (y axis is the rmse, x axis is time)
+fig, axs = plt.subplots(1, 5, figsize=(20, 5))
+time_axis = np.arange(0, num_subplots)
+axs[0].plot(time_axis, rmse[0, :], label='x')
+axs[0].set_title('x')
+axs[0].set(xlabel='time [s]', ylabel='rmse')
+
+axs[1].plot(time_axis, rmse[1, :], label='x_dot')
+axs[1].set_title('x_dot')
+axs[1].set(xlabel='time [s]', ylabel='rmse')
+
+axs[2].plot(time_axis, rmse[2, :], label='theta')
+axs[2].set_title('theta')
+axs[2].set(xlabel='time [s]', ylabel='rmse')
+axs[3].plot(time_axis, rmse[3, :], label='theta_dot')
+axs[3].set_title('theta_dot')
+axs[3].set(xlabel='time [s]', ylabel='rmse')
+axs[4].plot(time_axis, rmse[4, :], label='force')
+axs[4].set_title('force')
+axs[4].set(xlabel='time [s]', ylabel='rmse')
+# add overall title
+fig.suptitle('rmse between IPOPT and warm-starting + SQP')
+
 plt.show()
