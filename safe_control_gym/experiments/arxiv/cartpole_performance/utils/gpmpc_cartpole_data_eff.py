@@ -175,7 +175,8 @@ def main(config):
         # print('posterior_error_A', posterior_error_A)
         # print('posterior_error_B', posterior_error_B)
         # input('Press Enter to continue...')
-        make_plots(test_runs, train_runs, train_envs[0].state_dim, config.output_dir)
+        make_plots(test_runs, train_runs, train_envs[0].state_dim, config.output_dir, \
+                    np.array(ctrl.q_mpc), np.array(ctrl.r_mpc))
 
     fname = os.path.join(config.output_dir, 'figs', 'avg_rmse_cost_learning_curve.csv')
     # plot_data_eff_from_csv(fname,
