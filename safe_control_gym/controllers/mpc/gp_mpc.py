@@ -32,7 +32,7 @@ from skopt.sampler import Lhs
 
 from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
 from safe_control_gym.controllers.mpc.gp_utils import (GaussianProcessCollection, ZeroMeanIndependentGPModel,
-                                                       covSEard, kmeans_centriods)
+                                                       covMatern52ard, covSEard, kmeans_centriods)
 from safe_control_gym.controllers.mpc.linear_mpc import MPC, LinearMPC
 from safe_control_gym.envs.benchmark_env import Task
 
@@ -59,6 +59,8 @@ class GPMPC(MPC):
             normalize_training_data: bool = False,
             use_gpu: bool = False,
             gp_model_path: str = None,
+            kernel: str = 'Matern',
+            parallel: bool = False,
             prob: float = 0.955,
             initial_rollout_std: float = 0.005,
             input_mask: list = None,
@@ -173,6 +175,8 @@ class GPMPC(MPC):
         self.optimization_iterations = optimization_iterations
         self.learning_rate = learning_rate
         self.gp_model_path = gp_model_path
+        self.kernel = kernel
+        self.parallel = parallel
         self.normalize_training_data = normalize_training_data
         self.prob = prob
         if input_mask is None:
@@ -240,11 +244,19 @@ class GPMPC(MPC):
         ell_s = cs.SX.sym('ell', Nx)
         sf2_s = cs.SX.sym('sf2')
         z_ind = cs.SX.sym('z_ind', n_ind_points, Nx)
-        covSE = cs.Function('covSE', [z1, z2, ell_s, sf2_s],
-                            [covSEard(z1, z2, ell_s, sf2_s)])
         ks = cs.SX.zeros(1, n_ind_points)
-        for i in range(n_ind_points):
-            ks[i] = covSE(z1, z_ind[i, :], ell_s, sf2_s)
+        if self.kernel == 'Matern':
+            covMatern = cs.Function('covMatern', [z1, z2, ell_s, sf2_s],
+                                    [covMatern52ard(z1, z2, ell_s, sf2_s)])
+            for i in range(n_ind_points):
+                ks[i] = covMatern(z1, z_ind[i, :], ell_s, sf2_s)
+        elif self.kernel == 'RBF':
+            covSE = cs.Function('covSE', [z1, z2, ell_s, sf2_s],
+                                [covSEard(z1, z2, ell_s, sf2_s)])
+            for i in range(n_ind_points):
+                ks[i] = covSE(z1, z_ind[i, :], ell_s, sf2_s)
+        else:
+            raise NotImplementedError('Kernel type not implemented.')
         ks_func = cs.Function('K_s', [z1, z_ind, ell_s, sf2_s], [ks])
         K_z_zind = cs.SX.zeros(Ny, n_ind_points)
         for i in range(Ny):
@@ -830,15 +842,33 @@ class GPMPC(MPC):
         test_targets_tensor = torch.Tensor(test_targets).double()
 
         # Define likelihood.
-        likelihood = gpytorch.likelihoods.GaussianLikelihood(
-            noise_constraint=gpytorch.constraints.GreaterThan(1e-6),
-        ).double()
+        # likelihood = gpytorch.likelihoods.GaussianLikelihood(
+        #     noise_constraint=gpytorch.constraints.GreaterThan(1e-6),
+        # ).double()
+        # self.gaussian_process = GaussianProcessCollection(ZeroMeanIndependentGPModel,
+        #                                                   likelihood,
+        #                                                   len(self.target_mask),
+        #                                                   input_mask=self.input_mask,
+        #                                                   target_mask=self.target_mask,
+        #                                                   normalize=self.normalize_training_data,
+        #                                                   kernel=self.kernel,
+        #                                                   parallel=self.parallel
+        #                                                   )
+        if self.parallel:
+            likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_shape=torch.Size([len(self.target_mask)]),
+                                                                 noise_constraint=gpytorch.constraints.GreaterThan(1e-6)).double()
+        else:
+            likelihood = gpytorch.likelihoods.GaussianLikelihood(
+                noise_constraint=gpytorch.constraints.GreaterThan(1e-6),
+            ).double()
         self.gaussian_process = GaussianProcessCollection(ZeroMeanIndependentGPModel,
                                                           likelihood,
                                                           len(self.target_mask),
                                                           input_mask=self.input_mask,
                                                           target_mask=self.target_mask,
-                                                          normalize=self.normalize_training_data
+                                                          normalize=self.normalize_training_data,
+                                                          kernel=self.kernel,
+                                                          parallel=self.parallel
                                                           )
         if gp_model:
             self.gaussian_process.init_with_hyperparam(train_inputs_tensor,
