@@ -80,13 +80,13 @@ task_config:
       upper_bounds:
       - 100
       - 100
-      - 0.3
-      - 0.3
+      - 0.05
+      - 0.2
       lower_bounds:
       - -100
       - -100
-      - -0.3
-      - -0.3
+      - -0.05
+      - -0.2
   cost: quadratic
   ctrl_freq: 15
   disturbances:
@@ -114,8 +114,8 @@ task_config:
       low:  0.5
     init_x_dot:
       distrib: uniform
-      high: 0.05
-      low: -0.05
+      high: 0.001
+      low: -0.001
     init_theta_dot:
       distrib: uniform
       high: 0.001

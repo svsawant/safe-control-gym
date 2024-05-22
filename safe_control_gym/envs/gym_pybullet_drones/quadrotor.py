@@ -738,13 +738,13 @@ class Quadrotor(BaseAviary):
         elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
             # obs/state = {x, x_dot, z, z_dot, theta}.
             low = np.array([
-                -self.x_threshold, -np.finfo(np.float32).max,
-                self.GROUND_PLANE_Z, -np.finfo(np.float32).max,
+                -self.x_threshold, -self.x_dot_threshold,
+                self.GROUND_PLANE_Z, -self.z_dot_threshold,
                 -self.theta_threshold_radians
             ])
             high = np.array([
-                self.x_threshold, np.finfo(np.float32).max,
-                self.z_threshold, np.finfo(np.float32).max,
+                self.x_threshold, self.x_dot_threshold,
+                self.z_threshold, self.z_dot_threshold,
                 self.theta_threshold_radians
             ])
             self.STATE_LABELS = ['x', 'x_dot', 'z', 'z_dot', 'theta']
