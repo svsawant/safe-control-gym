@@ -115,8 +115,6 @@ class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
                  likelihood,
                  nx,
                  kernel='RBF'
-                 nx,
-                 kernel='RBF'
                  ):
         '''Initialize a multidimensional Gaussian Process model with zero mean function.
 
@@ -168,8 +166,6 @@ class ZeroMeanIndependentGPModel(gpytorch.models.ExactGP):
     def __init__(self,
                  train_x,
                  train_y,
-                 likelihood,
-                 kernel='RBF'
                  likelihood,
                  kernel='RBF'
                  ):
