@@ -484,33 +484,38 @@ class GPMPC_ACADOS(GPMPC):
         self.acados_ocp_solver.set(self.T, "yref", y_ref_e)
 
         # solve the optimization problem
-        if self.use_RTI:
-            # preparation phase
-            self.acados_ocp_solver.options_set('rti_phase', 1)
-            status = self.acados_ocp_solver.solve()
+        try:
+            if self.use_RTI:
+                # preparation phase
+                self.acados_ocp_solver.options_set('rti_phase', 1)
+                status = self.acados_ocp_solver.solve()
 
-            # feedback phase
-            self.acados_ocp_solver.options_set('rti_phase', 2) 
-            status = self.acados_ocp_solver.solve()
-            
-            if status not in [0, 2]:
-                self.acados_ocp_solver.print_statistics()
-                raise Exception(f'acados returned status {status}. Exiting.')
-                # print(f"acados returned status {status}. ")
-            if status == 2:
-                print(f"acados returned status {status}. ")
-            
-            action = self.acados_ocp_solver.get(0, "u")
+                # feedback phase
+                self.acados_ocp_solver.options_set('rti_phase', 2) 
+                status = self.acados_ocp_solver.solve()
+                
+                if status not in [0, 2]:
+                    self.acados_ocp_solver.print_statistics()
+                    raise Exception(f'acados returned status {status}. Exiting.')
+                    # print(f"acados returned status {status}. ")
+                if status == 2:
+                    print(f"acados returned status {status}. ")
+                
+                action = self.acados_ocp_solver.get(0, "u")
 
-        else:
-            status = self.acados_ocp_solver.solve()
-            if status not in [0, 2]:
-                self.acados_ocp_solver.print_statistics()
-                raise Exception(f'acados returned status {status}. Exiting.')
-                # print(f"acados returned status {status}. ")
-            if status == 2:
-                print(f"acados returned status {status}. ")
-            action = self.acados_ocp_solver.get(0, "u")
+            else:
+                status = self.acados_ocp_solver.solve()
+                if status not in [0, 2]:
+                    self.acados_ocp_solver.print_statistics()
+                    raise Exception(f'acados returned status {status}. Exiting.')
+                    # print(f"acados returned status {status}. ")
+                if status == 2:
+                    print(f"acados returned status {status}. ")
+                action = self.acados_ocp_solver.get(0, "u")
+        except Exception as e:
+            print(f"========== acados solver failed with error: {e} =============")
+            print('using prior controller')
+            action = self.prior_ctrl.select_action(obs)
 
         return action
  

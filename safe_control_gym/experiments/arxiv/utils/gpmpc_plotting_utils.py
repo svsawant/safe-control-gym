@@ -6,13 +6,24 @@ import numpy as np
 from safe_control_gym.utils.utils import mkdirs
 from safe_control_gym.controllers.mpc.mpc_utils import compute_state_rmse
 
-def get_cost(test_runs):
+def get_cost(test_runs, q=None, r=None):
+    '''
+    cost_params: dictionary of cost parameters
+    e.g., cost_params = {'q_mpc': 1, 'r_mpc': 0.1}
+    '''
+    
     num_epochs = len(test_runs)
     num_episodes = len(test_runs[0])
     costs = np.zeros((num_epochs, num_episodes))
     for epoch in range(num_epochs):
         for episode in range(num_episodes):
-            cost = np.sum(test_runs[epoch][episode]['obs'] ** 2)
+            if q is None or r is None:
+                # Default cost is the sum of the squared state values.
+                cost = np.sum(test_runs[epoch][episode]['obs'] ** 2 )
+            else:
+                # compute the cost x^T Q x + u^T R u if cost_params is provided
+                cost = np.sum(test_runs[epoch][episode]['obs'] ** 2 * q) + \
+                          np.sum(test_runs[epoch][episode]['action'] ** 2) * r
             costs[epoch, episode] = cost
     mean_cost = np.mean(costs, axis=1)
     return mean_cost
@@ -113,7 +124,7 @@ def get_quad_average_rmse_error_xz_only(runs, ref):
     mean_cost = np.mean(costs, axis=1)
     return mean_cost
 
-def make_plots(test_runs, train_runs, num_inds, dir):
+def make_plots(test_runs, train_runs, num_inds, dir, q_mpc=None, r_mpc=None):
     num_epochs = len(test_runs)
     num_episodes = len(test_runs[0])
     fig_dir = os.path.join(dir,'figs')
@@ -148,7 +159,7 @@ def make_plots(test_runs, train_runs, num_inds, dir):
     # Plot Learning Curves
     avg_rmse_error = get_average_rmse_error(test_runs)
     plot_learning_curve(avg_rmse_error, num_points_per_epoch, 'avg_rmse_cost_learning_curve', fig_dir)
-    common_costs = get_cost(test_runs)
+    common_costs = get_cost(test_runs, q=q_mpc, r=r_mpc)
     plot_learning_curve(common_costs, num_points_per_epoch, 'common_cost_learning_curve', fig_dir)
 
 

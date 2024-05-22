@@ -60,6 +60,48 @@ def covMatern52ard(x,
     return sf2 * (1 + ca.sqrt(5) * r_over_l + 5 / 3 * r_over_l ** 2) * ca.exp(- ca.sqrt(5) * r_over_l)
 
 
+def covMatern52ard(x,
+                   z,
+                   ell,
+                   sf2
+                   ):
+    '''Matern kernel that takes nu equal to 5/2.
+
+    Args:
+        x (np.array or casadi.MX/SX): First vector.
+        z (np.array or casadi.MX/SX): Second vector.
+        ell (np.array or casadi.MX/SX): Length scales.
+        sf2 (float or casadi.MX/SX): output scale parameter.
+
+    Returns:
+        Matern52 kernel (casadi.MX/SX): Matern52 kernel.
+
+    '''
+    dist = ca.sum1((x - z)**2 / ell**2)
+    r_over_l = ca.sqrt(dist)
+    return sf2 * (1 + ca.sqrt(5) * r_over_l + 5 / 3 * r_over_l ** 2) * ca.exp(- ca.sqrt(5) * r_over_l)
+
+def covMatern52ard(x,
+                   z,
+                   ell,
+                   sf2
+                   ):
+    '''Matern kernel that takes nu equal to 5/2.
+
+    Args:
+        x (np.array or casadi.MX/SX): First vector.
+        z (np.array or casadi.MX/SX): Second vector.
+        ell (np.array or casadi.MX/SX): Length scales.
+        sf2 (float or casadi.MX/SX): output scale parameter.
+
+    Returns:
+        Matern52 kernel (casadi.MX/SX): Matern52 kernel.
+
+    '''
+    dist = ca.sum1((x - z)**2 / ell**2)
+    r_over_l = ca.sqrt(dist)
+    return sf2 * (1 + ca.sqrt(5) * r_over_l + 5 / 3 * r_over_l ** 2) * ca.exp(- ca.sqrt(5) * r_over_l)
+
 class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
     '''Multidimensional Gaussian Process model with zero mean function.
 
@@ -71,6 +113,8 @@ class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
                  train_x,
                  train_y,
                  likelihood,
+                 nx,
+                 kernel='RBF'
                  nx,
                  kernel='RBF'
                  ):
@@ -90,8 +134,8 @@ class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
         # For constant mean function.
         if kernel == 'RBF':
             self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.RBFKernel(batch_shape=torch.Size([self.n]),
-                                           ard_num_dims=train_x.shape[1]),
+                    gpytorch.kernels.RBFKernel(batch_shape=torch.Size([self.n]),
+                                               ard_num_dims=train_x.shape[1]),
                 batch_shape=torch.Size([self.n]),
                 ard_num_dims=train_x.shape[1]
             )
@@ -99,9 +143,9 @@ class ZeroMeanIndependentMultitaskGPModel(gpytorch.models.ExactGP):
             self.covar_module = gpytorch.kernels.ScaleKernel(
                 gpytorch.kernels.MaternKernel(batch_shape=torch.Size([self.n]),
                                               ard_num_dims=train_x.shape[1]),
-                batch_shape=torch.Size([self.n]),
-                ard_num_dims=train_x.shape[1]
-            )
+                    batch_shape=torch.Size([self.n]),
+                    ard_num_dims=train_x.shape[1]
+                )
         else:
             raise NotImplementedError
 
@@ -126,6 +170,8 @@ class ZeroMeanIndependentGPModel(gpytorch.models.ExactGP):
                  train_y,
                  likelihood,
                  kernel='RBF'
+                 likelihood,
+                 kernel='RBF'
                  ):
         '''Initialize a single dimensional Gaussian Process model with zero mean function.
 
@@ -138,6 +184,16 @@ class ZeroMeanIndependentGPModel(gpytorch.models.ExactGP):
         # For Zero mean function.
         self.mean_module = gpytorch.means.ZeroMean()
         # For constant mean function.
+        if kernel == 'RBF':
+            self.covar_module = gpytorch.kernels.ScaleKernel(
+                gpytorch.kernels.RBFKernel(ard_num_dims=train_x.shape[1]),
+                ard_num_dims=train_x.shape[1]
+            )
+        elif kernel == 'Matern':
+            self.covar_module = gpytorch.kernels.ScaleKernel(
+                gpytorch.kernels.MaternKernel(ard_num_dims=train_x.shape[1]),
+                ard_num_dims=train_x.shape[1]
+            )
         if kernel == 'RBF':
             self.covar_module = gpytorch.kernels.ScaleKernel(
                 gpytorch.kernels.RBFKernel(ard_num_dims=train_x.shape[1]),
@@ -197,7 +253,7 @@ class GaussianProcessCollection:
                  input_mask=None,
                  target_mask=None,
                  normalize=False,
-                 kernel='Matern',
+                 kernel='RBF',
                  parallel=False
                  ):
         '''Creates a single GaussianProcess for each output dimension.
@@ -877,7 +933,7 @@ class GaussianProcess:
             self.model = self.model_type(train_inputs,
                                          train_targets,
                                          self.likelihood,
-                                         self.kernel)
+                                         kernel=self.kernel)
         # Extract dimensions for external use.
         self.input_dimension = train_inputs.shape[1]
         self.output_dimension = target_dimension
