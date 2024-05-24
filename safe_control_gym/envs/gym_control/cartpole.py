@@ -156,6 +156,8 @@ class CartPole(BenchmarkEnv):
         # BenchmarkEnv constructor, called after defining the custom args,
         # since some BenchmarkEnv init setup can be task(custom args)-dependent.
         super().__init__(init_state=init_state, inertial_prop=inertial_prop, **kwargs)
+        self.Q = np.diag(self.rew_state_weight)
+        self.R = np.diag(self.rew_act_weight)
 
         # Create PyBullet client connection.
         self.PYB_CLIENT = -1
@@ -607,8 +609,8 @@ class CartPole(BenchmarkEnv):
             act = np.asarray(self.current_noisy_physical_action)
             if self.TASK == Task.STABILIZATION:
                 state_error = state - self.X_GOAL
-                dist = np.sum(self.rew_state_weight * state_error * state_error)
-                dist += np.sum(self.rew_act_weight * act * act)
+                dist = 0.5 * np.sum(self.rew_state_weight * state_error * state_error)
+                dist += 0.5 * np.sum(self.rew_act_weight * act * act)
             if self.TASK == Task.TRAJ_TRACKING:
                 wp_idx = min(self.ctrl_step_counter + 1, self.X_GOAL.shape[0] - 1)  # +1 because state has already advanced but counter not incremented.
                 state_error = state - self.X_GOAL[wp_idx]

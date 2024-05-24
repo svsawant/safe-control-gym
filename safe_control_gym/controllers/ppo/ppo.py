@@ -200,7 +200,7 @@ class PPO(BaseController):
     def run(self,
             env=None,
             render=False,
-            n_episodes=10,
+            n_episodes=50,
             verbose=False,
             ):
         '''Runs evaluation with current policy.'''
@@ -218,7 +218,7 @@ class PPO(BaseController):
 
         obs, info = env.reset()
         obs = self.obs_normalizer(obs)
-        ep_returns, ep_lengths = [], []
+        ep_returns, ep_lengths, eval_return = [], [], 0.0
         frames = []
         while len(ep_returns) < n_episodes:
             action = self.select_action(obs=obs, info=info)
