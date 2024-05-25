@@ -548,9 +548,12 @@ class Quadrotor(BaseAviary):
             theta = cs.MX.sym('theta')
             X = cs.vertcat(x, x_dot, z, z_dot, theta)
             # Define input collective thrust and theta.
-            T = cs.MX.sym('T_c')
-            P = cs.MX.sym('P_c')
+            T = cs.MX.sym('T_c') # normlized thrust [N]
+            P = cs.MX.sym('P_c') # desired pitch angle [rad]
             U = cs.vertcat(T, P)
+            # The thrust in PWM is converted from the normalized thrust.
+            # With the formulat F_desired = b_F * T + a_F
+
             # Define dynamics equations.
             X_dot = cs.vertcat(x_dot,
                                (18.112984649321753 * T + 3.7613154938448576) * cs.sin(theta),
