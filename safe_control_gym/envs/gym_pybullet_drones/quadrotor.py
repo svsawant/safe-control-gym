@@ -502,8 +502,13 @@ class Quadrotor(BaseAviary):
         Args:
             prior_prop (dict): specify the prior inertial prop to use in the symbolic model.
         '''
+        # if self.QUAD_TYPE is QuadType.TWO_D_ATTITUDE:
+        #     params_pitch_rate =  prior_prop.get('params_pitch_rate', 
+        #     params_acc =
+        # else:
         m = prior_prop.get('M', self.MASS)
         Iyy = prior_prop.get('Iyy', self.J[1, 1])
+            
         g, length = self.GRAVITY_ACC, self.L
         dt = self.CTRL_TIMESTEP
         # Define states.
@@ -545,7 +550,7 @@ class Quadrotor(BaseAviary):
             # Define states.
             x = cs.MX.sym('x')
             x_dot = cs.MX.sym('x_dot')
-            theta = cs.MX.sym('theta')
+            theta = cs.MX.sym('theta') # pitch angle [rad]
             X = cs.vertcat(x, x_dot, z, z_dot, theta)
             # Define input collective thrust and theta.
             T = cs.MX.sym('T_c') # normlized thrust [N]
@@ -555,6 +560,7 @@ class Quadrotor(BaseAviary):
             # With the formulat F_desired = b_F * T + a_F
 
             # Define dynamics equations.
+            # TODO: create a parameter for the new quad model
             X_dot = cs.vertcat(x_dot,
                                (18.112984649321753 * T + 3.7613154938448576) * cs.sin(theta),
                                z_dot,
@@ -657,6 +663,8 @@ class Quadrotor(BaseAviary):
     def _set_action_space(self):
         '''Sets the action space of the environment.'''
         # Define action/input dimension, labels, and units.
+        max_pitch_deg = 25
+        max_pitch_rad = max_pitch_deg * math.pi / 180
         if self.QUAD_TYPE == QuadType.ONE_D:
             action_dim = 1
             self.ACTION_LABELS = ['T']
@@ -675,11 +683,11 @@ class Quadrotor(BaseAviary):
             self.ACTION_UNITS = ['N', 'N', 'N', 'N'] if not self.NORMALIZED_RL_ACTION_SPACE else ['-', '-', '-', '-']
 
         if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
-            n_mot = 4
+            n_mot = 4 # due to collective thrust 
             a_low = self.KF * n_mot * (self.PWM2RPM_SCALE * self.MIN_PWM + self.PWM2RPM_CONST)**2
             a_high = self.KF * n_mot * (self.PWM2RPM_SCALE * self.MAX_PWM + self.PWM2RPM_CONST)**2
-            self.physical_action_bounds = (np.array([np.full(1, a_low, np.float32), np.full(1, -25 * math.pi / 180, np.float32)]).flatten(),
-                                        np.array([np.full(1, a_high, np.float32), np.full(1, 25 * math.pi / 180, np.float32)]).flatten())
+            self.physical_action_bounds = (np.array([np.full(1, a_low, np.float32), np.full(1, -max_pitch_rad, np.float32)]).flatten(),
+                                        np.array([np.full(1, a_high, np.float32), np.full(1, max_pitch_rad, np.float32)]).flatten())
         else:
             n_mot = 4 / action_dim
             a_low = self.KF * n_mot * (self.PWM2RPM_SCALE * self.MIN_PWM + self.PWM2RPM_CONST)**2
