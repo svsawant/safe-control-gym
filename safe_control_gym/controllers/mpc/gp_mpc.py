@@ -1115,8 +1115,8 @@ class GPMPC(MPC):
         # Assign reference trajectory within horizon.
         goal_states = self.get_references()
         opti.set_value(x_ref, goal_states)
-        if self.mode == 'tracking':
-            self.traj_step += 1
+        # if self.mode == 'tracking':
+        #     self.traj_step += 1
         # Set the probabilistic state and input constraint set limits.
         state_constraint_set_prev, input_constraint_set_prev = self.precompute_probabilistic_limits()
 

@@ -135,6 +135,7 @@ class MPC_ACADOS(BaseController):
     def reset(self):
         print('=================Resetting MPC=================')
         '''Prepares for training or evaluation.'''
+        time_before = time.time()
         # Setup reference input.
         if self.env.TASK == Task.STABILIZATION:
             self.mode = 'stabilization'
@@ -154,6 +155,8 @@ class MPC_ACADOS(BaseController):
         self.x_prev = None
         self.u_prev = None
         self.setup_results_dict()
+        time_after = time.time()
+        print('MPC acados reset time: ', time_after - time_before)
 
     def set_dynamics_func(self):
         '''Updates symbolic dynamics with actual control frequency.'''
@@ -233,8 +236,8 @@ class MPC_ACADOS(BaseController):
         # Assign reference trajectory within horizon.
         goal_states = self.get_references()
         opti.set_value(x_ref, goal_states)
-        if self.mode == 'tracking':
-            self.traj_step += 1
+        # if self.mode == 'tracking':
+        #     self.traj_step += 1
          # Solve the optimization problem.
         try:
             sol = opti.solve()
@@ -337,7 +340,7 @@ class MPC_ACADOS(BaseController):
         ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
         ocp.solver_options.integrator_type = 'DISCRETE'
         ocp.solver_options.nlp_solver_type = 'SQP' if not self.use_RTI else 'SQP_RTI'
-        ocp.solver_options.nlp_solver_max_iter = 5000
+        ocp.solver_options.nlp_solver_max_iter = 5000 if not self.use_RTI else 1000
         # prediction horizon
         ocp.solver_options.tf = self.T * self.dt
 
@@ -412,14 +415,17 @@ class MPC_ACADOS(BaseController):
             action (ndarray): Input/action to the task/env.
         '''
         time_before = time.time()
+        time_before_init = time.time()
         nx, nu = self.model.nx, self.model.nu
         ny = nx + nu
         ny_e = nx
         # set initial condition (0-th state)
         self.acados_ocp_solver.set(0, "lbx", obs)
         self.acados_ocp_solver.set(0, "ubx", obs)
+        time_after_init = time.time()
 
         # warm-starting solver (otherwise, zeros by default)
+        time_before_warmstart = time.time()
         if self.warmstart:
             if self.x_guess is None or self.u_guess is None:   
                 # compute initial guess with IPOPT 
@@ -438,27 +444,41 @@ class MPC_ACADOS(BaseController):
                 self.acados_ocp_solver.set(idx, "x", obs)
             for idx in range(self.T):
                 self.acados_ocp_solver.set(idx, "u", np.zeros((nu,)))
+        time_after_warmstart = time.time()
 
         # set reference for the control horizon
+        time_before_get_ref = time.time()
         goal_states = self.get_references()
+        time_after_get_ref = time.time()
         if self.mode == 'tracking':
             self.traj_step += 1
-        for idx in range(self.T):
-            y_ref = np.concatenate((goal_states[:, idx], np.zeros((nu,))))
-            self.acados_ocp_solver.set(idx, "yref", y_ref)
+        
+        y_ref = np.concatenate((goal_states[:, :-1], np.zeros((nu, self.T))))
+        time_before_for_loop = time.time()
+        for idx in range(self.T): 
+            self.acados_ocp_solver.set(idx, "yref", y_ref[:, idx])
+            # y_ref = np.concatenate((goal_states[:, idx], np.zeros((nu,))))
+            # self.acados_ocp_solver.set(idx, "yref", y_ref)
+        time_after_for_loop = time.time()
+        time_before_set_final_ref = time.time()
         y_ref_e = goal_states[:, -1] 
         self.acados_ocp_solver.set(self.T, "yref", y_ref_e)
+        time_after_set_final_ref = time.time()
 
         # solve the optimization problem
         if self.use_RTI:
             # preparation phase
+            time_before_prep = time.time()
             self.acados_ocp_solver.options_set('rti_phase', 1)
             status = self.acados_ocp_solver.solve()
+            time_after_prep = time.time()
 
             # feedback phase
+            time_before_feedback = time.time()
             self.acados_ocp_solver.options_set('rti_phase', 2) 
             status = self.acados_ocp_solver.solve()
-            
+            time_after_feedback = time.time()
+
             if status not in [0, 2]:
                 self.acados_ocp_solver.print_statistics()
                 raise Exception(f'acados returned status {status}. Exiting.')
@@ -479,6 +499,7 @@ class MPC_ACADOS(BaseController):
             action = self.acados_ocp_solver.get(0, "u")
 
         # get the open-loop solution
+        time_before_saving = time.time()
         self.x_prev = np.zeros((nx, self.T + 1))
         self.u_prev = np.zeros((nu, self.T))
         for i in range(self.T + 1):
@@ -495,8 +516,19 @@ class MPC_ACADOS(BaseController):
         self.results_dict['goal_states'].append(deepcopy(goal_states))
 
         self.prev_action = action
-        
+        time_after_saving = time.time()
+
+
         time_after = time.time()
+        print('Initialization time: ', time_after_init - time_before_init)
+        print('Warm-starting time: ', time_after_warmstart - time_before_warmstart)
+        print('Getting reference time: ', time_after_get_ref - time_before_get_ref)
+        print('setting for loop time: ', time_after_for_loop - time_before_for_loop)
+        print('Setting final reference time: ', time_after_set_final_ref - time_before_set_final_ref)
+        if self.use_RTI:
+            print('Preparation phase time: ', time_after_prep - time_before_prep)
+            print('Feedback phase time: ', time_after_feedback - time_before_feedback)
+        print('Saving time: ', time_after_saving - time_before_saving)
         print('Acados MPC _select_action time: ', time_after - time_before)
         return action
 
