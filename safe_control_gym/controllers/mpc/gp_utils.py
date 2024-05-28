@@ -438,9 +438,10 @@ class GaussianProcessCollection:
 
         Return
             Predictions
-                mean : torch.tensor (nx X N_samples).
-                lower : torch.tensor (nx X N_samples).
-                upper : torch.tensor (nx X N_samples).
+                means : torch.tensor (N_samples x output DIM).
+                covs  : torch.tensor (N_samples x output DIM x output DIM). 
+            NOTE: For compatibility with the original implementation, 
+            the output will be squeezed when N_samples == 1.
         '''
         num_batch = x.shape[0]
         dim_input = len(self.input_mask)
@@ -457,19 +458,21 @@ class GaussianProcessCollection:
                     mean, cov = gp.predict(x, requires_grad=requires_grad, return_pred=return_pred)
                 means_list.append(mean)
                 cov_list.append(torch.diag(cov))
-        means = torch.zeros(num_batch, dim_output)
-        for i in range(dim_output):
-            means[:, i] = means_list[i].squeeze()
-        assert means.shape == (num_batch, dim_output), ValueError('Means have wrong shape.')
-        covs = torch.zeros(num_batch, dim_output, dim_output)
-        for i in range(dim_output):
-            covs[:, i, i] = cov_list[i].squeeze()
-        assert covs.shape == (num_batch, dim_output, dim_output), ValueError('Covariances have wrong shape.')
 
-        # squeeze the means if num_batch == 1 to retain the original implementation.
-        if num_batch == 1:
-            means = means.squeeze()
-            covs = covs.squeeze()
+            # Stack the means and covariances.
+            means = torch.zeros(num_batch, dim_output)
+            for i in range(dim_output):
+                means[:, i] = means_list[i].squeeze()
+            assert means.shape == (num_batch, dim_output), ValueError('Means have wrong shape.')
+            covs = torch.zeros(num_batch, dim_output, dim_output)
+            for i in range(dim_output):
+                covs[:, i, i] = cov_list[i].squeeze()
+            assert covs.shape == (num_batch, dim_output, dim_output), ValueError('Covariances have wrong shape.')
+
+            # squeeze the means if num_batch == 1 to retain the original implementation.
+            if num_batch == 1:
+                means = means.squeeze()
+                covs = covs.squeeze()
 
             if return_pred:
                 return means, covs, pred_list
@@ -799,11 +802,15 @@ class GaussianProcesses:
 
         Returns:
             Predictions
-                mean : torch.tensor (nx X N_samples).
-                lower : torch.tensor (nx X N_samples).
-                upper : torch.tensor (nx X N_samples).
+                means : torch.tensor (N_samples x output DIM).
+                covs  : torch.tensor (N_samples x output DIM x output DIM). 
+            NOTE: For compatibility with the original implementation, 
+            the output will be squeezed when N_samples == 1.
 
         '''
+        num_batch = x.shape[0]
+        dim_input = len(self.input_mask)
+        dim_output = len(self.target_mask)
         self.model.eval()
         self.likelihood.eval()
         if type(x) is np.ndarray:
@@ -813,20 +820,27 @@ class GaussianProcesses:
         if requires_grad:
             predictions = self.likelihood(self.model(x.unsqueeze(0).repeat(self.output_dimension, 1, 1)))
             means = predictions.mean
-            cov = predictions.covariance_matrix
+            covs = predictions.covariance_matrix
         else:
             with torch.no_grad(), gpytorch.settings.fast_pred_var(state=True), gpytorch.settings.fast_pred_samples(state=True):
                 predictions = self.likelihood(self.model(x.unsqueeze(0).repeat(self.output_dimension, 1, 1)))
                 means = predictions.mean
                 cov = predictions.covariance_matrix
+        # takes the diagonal of the covariance matrix.
+        cov_list = [torch.diag(cov[i, ]).squeeze() for i in range(dim_output)]
+        covs = torch.zeros(num_batch, dim_output, dim_output)
+        for i in range(dim_output):
+            covs[:, i, i] = cov_list[i]
 
-        means = means.squeeze()
-        cov = torch.diag(cov.squeeze())
+        # squeeze the means if num_batch == 1 to retain the original implementation.
+        if num_batch == 1:
+            means = means.squeeze()
+            covs = torch.diag(covs.squeeze())
 
         if return_pred:
-            return means, cov, predictions
+            return means, covs, predictions
         else:
-            return means, cov
+            return means, covs
 
     def prediction_jacobian(self,
                             query
