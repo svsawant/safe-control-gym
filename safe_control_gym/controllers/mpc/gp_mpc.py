@@ -16,7 +16,7 @@ Implementation details:
        and the inducing points are the previous MPC solution.
     3. Each dimension of the learned error dynamics is an independent Zero Mean SE Kernel GP.
 '''
-import time
+import time, os
 from copy import deepcopy
 from functools import partial
 
@@ -905,6 +905,18 @@ class GPMPC(MPC):
             training_results['info'] = None
         return training_results
 
+    def load(self, model_path):
+        '''Loads a pretrained batch GP model.        Args:
+            model_path (str): Path to the pretrained model.
+        '''
+        
+        if not self.parallel:
+            raise ValueError('load function only works with parallel GP models.')
+        data = np.load(f'{model_path}/data.npz')
+        gp_model_path = f'{model_path}/best_model.pth'
+        self.train_gp(input_data=data['data_inputs'], target_data=data['data_targets'], gp_model=gp_model_path)
+        print('================== GP models loaded. =================')
+        
     def learn(self, env=None):
         '''Performs multiple epochs learning.
         '''
@@ -950,7 +962,7 @@ class GPMPC(MPC):
             else:
                 x_seq, actions, x_next_seq = self.gather_training_samples(train_runs, epoch - 1, self.num_samples)
             train_inputs, train_outputs = self.preprocess_training_data(x_seq, actions, x_next_seq)
-            _ = self.train_gp(input_data=train_inputs, target_data=train_outputs)
+            training_results = self.train_gp(input_data=train_inputs, target_data=train_outputs)
 
             # Test new policy.
             test_runs[epoch] = {}
@@ -972,7 +984,12 @@ class GPMPC(MPC):
                 train_runs[epoch].update({episode: munch.munchify(run_results)})
 
             lengthscale, outputscale, noise, kern = self.gaussian_process.get_hyperparameters(as_numpy=True)
-
+        
+        # save training data 
+        np.savez(os.path.join(self.output_dir, 'data'),
+                data_inputs=training_results['train_inputs'],
+                data_targets=training_results['train_targets'])
+        
         # close environments
         for env in train_envs:
             env.close()

@@ -59,28 +59,6 @@ def covMatern52ard(x,
     r_over_l = ca.sqrt(dist)
     return sf2 * (1 + ca.sqrt(5) * r_over_l + 5 / 3 * r_over_l ** 2) * ca.exp(- ca.sqrt(5) * r_over_l)
 
-
-def covMatern52ard(x,
-                   z,
-                   ell,
-                   sf2
-                   ):
-    '''Matern kernel that takes nu equal to 5/2.
-
-    Args:
-        x (np.array or casadi.MX/SX): First vector.
-        z (np.array or casadi.MX/SX): Second vector.
-        ell (np.array or casadi.MX/SX): Length scales.
-        sf2 (float or casadi.MX/SX): output scale parameter.
-
-    Returns:
-        Matern52 kernel (casadi.MX/SX): Matern52 kernel.
-
-    '''
-    dist = ca.sum1((x - z)**2 / ell**2)
-    r_over_l = ca.sqrt(dist)
-    return sf2 * (1 + ca.sqrt(5) * r_over_l + 5 / 3 * r_over_l ** 2) * ca.exp(- ca.sqrt(5) * r_over_l)
-
 def covMatern52ard(x,
                    z,
                    ell,
@@ -311,29 +289,36 @@ class GaussianProcessCollection:
             train_inputs, train_targets (torch.tensors): Input and target training data.
             path_to_statedicts (str): Path to where the state dicts are saved.
         '''
-        assert self.parallel is False, ValueError('Parallel GP not supported yet.')
-
         self._init_properties(train_inputs, train_targets)
-        gp_K_plus_noise_list = []
-        gp_K_plus_noise_inv_list = []
-        for gp_ind, gp in enumerate(self.gp_list):
-            path = os.path.join(path_to_statedicts, f'best_model_{self.target_mask[gp_ind]}.pth')
-            print('#########################################')
-            print('#       Loading GP dimension {self.target_mask[gp_ind]}         #')
-            print('#########################################')
-            print(f'Path: {path}')
-            gp.init_with_hyperparam(train_inputs,
-                                    train_targets[:, self.target_mask[gp_ind]],
-                                    path)
-            gp_K_plus_noise_list.append(gp.model.K_plus_noise.detach())
-            gp_K_plus_noise_inv_list.append(gp.model.K_plus_noise_inv.detach())
-            print('Loaded!')
-        gp_K_plus_noise = torch.stack(gp_K_plus_noise_list)
-        gp_K_plus_noise_inv = torch.stack(gp_K_plus_noise_inv_list)
+        if self.parallel:
+            print(f'Loading GP models.')
+            self.gps.init_with_hyperparam(train_inputs,
+                                          train_targets,
+                                          path_to_statedicts)
+            gp_K_plus_noise = self.gps.gp_K_plus_noise
+            gp_K_plus_noise_inv = self.gps.gp_K_plus_noise_inv
+        else:
+            gp_K_plus_noise_list = []
+            gp_K_plus_noise_inv_list = []
+            for gp_ind, gp in enumerate(self.gp_list):
+                path = os.path.join(path_to_statedicts, f'best_model_{self.target_mask[gp_ind]}.pth')
+                print('#########################################')
+                print('#       Loading GP dimension {self.target_mask[gp_ind]}         #')
+                print('#########################################')
+                print(f'Path: {path}')
+                gp.init_with_hyperparam(train_inputs,
+                                        train_targets[:, self.target_mask[gp_ind]],
+                                        path)
+                gp_K_plus_noise_list.append(gp.model.K_plus_noise.detach())
+                gp_K_plus_noise_inv_list.append(gp.model.K_plus_noise_inv.detach())
+                print('Loaded!')
+            gp_K_plus_noise = torch.stack(gp_K_plus_noise_list)
+            gp_K_plus_noise_inv = torch.stack(gp_K_plus_noise_inv_list)      
+              
         self.K_plus_noise = gp_K_plus_noise
         self.K_plus_noise_inv = gp_K_plus_noise_inv
         self.casadi_predict = self.make_casadi_predict_func()
-        self.casadi_linearized_predict = self.make_casadi_linearized_predict_func()
+        print('================== GP models loaded. =================')
 
     def get_hyperparameters(self,
                             as_numpy=False

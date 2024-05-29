@@ -60,6 +60,7 @@ class GPMPC_ACADOS(GPMPC):
             prior_param_coeff: float = 1.0,
             terminate_run_on_done: bool = True,
             output_dir: str = 'results/temp',
+            compute_ipopt_initial_guess: bool = False,
             **kwargs
     ):
         
@@ -95,19 +96,6 @@ class GPMPC_ACADOS(GPMPC):
         )
         self.prior_ctrl.reset()
         self.sparse_gp = sparse_gp
-        # self.prior_ctrl = SQPMPC(
-        #     env_func = self.prior_env_func,
-        #     seed= seed,
-        #     horizon = horizon,
-        #     q_mpc = q_mpc,
-        #     r_mpc = r_mpc,
-        #     warmstart= warmstart,
-        #     soft_constraints= self.soft_constraints_params['prior_soft_constraints'],
-        #     terminate_run_on_done= terminate_run_on_done,
-        #     prior_info= prior_info,
-        #     output_dir= output_dir,
-        #     additional_constraints= additional_constraints)
-        # self.prior_ctrl.reset()
         # super().__init__() # TODO: check the inheritance of the class
         super().__init__(
             env_func = env_func,
@@ -200,6 +188,7 @@ class GPMPC_ACADOS(GPMPC):
         self.gp_soft_constraints_coeff = self.soft_constraints_params['gp_soft_constraints_coeff']
 
         self.init_solver = 'ipopt'
+        self.compute_ipopt_initial_guess = compute_ipopt_initial_guess
         self.max_qp_iter = 50
         self.action_convergence_tol = 1e-5
         self.x_guess = None
@@ -233,6 +222,7 @@ class GPMPC_ACADOS(GPMPC):
                 + self.prior_ctrl.X_EQ[:, None]
         else:
             z = cs.vertcat(acados_model.x, acados_model.u) # GP prediction point
+            z = z[self.input_mask]
             if self.sparse_gp:
                 raise NotImplementedError('Sparse GP not implemented for acados.')
                 # f_disc = \
@@ -436,8 +426,15 @@ class GPMPC_ACADOS(GPMPC):
         self.acados_ocp_solver.set(0, "ubx", obs)
         if self.warmstart:
             if self.x_guess is None or self.u_guess is None:
-                # compute initial guess with IPOPT
-                self.compute_initial_guess(obs, self.get_references())
+                if self.compute_ipopt_initial_guess:
+                    # compute initial guess with IPOPT
+                    self.compute_initial_guess(obs, self.get_references())
+                else:
+                    self.x_guess = np.zeros((nx, self.T + 1))
+                    if nu == 1:
+                        self.u_guess = np.zeros((self.T,))
+                    else:
+                        self.u_guess = np.zeros((nu, self.T))
             for idx in range(self.T + 1):
                 init_x = self.x_guess[:, idx]
                 self.acados_ocp_solver.set(idx, "x", init_x)
@@ -484,38 +481,38 @@ class GPMPC_ACADOS(GPMPC):
         self.acados_ocp_solver.set(self.T, "yref", y_ref_e)
 
         # solve the optimization problem
-        try:
-            if self.use_RTI:
-                # preparation phase
-                self.acados_ocp_solver.options_set('rti_phase', 1)
-                status = self.acados_ocp_solver.solve()
+        # try:
+        if self.use_RTI:
+            # preparation phase
+            self.acados_ocp_solver.options_set('rti_phase', 1)
+            status = self.acados_ocp_solver.solve()
 
-                # feedback phase
-                self.acados_ocp_solver.options_set('rti_phase', 2) 
-                status = self.acados_ocp_solver.solve()
-                
-                if status not in [0, 2]:
-                    self.acados_ocp_solver.print_statistics()
-                    raise Exception(f'acados returned status {status}. Exiting.')
-                    # print(f"acados returned status {status}. ")
-                if status == 2:
-                    print(f"acados returned status {status}. ")
-                
-                action = self.acados_ocp_solver.get(0, "u")
+            # feedback phase
+            self.acados_ocp_solver.options_set('rti_phase', 2) 
+            status = self.acados_ocp_solver.solve()
+            
+            if status not in [0, 2]:
+                self.acados_ocp_solver.print_statistics()
+                raise Exception(f'acados returned status {status}. Exiting.')
+                # print(f"acados returned status {status}. ")
+            if status == 2:
+                print(f"acados returned status {status}. ")
+            
+            action = self.acados_ocp_solver.get(0, "u")
 
-            else:
-                status = self.acados_ocp_solver.solve()
-                if status not in [0, 2]:
-                    self.acados_ocp_solver.print_statistics()
-                    raise Exception(f'acados returned status {status}. Exiting.')
-                    # print(f"acados returned status {status}. ")
-                if status == 2:
-                    print(f"acados returned status {status}. ")
-                action = self.acados_ocp_solver.get(0, "u")
-        except Exception as e:
-            print(f"========== acados solver failed with error: {e} =============")
-            print('using prior controller')
-            action = self.prior_ctrl.select_action(obs)
+        else:
+            status = self.acados_ocp_solver.solve()
+            if status not in [0, 2]:
+                self.acados_ocp_solver.print_statistics()
+                raise Exception(f'acados returned status {status}. Exiting.')
+                # print(f"acados returned status {status}. ")
+            if status == 2:
+                print(f"acados returned status {status}. ")
+            action = self.acados_ocp_solver.get(0, "u")
+        # except Exception as e:
+        #     print(f"========== acados solver failed with error: {e} =============")
+        #     print('using prior controller')
+        #     action = self.prior_ctrl.select_action(obs)
 
         return action
  

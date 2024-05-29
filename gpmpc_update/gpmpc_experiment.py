@@ -77,7 +77,10 @@ def train(config):
     eval_env = env_func(seed=config.seed * 111)
 
     experiment = BaseExperiment(eval_env, control_agent)
-    experiment.launch_training()
+    if config.algo_config.gp_model_path is not None:
+        control_agent.load(config.algo_config.gp_model_path)
+    else:
+        experiment.launch_training()
     results, metrics = experiment.run_evaluation(n_episodes=config.n_episodes, n_steps=None, done_on_max_steps=True)
     control_agent.close()
 
