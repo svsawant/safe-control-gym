@@ -211,24 +211,19 @@ class GPMPC_ACADOS(GPMPC):
         B_lin = self.discrete_dfdu
 
         if self.gaussian_process is None:
-            # f_disc = self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] \
-            f_disc = A_lin @ (acados_model.x - self.X_EQ) + B_lin @ (acados_model.u - self.U_EQ)\
+            f_disc = self.prior_dynamics_func(x0=acados_model.x- self.X_EQ, 
+                                              p=acados_model.u- self.U_EQ)['xf'] \
                 + self.prior_ctrl.X_EQ[:, None]
         else:
             z = cs.vertcat(acados_model.x, acados_model.u) # GP prediction point
             z = z[self.input_mask]
             if self.sparse_gp:
                 raise NotImplementedError('Sparse GP not implemented for acados.')
-                # f_disc = \
-                #      self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] + \
-                #    + self.prior_ctrl.X_EQ[:, None] \
-                #    + self.Bd @ cs.sum2(self.K_z_zind_func(z1=z.T, z2=z_ind)['K'] * mean_post_factor)
             else:
-                # f_disc = \
-                #      self.prior_dynamics_func(x0=acados_model.x, p=acados_model.u)['xf'] + \
-                f_disc = A_lin @ (acados_model.x - self.X_EQ) + B_lin @ (acados_model.u - self.U_EQ)\
-                   + self.prior_ctrl.X_EQ[:, None] \
-                   + self.Bd @ self.gaussian_process.casadi_predict(z=z)['mean']
+                f_disc = self.prior_dynamics_func(x0=acados_model.x- self.X_EQ, 
+                                                  p=acados_model.u- self.U_EQ)['xf'] \
+                + self.prior_ctrl.X_EQ[:, None]
+                + self.Bd @ self.gaussian_process.casadi_predict(z=z)['mean']
 
         acados_model.disc_dyn_expr = f_disc
 
