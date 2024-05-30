@@ -60,7 +60,8 @@ class GPMPC_ACADOS(GPMPC):
             prior_param_coeff: float = 1.0,
             terminate_run_on_done: bool = True,
             output_dir: str = 'results/temp',
-            compute_ipopt_initial_guess: bool = False,
+            compute_ipopt_initial_guess: bool = True,
+            use_RTI: bool = False,
             **kwargs
     ):
         
@@ -76,9 +77,6 @@ class GPMPC_ACADOS(GPMPC):
         else:
             self.soft_constraints_params = soft_constraints
 
-        # print('self.soft_constraints_params:', self.soft_constraints_params)
-        # print('self.soft_constraints_params["prior_soft_constraints"]:', \
-        #       self.soft_constraints_params['prior_soft_constraints'])
         # Initialize the method using linear MPC.
         self.prior_ctrl = LinearMPC(
             self.prior_env_func,
@@ -189,20 +187,16 @@ class GPMPC_ACADOS(GPMPC):
 
         self.init_solver = 'ipopt'
         self.compute_ipopt_initial_guess = compute_ipopt_initial_guess
-        self.max_qp_iter = 50
-        self.action_convergence_tol = 1e-5
         self.x_guess = None
         self.u_guess = None
         self.x_prev = None
         self.u_prev = None
-        
-        # self.use_RTI = False
-        self.use_RTI = True
+        self.use_RTI = use_RTI
+
         self.setup_prior_dynamics()
         self.setup_acados_model()
         self.setup_acados_optimizer()
         self.acados_ocp_solver = AcadosOcpSolver(self.ocp)
-        # exit()
     
     def setup_acados_model(self) -> AcadosModel:
 
@@ -543,27 +537,3 @@ class GPMPC_ACADOS(GPMPC):
         self.x_guess = None
         self.u_guess = None
 
-    def preprocess_training_data(self,
-                                 x_seq,
-                                 u_seq,
-                                 x_next_seq
-                                 ):
-        '''Converts trajectory data for GP trianing.
-
-        Args:
-            x_seq (list): state sequence of np.array (nx,).
-            u_seq (list): action sequence of np.array (nu,).
-            x_next_seq (list): next state sequence of np.array (nx,).
-
-        Returns:
-            np.array: inputs for GP training, (N, nx+nu).
-            np.array: targets for GP training, (N, nx).
-        '''
-        print("=========== Preprocessing training data ===========")
-        # Get the predicted dynamics. This is a linear prior, thus we need to account for the fact that
-        # it is linearized about an eq using self.X_GOAL and self.U_GOAL.
-        x_pred_seq = self.prior_dynamics_func(x0=x_seq.T,
-                                              p=u_seq.T)['xf'].toarray()
-        targets = (x_next_seq.T - x_pred_seq).transpose()  # (N, nx).
-        inputs = np.hstack([x_seq, u_seq])  # (N, nx+nu).
-        return inputs, targets
