@@ -1,0 +1,1 @@
+./test_cartpole_swingup_gp_mpc.py --task cartpole --algo gp_mpc --overrides ./config_overrides/cartpole/cartpole_stabilization.yaml ./config_overrides/cartpole/gp_mpc_cartpole_stabilization.yaml

@@ -161,6 +161,9 @@ class SAC(BaseController):
 
     def learn(self, env=None, **kwargs):
         '''Performs learning (pre-training, training, fine-tuning, etc).'''
+        if self.num_checkpoints > 0:
+            step_interval = np.linspace(0, self.max_env_steps, self.num_checkpoints)
+            interval_save = np.zeros_like(step_interval, dtype=bool)
         while self.total_steps < self.max_env_steps:
             results = self.train_step()
 
@@ -169,10 +172,15 @@ class SAC(BaseController):
                 # latest/final checkpoint
                 self.save(self.checkpoint_path, save_buffer=False)
                 self.logger.info(f'Checkpoint | {self.checkpoint_path}')
-            if self.num_checkpoints and self.total_steps % (self.max_env_steps // self.num_checkpoints) == 0:
-                # intermediate checkpoint
-                path = os.path.join(self.output_dir, 'checkpoints', f'model_{self.total_steps}.pt')
-                self.save(path, save_buffer=True)
+                path = os.path.join(self.output_dir, 'checkpoints', 'model_{}.pt'.format(self.total_steps))
+                self.save(path)
+            if self.num_checkpoints > 0:
+                interval_id = np.argmin(np.abs(np.array(step_interval) - self.total_steps))
+                if interval_save[interval_id] is False:
+                    # Intermediate checkpoint.
+                    path = os.path.join(self.output_dir, 'checkpoints', f'model_{self.total_steps}.pt')
+                    self.save(path, save_buffer=False)
+                    interval_save[interval_id] = True
 
             # eval
             if self.eval_interval and self.total_steps % self.eval_interval == 0:
@@ -285,10 +293,13 @@ class SAC(BaseController):
             if 'TimeLimit.truncated' in inff and inff['TimeLimit.truncated']:
                 terminal_idx.append(idx)
                 terminal_obs.append(inf['terminal_observation'])
+            elif inff['out_of_bounds']:
+                terminal_idx.append(idx)
+                terminal_obs.append(inf['terminal_observation'])
         if len(terminal_obs) > 0:
             terminal_obs = _unflatten_obs(self.obs_normalizer(_flatten_obs(terminal_obs)))
 
-        # collect the true next states and masks (accounting for time truncation)
+        # collect the true next states and masks (accounting for time truncation and out of bounds)
         true_next_obs = _unflatten_obs(next_obs)
         true_mask = mask.copy()
         for idx, term_ob in zip(terminal_idx, terminal_obs):
@@ -337,9 +348,7 @@ class SAC(BaseController):
                 'progress': step / self.max_env_steps,
             },
             step,
-            prefix='time',
-            write=False,
-            write_tb=False)
+            prefix='time')
 
         # learning stats
         if 'policy_loss' in results:

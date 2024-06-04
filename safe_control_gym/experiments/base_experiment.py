@@ -36,6 +36,7 @@ class BaseExperiment:
         self.metric_extractor = MetricExtractor()
         self.verbose = verbose
         self.env = env
+        self.MAX_STEPS = int(self.env.CTRL_FREQ * self.env.EPISODE_LEN_SEC)
         if not is_wrapped(self.env, RecordDataWrapper):
             self.env = RecordDataWrapper(self.env)
         self.ctrl = ctrl
@@ -47,7 +48,7 @@ class BaseExperiment:
 
         self.reset()
 
-    def run_evaluation(self, training=False, n_episodes=None, n_steps=None, log_freq=None, verbose=True, **kwargs):
+    def run_evaluation(self, training=False, n_episodes=None, n_steps=None, done_on_max_steps=None, log_freq=None, verbose=True, **kwargs):
         '''Evaluate a trained controller.
 
         Args:
@@ -63,7 +64,7 @@ class BaseExperiment:
 
         if not training:
             self.reset()
-        trajs_data = self._execute_evaluations(log_freq=log_freq, n_episodes=n_episodes, n_steps=n_steps, **kwargs)
+        trajs_data = self._execute_evaluations(log_freq=log_freq, n_episodes=n_episodes, n_steps=n_steps, done_on_max_steps=done_on_max_steps, **kwargs)
         metrics = self.compute_metrics(trajs_data)
 
         # terminal printouts
@@ -77,7 +78,7 @@ class BaseExperiment:
             print('Evaluation done.')
         return dict(trajs_data), metrics
 
-    def _execute_evaluations(self, n_episodes=None, n_steps=None, log_freq=None, seeds=None):
+    def _execute_evaluations(self, n_episodes=None, n_steps=None, done_on_max_steps=None, log_freq=None, seeds=None):
         '''Runs the experiments and collects all the required data.
 
         Args:
@@ -110,23 +111,40 @@ class BaseExperiment:
 
         if n_episodes is not None:
             while trajs < n_episodes:
+                # if the 'done' flag is not set, repeat stepping
                 action = self._select_action(obs=obs, info=info)
+                # try:
+                #     action = self._select_action(obs=obs, info=info)
+                # except RuntimeError:
+                #     print('RuntimeError in selecting action, using last avaible action')
+                #     if 'action' in locals():
+                #         action = action  # use the previous action
+                #     else:
+                #         action = np.zeros(self.env.action_space.shape)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
+                    steps += 1
                     obs, _, done, info = self.env.step(action)
+                    if done_on_max_steps:
+                        done = done and steps >= self.MAX_STEPS
                     if done:
                         trajs += 1
+                        steps = 0
                         if trajs < n_episodes and seeds is not None:
                             seed = seeds[trajs]
+                        self.env.save_data()
                         obs, info = self._evaluation_reset(ctrl_data=ctrl_data, sf_data=sf_data)
                         break
+                    # elif 
+                        # otherwise, keep stepping
+
         elif n_steps is not None:
             while steps < n_steps:
                 action = self._select_action(obs=obs, info=info)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
-                    obs, _, done, info = self.env.step(action)
                     steps += 1
+                    obs, _, done, info = self.env.step(action)
                     if steps >= n_steps:
                         self.env.save_data()
                         for data_key, data_val in self.ctrl.results_dict.items():
@@ -135,7 +153,11 @@ class BaseExperiment:
                             for data_key, data_val in self.safety_filter.results_dict.items():
                                 sf_data[data_key].append(np.array(deepcopy(data_val)))
                         break
+                    if done_on_max_steps:
+                        done = done and steps >= self.MAX_STEPS
                     if done:
+                        steps = 0
+                        self.env.save_data()
                         obs, info = self._evaluation_reset(ctrl_data=ctrl_data, sf_data=sf_data)
                         break
 
@@ -356,9 +378,6 @@ class RecordDataWrapper(gym.Wrapper):
         for key, val in step_data.items():
             self.episode_data[key].append(val)
 
-        if done:
-            self.save_data()
-
         return obs, reward, done, info
 
 
@@ -393,11 +412,15 @@ class MetricExtractor:
             'average_length': np.asarray(self.get_episode_lengths()).mean(),
             'length': self.get_episode_lengths() if len(self.get_episode_lengths()) > 1 else self.get_episode_lengths()[0],
             'average_return': np.asarray(self.get_episode_returns()).mean(),
+            'average_returns': np.asarray(self.get_episode_returns()),
+            'exponentiated_avg_return': np.asarray(self.get_episode_returns(exponentiate=True)).mean(),
+            'exponentiated_avg_returns': np.asarray(self.get_episode_returns(exponentiate=True)),
             'average_rmse': np.asarray(self.get_episode_rmse()).mean(),
             'rmse': np.asarray(self.get_episode_rmse()) if len(self.get_episode_rmse()) > 1 else self.get_episode_rmse()[0],
             'rmse_std': np.asarray(self.get_episode_rmse()).std(),
             'worst_case_rmse_at_0.5': compute_cvar(np.asarray(self.get_episode_rmse()), 0.5, lower_range=False),
             'failure_rate': np.asarray(self.get_episode_constraint_violations()).mean(),
+            'failure_rates': np.asarray(self.get_episode_constraint_violations()),
             'average_constraint_violation': np.asarray(self.get_episode_constraint_violation_steps()).mean(),
             'constraint_violation_std': np.asarray(self.get_episode_constraint_violation_steps()).std(),
             'constraint_violation': np.asarray(self.get_episode_constraint_violation_steps()) if len(self.get_episode_constraint_violation_steps()) > 1 else self.get_episode_constraint_violation_steps()[0],
@@ -405,7 +428,7 @@ class MetricExtractor:
         }
         return metrics
 
-    def get_episode_data(self, key, postprocess_func=lambda x: x):
+    def get_episode_data(self, key, postprocess_func=lambda x: x, exponentiate=False):
         '''Extract data field from recorded trajectory data, optionally postprocess each episode data (e.g. get sum).
 
         Args:
@@ -417,7 +440,10 @@ class MetricExtractor:
         '''
 
         if key in self.data:
-            episode_data = [postprocess_func(ep_val) for ep_val in self.data[key]]
+            if exponentiate:
+                episode_data = [postprocess_func(np.exp(2 * ep_val)) for ep_val in self.data[key]]
+            else:
+                episode_data = [postprocess_func(ep_val) for ep_val in self.data[key]]
         elif key in self.data['info'][0][-1]:
             # if the data field is contained in step info dict
             episode_data = []
@@ -428,7 +454,10 @@ class MetricExtractor:
                         ep_info_data.append(info.get(key))
                     elif self.verbose:
                         print(f'[Warn] MetricExtractor.get_episode_data: key {key} not in info dict.')
-                episode_data.append(postprocess_func(ep_info_data))
+                if exponentiate:
+                    episode_data.append(postprocess_func(np.exp(2 * ep_info_data)))
+                else:
+                    episode_data.append(postprocess_func(ep_info_data))
         else:
             raise KeyError(f'Given data key \'{key}\' does not exist in recorded trajectory data.')
         return episode_data
@@ -441,7 +470,15 @@ class MetricExtractor:
         '''
         return self.get_episode_data('length', postprocess_func=sum)
 
-    def get_episode_returns(self):
+    def get_episode_returns(self, exponentiate=False):
+        '''Total reward/return of episodes.
+
+        Returns:
+            episode_rewards (list): The total reward of each episode.
+        '''
+        return self.get_episode_data('reward', postprocess_func=sum, exponentiate=exponentiate)
+    
+    def get_episode_exponentiated_returns(self):
         '''Total reward/return of episodes.
 
         Returns:

@@ -9,7 +9,10 @@ examples/pid/*data/
 results/
 z_docstring.py
 TODOs.md
-
+# 
+hpo_study*/
+hp_study*/
+comparisons/
 
 
 # macOS users
@@ -147,3 +150,16 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+safe_control_gym/experiments/ROA_brute/ROA_data/results_*
+safe_control_gym/experiments/arxiv/cartpole_performance/data
+safe_control_gym/experiments/arxiv/cartpole_performance/temp-data
+safe_control_gym/experiments/arxiv/cartpole_constraint/data
+safe_control_gym/experiments/arxiv/cartpole_constraint/temp-data
+safe_control_gym/envs/test_shower
+safe_control_gym/experiments/dev_sqp_gp
+c_generated_code
+acados_ocp_nlp.json
+safe_control_gym/experiments/arxiv/quadrotor_performance/config_overrides/gpmpc_acados_quadrotor_data_eff.yaml
+safe_control_gym/experiments/arxiv/cartpole_performance/config_overrides/gp_mpc_cartpole_stabilization.yaml

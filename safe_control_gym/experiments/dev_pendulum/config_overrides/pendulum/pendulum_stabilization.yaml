@@ -1,0 +1,55 @@
+task_config:
+  seed: 42
+  info_in_reset: True
+  ctrl_freq: 50 #15
+  pyb_freq: 1200
+  physics: pyb
+  # gui: False
+
+  init_state:
+    # init_theta: 6.58
+    # init_theta: 5.98
+    # init_theta: 0.3
+    init_theta: 0.3
+    init_theta_dot: 0.0
+  # init_state_randomization_info:
+  #   init_theta:
+  #     distrib: 'uniform'
+  #     # low:  1.57 #-0.2
+  #     # high: 1.57
+  #     # low:  -4.71 #-0.2
+  #     # high: -4.71
+  #     low:  3.14
+  #     high: 3.14
+  #   init_theta_dot:
+  #     distrib: 'uniform'
+  #     low:  0.0 #-0.1
+  #     high: 0.0 #0.1
+  
+  inertial_prop: 
+    # to finisha a swing up
+    # pole_length: 0.5
+    # pole_mass: 0.1
+    # cart_mass: 1.0
+    pole_length: 0.5
+    pole_mass: 0.15
+
+  task: stabilization
+  task_info:
+    stabilization_goal: [0.0, 0.0]
+    stabilization_goal_tolerance: 0.1
+
+  episode_len_sec: 6
+  cost: quadratic
+  # done_on_out_of_bound: True
+  done_on_out_of_bound: False
+
+  constraints:
+  - constraint_form: default_constraint
+    constrained_variable: input
+    lower_bounds: -0.5
+    upper_bounds: 0.5
+  - constraint_form: default_constraint
+    constrained_variable: state
+  
+  obs_wrap_angle: True
