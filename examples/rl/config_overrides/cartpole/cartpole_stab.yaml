@@ -62,8 +62,8 @@ task_config:
   constraints:
   - constraint_form: default_constraint
     constrained_variable: state
-    upper_bounds: [10, 10, 5, 10]
-    lower_bounds: [-10, -10, -5, -10]
+    upper_bounds: [10, 10, 0.2, 0.2]
+    lower_bounds: [-10, -10, -0.2, -0.2]
   - constraint_form: default_constraint
     constrained_variable: input
     upper_bounds: [10]

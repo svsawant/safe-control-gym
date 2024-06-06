@@ -1,4 +1,4 @@
-'''Configuration utilities.'''
+"""Configuration utilities."""
 
 import argparse
 import os
@@ -12,7 +12,7 @@ from safe_control_gym.utils.utils import merge_dict, read_file
 
 
 class ConfigFactory:
-    '''Manager class that's in charge of experiment configs.'''
+    """Manager class that's in charge of experiment configs."""
 
     def __init__(self):
         self.parser = argparse.ArgumentParser(description='Benchmark')
@@ -26,11 +26,11 @@ class ConfigFactory:
         )
 
     def add_argument(self, *args, **kwargs):
-        '''Extends to new arguments.'''
+        """Extends to new arguments."""
         self.parser.add_argument(*args, **kwargs)
 
     def add_arguments(self):
-        '''Registers base arguments (for experiment bookkeeping).'''
+        """Registers base arguments (for experiment bookkeeping)."""
         self.add_argument('--tag', type=str, help='id of the experiment')
         self.add_argument('--seed', type=int, help='random seed, default is no seed/None')
         # self.add_argument('--device', type=str, help='cpu or cuda(gpu)')
@@ -51,7 +51,7 @@ class ConfigFactory:
                           help='override key-value pairs')
 
     def merge(self, config_override=None):
-        '''Creates experiment config object from command line and config files.'''
+        """Creates experiment config object from command line and config files."""
         config_dict = self.base_dict
         args, _ = self.parser.parse_known_args()
         if config_override is not None:

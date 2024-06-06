@@ -163,3 +163,5 @@ c_generated_code
 acados_ocp_nlp.json
 safe_control_gym/experiments/arxiv/quadrotor_performance/config_overrides/gpmpc_acados_quadrotor_data_eff.yaml
 safe_control_gym/experiments/arxiv/cartpole_performance/config_overrides/gp_mpc_cartpole_stabilization.yaml
+
+.idea/

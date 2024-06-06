@@ -1,8 +1,8 @@
-'''1D, 2D, and 3D quadrotor environment using PyBullet physics.
+"""1D, 2D, and 3D quadrotor environment using PyBullet physics.
 
 Based on UTIAS Dynamic Systems Lab's gym-pybullet-drones:
     * https://github.com/utiasDSL/gym-pybullet-drones
-'''
+"""
 
 import math
 from copy import deepcopy
@@ -21,11 +21,11 @@ from safe_control_gym.math_and_models.transformations import csRotXYZ, transform
 
 
 class Quadrotor(BaseAviary):
-    '''1D, 2D, and 3D quadrotor environment task.
+    """1D, 2D, and 3D quadrotor environment task.
 
     Including symbolic model, constraints, randomization, adversarial disturbances,
     multiple cost functions, stabilization and trajectory tracking references.
-    '''
+    """
 
     NAME = 'quadrotor'
     AVAILABLE_CONSTRAINTS = deepcopy(GENERAL_CONSTRAINTS)
@@ -159,7 +159,7 @@ class Quadrotor(BaseAviary):
                  info_mse_metric_state_weight=None,
                  **kwargs
                  ):
-        '''Initialize a quadrotor environment.
+        """Initialize a quadrotor environment.
 
         Args:
             init_state (ndarray, optional): The initial state of the environment, (z, z_dot) or (x, x_dot, z, z_dot theta, theta_dot).
@@ -172,7 +172,7 @@ class Quadrotor(BaseAviary):
             rew_exponential (bool): If to exponentiate negative quadratic cost to positive, bounded [0,1] reward.
             done_on_out_of_bound (bool): If to termiante when state is out of bound.
             info_mse_metric_state_weight (list/ndarray): Quadratic weights for state in mse calculation for info dict.
-        '''
+        """
 
         self.QUAD_TYPE = QuadType(quad_type)
         self.norm_act_scale = norm_act_scale
@@ -851,14 +851,14 @@ class Quadrotor(BaseAviary):
         return rpm
 
     def normalize_action(self, action):
-        '''Converts a physical action into an normalized action if necessary.
+        """Converts a physical action into a normalized action if necessary.
 
         Args:
             action (ndarray): The action to be converted.
 
         Returns:
             normalized_action (ndarray): The action in the correct action space.
-        '''
+        """
         if self.NORMALIZED_RL_ACTION_SPACE:
             if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
                 action = np.array([(action[0] / self.hover_thrust - 1) / self.norm_act_scale, action[1]])
@@ -868,14 +868,14 @@ class Quadrotor(BaseAviary):
         return action
 
     def denormalize_action(self, action):
-        '''Converts a normalized action into a physical action if necessary.
+        """Converts a normalized action into a physical action if necessary.
 
         Args:
             action (ndarray): The action to be converted.
 
         Returns:
             physical_action (ndarray): The physical action.
-        '''
+        """
 
         if self.NORMALIZED_RL_ACTION_SPACE:
             if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
