@@ -43,7 +43,7 @@ task_config:
     cart_mass: 1
     pole_mass: 0.1
 
-  episode_len_sec: 5
+  episode_len_sec: 2
   cost: rl_reward
   obs_goal_horizon: 0
 

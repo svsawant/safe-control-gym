@@ -1,16 +1,8 @@
-'''Soft Actor Critic (SAC)
-
-Adapted from https://github.com/openai/spinningup/blob/master/spinup/algos/pytorch/sac/sac.py
+"""Twin-Delayed DDPG (TD3)
 
 References papers & code:
-    * [Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor](https://arxiv.org/pdf/1801.01290.pdf)
-    * [Soft Actor-Critic Algorithms and Applications](https://arxiv.org/pdf/1812.05905.pdf)
-    * [Soft Actor-Critic for Discrete Action Settings](https://arxiv.org/pdf/1910.07207.pdf)
-    * [openai spinning up - sac](https://github.com/openai/spinningup/tree/master/spinup/algos/pytorch/sac)
-    * [rlkit - sac](https://github.com/vitchyr/rlkit/tree/7daf34b0ef2277d545a0ee792399a2ae6c3fb6ad/rlkit/torch/sac)
-    * [ray rllib - sac](https://github.com/ray-project/ray/tree/master/rllib/agents/sac)
-    * [curl - curl_sac](https://github.com/MishaLaskin/curl/blob/master/curl_sac.py)
-'''
+    * [Addressing Function Approximation Error in Actor-Critic Methods](https://arxiv.org/abs/1802.09477)
+"""
 
 import os
 import time
@@ -32,7 +24,7 @@ from safe_control_gym.utils.utils import get_random_state, is_wrapped, set_rando
 
 
 class TD3(BaseController):
-    '''Twin-delayed DDPG'''
+    """Twin-delayed DDPG"""
 
     def __init__(self,
                  env_func,
@@ -87,7 +79,7 @@ class TD3(BaseController):
         self.logger = ExperimentLogger(output_dir, log_file_out=log_file_out, use_tensorboard=use_tensorboard)
 
     def reset(self):
-        '''Prepares for training or testing.'''
+        """Prepares for training or testing."""
         if self.training:
             # set up stats tracking
             self.env.add_tracker('constraint_violation', 0)
@@ -106,14 +98,14 @@ class TD3(BaseController):
             self.env.add_tracker('mse', 0, mode='queue')
 
     def close(self):
-        '''Shuts down and cleans up lingering resources.'''
+        """Shuts down and cleans up lingering resources."""
         self.env.close()
         if self.training:
             self.eval_env.close()
         self.logger.close()
 
     def save(self, path, save_buffer=False):
-        '''Saves model params and experiment state to checkpoint path.'''
+        """Saves model params and experiment state to checkpoint path."""
         path_dir = os.path.dirname(path)
         os.makedirs(path_dir, exist_ok=True)
 
@@ -137,7 +129,7 @@ class TD3(BaseController):
         torch.save(state_dict, path)
 
     def load(self, path):
-        '''Restores model and experiment given checkpoint path.'''
+        """Restores model and experiment given checkpoint path."""
         state = torch.load(path)
 
         # restore params
@@ -156,7 +148,7 @@ class TD3(BaseController):
             self.logger.load(self.total_steps)
 
     def learn(self, env=None, **kwargs):
-        '''Performs learning (pre-training, training, fine-tuning, etc.).'''
+        """Performs learning (pre-training, training, fine-tuning, etc.)."""
         while self.total_steps < self.max_env_steps:
             results = self.train_step()
 
@@ -190,7 +182,7 @@ class TD3(BaseController):
                 self.log_step(results)
 
     def select_action(self, obs, info=None):
-        '''Determine the action to take at the current timestep.
+        """Determine the action to take at the current timestep.
 
         Args:
             obs (ndarray): The observation at this timestep.
@@ -198,16 +190,16 @@ class TD3(BaseController):
 
         Returns:
             action (ndarray): The action chosen by the controller.
-        '''
+        """
 
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
-            action = self.agent.ac.act(obs, deterministic=True)
+            action = self.agent.ac.act(obs)
 
         return action
 
     def run(self, env=None, render=False, n_episodes=10, verbose=False, **kwargs):
-        '''Runs evaluation with current policy.'''
+        """Runs evaluation with current policy."""
         self.agent.eval()
         self.obs_normalizer.set_read_only()
         if env is None:
@@ -255,7 +247,7 @@ class TD3(BaseController):
         return eval_results
 
     def train_step(self, **kwargs):
-        '''Performs a training step.'''
+        """Performs a training step."""
         self.agent.train()
         self.obs_normalizer.unset_read_only()
         obs = self.obs
@@ -265,7 +257,7 @@ class TD3(BaseController):
             action = np.stack([self.env.action_space.sample() for _ in range(self.rollout_batch_size)])
         else:
             with torch.no_grad():
-                action = self.agent.ac.act(torch.FloatTensor(obs).to(self.device), deterministic=False)
+                action = self.agent.ac.act(torch.FloatTensor(obs).to(self.device))
         next_obs, rew, done, info = self.env.step(action)
 
         next_obs = self.obs_normalizer(next_obs)
@@ -323,7 +315,7 @@ class TD3(BaseController):
         return results
 
     def log_step(self, results):
-        '''Does logging after a training step.'''
+        """Does logging after a training step."""
         step = results['step']
         # runner stats
         self.logger.add_scalars(
@@ -342,7 +334,7 @@ class TD3(BaseController):
             self.logger.add_scalars(
                 {
                     k: results[k]
-                    for k in ['policy_loss', 'critic_loss', 'entropy_loss']
+                    for k in ['policy_loss', 'critic_loss']
                 },
                 step,
                 prefix='loss')
@@ -374,6 +366,7 @@ class TD3(BaseController):
                 {
                     'ep_length': eval_ep_lengths.mean(),
                     'ep_return': eval_ep_returns.mean(),
+                    'ep_return_std': eval_ep_returns.std(),
                     'ep_reward': (eval_ep_returns / eval_ep_lengths).mean(),
                     'constraint_violation': eval_constraint_violation.mean(),
                     'mse': eval_mse.mean()
