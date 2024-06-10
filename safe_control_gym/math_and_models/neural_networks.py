@@ -1,4 +1,4 @@
-'''Neural networks.'''
+"""Neural networks."""
 
 import torch
 import torch.nn as nn
@@ -16,7 +16,7 @@ def init_(module):
 
 
 class MLP(nn.Module):
-    '''MLP network (can be used as value or policy).'''
+    """MLP network (can be used as value or policy)."""
 
     def __init__(self,
                  input_dim,
@@ -27,7 +27,7 @@ class MLP(nn.Module):
                  init_weights=False,
                  **kwargs
                  ):
-        '''Multi-layer perception/fully-connected network.
+        """Multi-layer perception/fully-connected network.
 
         Args:
             input_dim (int): input dimension.
@@ -35,7 +35,7 @@ class MLP(nn.Module):
             hidden_dims (list): hidden layer dimensions.
             act (str): hidden layer activation.
             output_act (str): output layer activation.
-        '''
+        """
         super(MLP, self).__init__()
         dims = [input_dim] + hidden_dims + [output_dim]
         init_func = init_ if init_weights else lambda x: x
@@ -55,7 +55,7 @@ class MLP(nn.Module):
 
 
 class CNN(nn.Module):
-    '''CNN network for encoding images.'''
+    """CNN network for encoding images."""
 
     def __init__(self,
                  input_dim,
@@ -85,7 +85,7 @@ class CNN(nn.Module):
 
 
 class RNN(nn.Module):
-    '''RNN network (can be used as value or policy).'''
+    """RNN network (can be used as value or policy)."""
 
     def __init__(self,
                  input_dim,

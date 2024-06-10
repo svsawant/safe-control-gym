@@ -50,8 +50,8 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
                 output_dir=curr_path + '/temp')
 
     # Load state_dict from trained.
-    # ctrl.load(f'{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt')
-    ctrl.load(f'{curr_path}/models/model_best_{config.algo}.pt')
+    ctrl.load(f'{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt')
+    # ctrl.load(f'{curr_path}/models/{config.algo}/model_best.pt')
 
     # Remove temporary files and directories
     shutil.rmtree(f'{curr_path}/temp', ignore_errors=True)
@@ -122,7 +122,7 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
 
         plt.tight_layout()
         plt.show()
-        plt.savefig(f"{curr_path}/perf.png")
+        # plt.savefig(f"{curr_path}/perf.png")
 
     return env.X_GOAL, results, metrics
 

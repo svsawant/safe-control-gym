@@ -1,7 +1,7 @@
 task_config:
   seed: 42
   info_in_reset: True
-  ctrl_freq: 15
+  ctrl_freq: 25
   pyb_freq: 750
   physics: pyb
   normalized_rl_action_space: True
@@ -45,7 +45,7 @@ task_config:
 
   episode_len_sec: 2
   cost: rl_reward
-  obs_goal_horizon: 0
+  obs_goal_horizon: 1
 
   # RL Reward
   rew_state_weight: [1, 0.1, 1, 0.1]

@@ -349,6 +349,7 @@ class PPO(BaseController):
                 {
                     'ep_length': eval_ep_lengths.mean(),
                     'ep_return': eval_ep_returns.mean(),
+                    'ep_return_std': eval_ep_returns.std(),
                     'ep_reward': (eval_ep_returns / eval_ep_lengths).mean(),
                     'constraint_violation': eval_constraint_violation.mean(),
                     'mse': eval_mse.mean()

@@ -1,16 +1,16 @@
 #!/bin/bash
 
-SYS='cartpole'
+#SYS='cartpole'
 # SYS='quadrotor_2D'
-# SYS='quadrotor_2D_attitude'
+SYS='quadrotor_2D_attitude'
 # SYS='quadrotor_3D'
 
 # TASK='stab'
 TASK='track'
 
-# ALGO='ppo'
+ALGO='ppo'
 # ALGO='sac'
-ALGO='td3'
+#ALGO='td3'
 # ALGO='ddpg'
 
 # ALGO='safe_explorer_ppo'
@@ -53,7 +53,7 @@ do
         --overrides \
             ./config_overrides/${SYS}/${ALGO}_${SYS}.yaml \
             ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
-        --output_dir ./${SYS}_${ALGO}_data/${SEED}/ \
+        --output_dir ./Results/${SYS}_${ALGO}_data/${SEED}/ \
         --seed ${SEED} \
         --kv_overrides \
             task_config.randomized_init=True

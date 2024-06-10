@@ -1,4 +1,4 @@
-'''Cartpole environment using PyBullet physics.
+"""Cartpole environment using PyBullet physics.
 
 Classic cart-pole system implemented by Rich Sutton et al.
     * http://incompleteideas.net/sutton/book/code/pole.c
@@ -6,7 +6,7 @@ Classic cart-pole system implemented by Rich Sutton et al.
 Also see:
     * github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
     * github.com/bulletphysics/bullet3/blob/master/examples/pybullet/gym/pybullet_envs/bullet/cartpole_bullet.py
-'''
+"""
 
 import math
 import os

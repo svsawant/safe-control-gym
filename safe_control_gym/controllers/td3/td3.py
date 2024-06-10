@@ -347,6 +347,7 @@ class TD3(BaseController):
             {
                 'ep_length': ep_lengths.mean(),
                 'ep_return': ep_returns.mean(),
+                'ep_return_std': ep_returns.std(),
                 'ep_reward': (ep_returns / ep_lengths).mean(),
                 'ep_constraint_violation': ep_constraint_violation.mean()
             },

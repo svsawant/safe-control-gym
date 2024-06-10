@@ -13,6 +13,7 @@ task_config:
     init_z: 1.15
     init_z_dot: 0
     init_theta: 0
+    init_theta_dot: 0
   randomized_init: True
   randomized_inertial_prop: False
 
@@ -37,6 +38,10 @@ task_config:
       distrib: 'uniform'
       low: -0.02
       high: 0.02
+    init_theta_dot:
+      distrib: 'uniform'
+      low: -0.02
+      high: 0.02
 
   task: traj_tracking
   task_info:
@@ -55,32 +60,18 @@ task_config:
   obs_goal_horizon: 1
 
   # RL Reward
-  rew_state_weight: [10.0, 1.0, 10.0, 1.0, 1.0]
-  rew_act_weight: 2.0
+  rew_state_weight: [1.0, 0.01, 1.0, 0.01, 0.01, 0.01]
+  rew_act_weight: 1.0
   rew_exponential: True
 
   constraints:
     - constraint_form: default_constraint
       constrained_variable: state
-      upper_bounds:
-        - 2
-        - 1
-        - 2
-        - 1
-        - 0.2
-      lower_bounds:
-        - -2
-        - -1
-        - 0
-        - -1
-        - -0.2
+      upper_bounds: [2, 1, 2, 1, 0.2, 1.5]
+      lower_bounds: [-2, -1, 0, -1, -0.2, -1.5]
     - constraint_form: default_constraint
       constrained_variable: input
-      upper_bounds:
-        - 0.58
-        - 0.8
-      lower_bounds:
-        - 0.06
-        - -0.8
+      upper_bounds: [0.58, 0.8]
+      lower_bounds: [0.06, -0.8]
   done_on_out_of_bound: False
   done_on_violation: False
