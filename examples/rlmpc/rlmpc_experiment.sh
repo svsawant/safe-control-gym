@@ -19,4 +19,4 @@ python3 ./rlmpc_experiment.py \
     --task ${SYS_NAME} \
     --algo ${ALGO} \
     --overrides \
-        ./config_overrides/${SYS}/${SYS}_${TASK}.yaml 
+        ./config_overrides/${SYS}/${SYS}_${TASK}.yaml

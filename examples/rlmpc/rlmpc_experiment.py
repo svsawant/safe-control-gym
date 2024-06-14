@@ -46,7 +46,6 @@ def run(plot=True, training=False, n_episodes=1, n_steps=None, curr_path='.'):
     results, uncert_metrics = experiment.run_evaluation(n_episodes=n_episodes, n_steps=n_steps)
     elapsed_time_uncert = results['timestamp'][0][-1] - results['timestamp'][0][0]
 
-    
 
 if __name__ == '__main__':
     run()

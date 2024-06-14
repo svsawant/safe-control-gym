@@ -50,7 +50,7 @@ task_config:
   # RL Reward
   rew_state_weight: [1, 0.1, 1, 0.1]
   rew_act_weight: 0.1
-  rew_exponential: True
+  rew_exponential: False
 
   # Disturbances
   disturbances:
@@ -62,8 +62,8 @@ task_config:
   constraints:
   - constraint_form: default_constraint
     constrained_variable: state
-    upper_bounds: [10, 10, 0.2, 0.2]
-    lower_bounds: [-10, -10, -0.2, -0.2]
+    upper_bounds: [5.0, 10.0, 0.5, 2.0]
+    lower_bounds: [-5.0, -10.0, -0.5, -2.0]
   - constraint_form: default_constraint
     constrained_variable: input
     upper_bounds: [10]

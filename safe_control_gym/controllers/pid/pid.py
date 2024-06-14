@@ -147,8 +147,8 @@ class PID(BaseController):
         action = self.KF * action**2
         if self.env.QUAD_TYPE == 2:
             action = np.array([action[0] + action[3], action[1] + action[2]])
-        elif self.env.QUAD_TYPE == 4: # 2D quadrotor with attitude control
-            action = np.array([self.env.attitude_control.pwm2thrust(thrust/3)*4, computed_target_rpy[1]])
+        elif self.env.QUAD_TYPE == 4:  # 2D quadrotor with attitude control
+            action = np.array([self.env.attitude_control.pwm2thrust(thrust / 3) * 4, computed_target_rpy[1]])
 
         return action
 

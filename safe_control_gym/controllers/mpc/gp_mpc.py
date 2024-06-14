@@ -16,7 +16,8 @@ Implementation details:
        and the inducing points are the previous MPC solution.
     3. Each dimension of the learned error dynamics is an independent Zero Mean SE Kernel GP.
 '''
-import time, os
+import os
+import time
 from copy import deepcopy
 from functools import partial
 
@@ -30,10 +31,10 @@ from sklearn.metrics import pairwise_distances_argmin_min
 from sklearn.model_selection import train_test_split
 from skopt.sampler import Lhs
 
+from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
 from safe_control_gym.controllers.mpc.gp_utils import (GaussianProcessCollection, ZeroMeanIndependentGPModel,
                                                        covMatern52ard, covSEard, kmeans_centriods)
 from safe_control_gym.controllers.mpc.linear_mpc import MPC, LinearMPC
-from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
 from safe_control_gym.envs.benchmark_env import Task
 
 
@@ -311,7 +312,7 @@ class GPMPC(MPC):
         if self.x_prev is not None and self.u_prev is not None:
             # cov_x = np.zeros((nx, nx))
             cov_x = np.diag([self.initial_rollout_std**2] * nx)
-            z_batch = np.hstack((self.x_prev[:, :-1].T, self.u_prev.T)) # (T, input_dim)
+            z_batch = np.hstack((self.x_prev[:, :-1].T, self.u_prev.T))  # (T, input_dim)
             # Compute the covariance of the dynamics at each time step.
             time_before = time.time()
             _, cov_d_tensor_batch = self.gaussian_process.predict(z_batch, return_pred=False)
@@ -331,7 +332,7 @@ class GPMPC(MPC):
                     # TODO: Addition of noise here! And do we still need initial_rollout_std
                     # _, cov_d_tensor = self.gaussian_process.predict(z[None, :], return_pred=False)
                     # cov_d = cov_d_tensor.detach().numpy()
-                    if False: # if self.sparse_gp:
+                    if False:  # if self.sparse_gp:
                         dim_gp_outputs = len(self.target_mask)
                         cov_d = np.zeros((dim_gp_outputs, dim_gp_outputs))
                         K_z_z = self.gaussian_process.kernel(torch.from_numpy(z[None, self.input_mask]).double()).detach().numpy()
@@ -339,9 +340,9 @@ class GPMPC(MPC):
                                                                 torch.tensor(z_ind).double()).detach().numpy()
                         for i in range(dim_gp_outputs):
                             Q_z_z = K_z_zind[i, :, :] @ K_zind_zind_inv[i, :, :] @ K_z_zind[i, :, :].T
-                            cov_d[i, i] = K_z_z[i, 0] - Q_z_z  +\
+                            cov_d[i, i] = K_z_z[i, 0] - Q_z_z +\
                                 self.K_z_zind_func(z1=z, z2=z_ind)['K'][i, :].toarray() @ Sigma_inv[i] @ self.K_z_zind_func(z1=z, z2=z_ind)['K'][i, :].T.toarray()
-                    else: 
+                    else:
                         cov_d = cov_d_batch[i, :, :]
                     _, _, cov_noise, _ = self.gaussian_process.get_hyperparameters()
                     cov_d = cov_d + np.diag(cov_noise.detach().numpy())
@@ -453,7 +454,7 @@ class GPMPC(MPC):
         Args:
             n_ind_points (int): Number of inducing points.
         '''
-        print(f'Setting up GP MPC with {solver} solver.') 
+        print(f'Setting up GP MPC with {solver} solver.')
         nx, nu = self.model.nx, self.model.nu
         T = self.T
         # Define optimizer and variables.
@@ -574,7 +575,7 @@ class GPMPC(MPC):
         #         'print_time': 1,
         #         'expand': True,
         #         'verbose': True}
-        opts = {'expand': True,}
+        opts = {'expand': True, }
         # opti.solver('ipopt', opts)
         opti.solver(solver, opts)
         self.opti_dict = {
@@ -909,14 +910,14 @@ class GPMPC(MPC):
         '''Loads a pretrained batch GP model.        Args:
             model_path (str): Path to the pretrained model.
         '''
-        
+
         if not self.parallel:
             raise ValueError('load function only works with parallel GP models.')
         data = np.load(f'{model_path}/data.npz')
         gp_model_path = f'{model_path}/best_model.pth'
         self.train_gp(input_data=data['data_inputs'], target_data=data['data_targets'], gp_model=gp_model_path)
         print('================== GP models loaded. =================')
-        
+
     def learn(self, env=None):
         '''Performs multiple epochs learning.
         '''
@@ -984,12 +985,12 @@ class GPMPC(MPC):
                 train_runs[epoch].update({episode: munch.munchify(run_results)})
 
             lengthscale, outputscale, noise, kern = self.gaussian_process.get_hyperparameters(as_numpy=True)
-        
-        # save training data 
+
+        # save training data
         np.savez(os.path.join(self.output_dir, 'data'),
-                data_inputs=training_results['train_inputs'],
-                data_targets=training_results['train_targets'])
-        
+                 data_inputs=training_results['train_inputs'],
+                 data_targets=training_results['train_targets'])
+
         # close environments
         for env in train_envs:
             env.close()
@@ -1151,7 +1152,7 @@ class GPMPC(MPC):
 
         opti.set_value(mean_post_factor, mean_post_factor_val)
         opti.set_value(z_ind, z_ind_val)
-         # Solve the optimization problem.
+        # Solve the optimization problem.
         try:
             sol = opti.solve()
             x_val, u_val = sol.value(x_var), sol.value(u_var)
@@ -1168,9 +1169,8 @@ class GPMPC(MPC):
         self.x_prev, self.u_prev = x_val, u_val
         x_guess = x_val
         u_guess = u_val
-        
+
         time_after = time.time()
         print('MPC _compute_initial_guess time: ', time_after - time_before)
 
         return x_guess, u_guess
-    

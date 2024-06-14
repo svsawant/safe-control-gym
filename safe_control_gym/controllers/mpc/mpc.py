@@ -82,7 +82,7 @@ class MPC(BaseController):
 
         # print(self.env.__dir__())
         # print('self.env.X_GOAL', self.env.X_GOAL)
-        # NOTE: The naming X_EQ and U_EQ can be confusing 
+        # NOTE: The naming X_EQ and U_EQ can be confusing
         self.X_EQ = self.env.X_GOAL
         self.U_EQ = self.env.U_GOAL
         self.init_solver = 'ipopt'
@@ -163,7 +163,7 @@ class MPC(BaseController):
         dfdx = dfdxdfdu['dfdx'].toarray()
         dfdu = dfdxdfdu['dfdu'].toarray()
         lqr_gain, _, _ = compute_discrete_lqr_gain_from_cont_linear_system(dfdx, dfdu, self.Q, self.R, self.dt)
-        
+
         # initialize the guess solutions
         x_guess = np.zeros((self.model.nx, self.T + 1))
         u_guess = np.zeros((self.model.nu, self.T))
@@ -175,20 +175,20 @@ class MPC(BaseController):
             x_guess[:, i + 1, None] = self.dynamics_func(x0=x_guess[:, i], p=u)['xf'].toarray()
 
         return x_guess, u_guess
-    
+
     def compute_initial_guess(self, init_state, goal_states):
         time_before = time.time()
         '''Use IPOPT to get an initial guess of the '''
         self.setup_optimizer(solver=self.init_solver)
         opti_dict = self.opti_dict
         opti = opti_dict['opti']
-        x_var = opti_dict['x_var'] # optimization variables
-        u_var = opti_dict['u_var'] # optimization variables
-        x_init = opti_dict['x_init'] # initial state
-        x_ref = opti_dict['x_ref'] # reference state/trajectory
+        x_var = opti_dict['x_var']  # optimization variables
+        u_var = opti_dict['u_var']  # optimization variables
+        x_init = opti_dict['x_init']  # initial state
+        x_ref = opti_dict['x_ref']  # reference state/trajectory
 
         # Assign the initial state.
-        opti.set_value(x_init, init_state) # initial state should have dim (nx,)
+        opti.set_value(x_init, init_state)  # initial state should have dim (nx,)
         # Assign reference trajectory within horizon.
         goal_states = self.get_references()
         opti.set_value(x_ref, goal_states)
@@ -207,7 +207,7 @@ class MPC(BaseController):
 
         # set the solver back
         self.setup_optimizer(solver=self.solver)
-        
+
         time_after = time.time()
         print('MPC _compute_initial_guess time: ', time_after - time_before)
 
@@ -295,7 +295,7 @@ class MPC(BaseController):
 
         # print(opti)
         # exit()
-        
+
         self.opti_dict = {
             'opti': opti,
             'x_var': x_var,
@@ -321,10 +321,10 @@ class MPC(BaseController):
         time_before = time.time()
         opti_dict = self.opti_dict
         opti = opti_dict['opti']
-        x_var = opti_dict['x_var'] # optimization variables
-        u_var = opti_dict['u_var'] # optimization variables
-        x_init = opti_dict['x_init'] # initial state
-        x_ref = opti_dict['x_ref'] # reference state/trajectory
+        x_var = opti_dict['x_var']  # optimization variables
+        u_var = opti_dict['u_var']  # optimization variables
+        x_init = opti_dict['x_init']  # initial state
+        x_ref = opti_dict['x_ref']  # reference state/trajectory
 
         # Assign the initial state.
         opti.set_value(x_init, obs)
@@ -335,13 +335,13 @@ class MPC(BaseController):
             self.traj_step += 1
 
         if self.warmstart and self.x_prev is None and self.u_prev is None:
-        #    x_guess, u_guess = self.compute_lqr_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
-           print(f'computing initial guess with {self.init_solver}')
-           x_guess, u_guess = self.compute_initial_guess(obs, goal_states)
-           opti.set_initial(x_var, x_guess)
-           opti.set_initial(u_var, u_guess) # Initial guess for optimization problem.
+            #    x_guess, u_guess = self.compute_lqr_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
+            print(f'computing initial guess with {self.init_solver}')
+            x_guess, u_guess = self.compute_initial_guess(obs, goal_states)
+            opti.set_initial(x_var, x_guess)
+            opti.set_initial(u_var, u_guess)  # Initial guess for optimization problem.
         elif self.warmstart and self.x_prev is not None and self.u_prev is not None:
-        # if self.warmstart and self.x_prev is not None and self.u_prev is not None:
+            # if self.warmstart and self.x_prev is not None and self.u_prev is not None:
             # shift previous solutions by 1 step
             x_guess = deepcopy(self.x_prev)
             u_guess = deepcopy(self.u_prev)
@@ -375,7 +375,7 @@ class MPC(BaseController):
                 u_val = opti.debug.value(u_var)
                 x_val = opti.debug.value(x_var)
         skip = 8
-        print('x_val: ', x_val[:,::skip])
+        print('x_val: ', x_val[:, ::skip])
         print('u_val: ', u_val[::skip])
         self.x_prev = x_val
         self.u_prev = u_val

@@ -1,4 +1,4 @@
-'''Register environments.'''
+"""Register environments."""
 
 from safe_control_gym.utils.registration import register
 

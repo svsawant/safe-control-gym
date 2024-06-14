@@ -4,15 +4,13 @@
 import os
 from functools import partial
 
-import yaml
-
 import matplotlib.pyplot as plt
 import numpy as np
+import yaml
 
 from safe_control_gym.envs.benchmark_env import Environment, Task
-
-from safe_control_gym.hyperparameters.hpo import HPO
 from safe_control_gym.experiments.base_experiment import BaseExperiment
+from safe_control_gym.hyperparameters.hpo import HPO
 from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 from safe_control_gym.utils.utils import set_device_from_config, set_dir_from_config, set_seed_from_config
@@ -123,7 +121,7 @@ def train(config):
             graph1_2 = 9
             graph3_1 = 0
             graph3_2 = 4
-        
+
         if config.task_config.quad_type != 4:
             _, ax = plt.subplots()
             ax.plot(results['obs'][0][:, graph1_1], results['obs'][0][:, graph1_2], 'r--', label='Agent Trajectory')
@@ -176,7 +174,7 @@ def train(config):
     with open(os.path.join(config.output_dir, 'metrics.pkl'), 'wb') as f:
         import pickle
         pickle.dump(metrics, f)
-    
+
     return eval_env.X_GOAL, results, metrics
 
 

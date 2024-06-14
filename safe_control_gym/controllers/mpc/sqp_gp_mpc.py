@@ -1,6 +1,5 @@
 
 
-
 import time
 from copy import deepcopy
 from functools import partial
@@ -15,16 +14,18 @@ from sklearn.model_selection import train_test_split
 from skopt.sampler import Lhs
 
 from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
+from safe_control_gym.controllers.mpc.gp_mpc import GPMPC
 from safe_control_gym.controllers.mpc.gp_utils import (GaussianProcessCollection, ZeroMeanIndependentGPModel,
                                                        covSEard, kmeans_centriods)
 from safe_control_gym.controllers.mpc.linear_mpc import MPC, LinearMPC
 from safe_control_gym.controllers.mpc.mpc import MPC
-from safe_control_gym.controllers.mpc.gp_mpc import GPMPC
 from safe_control_gym.controllers.mpc.sqp_mpc import SQPMPC
 from safe_control_gym.envs.benchmark_env import Task
 
+
 class SQPGPMPC(GPMPC):
     '''Implements a GP-MPC controller with SQP optimization.'''
+
     def __init__(
             self,
             env_func,
@@ -57,7 +58,7 @@ class SQPGPMPC(GPMPC):
             output_dir: str = 'results/temp',
             **kwargs
     ):
-        
+
         if prior_info is None or prior_info == {}:
             raise ValueError('SQPGPMPC requires prior_prop to be defined. You may use the real mass properties and then use prior_param_coeff to modify them accordingly.')
         prior_info['prior_prop'].update((prop, val * prior_param_coeff) for prop, val in prior_info['prior_prop'].items())
@@ -103,51 +104,51 @@ class SQPGPMPC(GPMPC):
         # self.prior_ctrl.reset()
         # super().__init__() # TODO: check the inheritance of the class
         super().__init__(
-            env_func = env_func,
-            seed= seed,
-            horizon = horizon,
-            q_mpc = q_mpc,
-            r_mpc = r_mpc,
-            constraint_tol = constraint_tol,
-            additional_constraints = additional_constraints,
-            soft_constraints = soft_constraints,
-            warmstart = warmstart,
-            train_iterations = train_iterations,
-            test_data_ratio = test_data_ratio,
-            overwrite_saved_data = overwrite_saved_data,
-            optimization_iterations = optimization_iterations,
-            learning_rate = learning_rate,
-            normalize_training_data = normalize_training_data,
-            use_gpu = use_gpu, 
-            gp_model_path = gp_model_path,
-            prob = prob,
-            initial_rollout_std = initial_rollout_std,
-            input_mask = input_mask,
-            target_mask = target_mask,
-            gp_approx = gp_approx,
-            sparse_gp = False,
-            n_ind_points = 50,
-            inducing_point_selection_method = 'kmeans',
-            recalc_inducing_points_at_every_step = False,
-            online_learning = online_learning,
-            prior_info = prior_info,
+            env_func=env_func,
+            seed=seed,
+            horizon=horizon,
+            q_mpc=q_mpc,
+            r_mpc=r_mpc,
+            constraint_tol=constraint_tol,
+            additional_constraints=additional_constraints,
+            soft_constraints=soft_constraints,
+            warmstart=warmstart,
+            train_iterations=train_iterations,
+            test_data_ratio=test_data_ratio,
+            overwrite_saved_data=overwrite_saved_data,
+            optimization_iterations=optimization_iterations,
+            learning_rate=learning_rate,
+            normalize_training_data=normalize_training_data,
+            use_gpu=use_gpu,
+            gp_model_path=gp_model_path,
+            prob=prob,
+            initial_rollout_std=initial_rollout_std,
+            input_mask=input_mask,
+            target_mask=target_mask,
+            gp_approx=gp_approx,
+            sparse_gp=False,
+            n_ind_points=50,
+            inducing_point_selection_method='kmeans',
+            recalc_inducing_points_at_every_step=False,
+            online_learning=online_learning,
+            prior_info=prior_info,
             # inertial_prop: list = [1.0],
-            prior_param_coeff = prior_param_coeff,
-            terminate_run_on_done = terminate_run_on_done,
-            output_dir = output_dir,
+            prior_param_coeff=prior_param_coeff,
+            terminate_run_on_done=terminate_run_on_done,
+            output_dir=output_dir,
             **kwargs)
         self.prior_ctrl = SQPMPC(
-            env_func = self.prior_env_func,
-            seed= seed,
-            horizon = horizon,
-            q_mpc = q_mpc,
-            r_mpc = r_mpc,
-            warmstart= warmstart,
-            soft_constraints= self.soft_constraints_params['prior_soft_constraints'],
-            terminate_run_on_done= terminate_run_on_done,
-            prior_info= prior_info,
-            output_dir= output_dir,
-            additional_constraints= additional_constraints)
+            env_func=self.prior_env_func,
+            seed=seed,
+            horizon=horizon,
+            q_mpc=q_mpc,
+            r_mpc=r_mpc,
+            warmstart=warmstart,
+            soft_constraints=self.soft_constraints_params['prior_soft_constraints'],
+            terminate_run_on_done=terminate_run_on_done,
+            prior_info=prior_info,
+            output_dir=output_dir,
+            additional_constraints=additional_constraints)
         # self.prior_ctrl = LinearMPC(
         #     self.prior_env_func,
         #     horizon=horizon,
@@ -172,7 +173,7 @@ class SQPGPMPC(GPMPC):
         self.data_inputs = None
         self.data_targets = None
         # self.prior_dynamics_func = self.prior_ctrl.linear_dynamics_func
-        self.prior_dynamics_func = self.prior_ctrl.dynamics_func # nonlinear prior 
+        self.prior_dynamics_func = self.prior_ctrl.dynamics_func  # nonlinear prior
         self.X_EQ = self.prior_ctrl.X_EQ
         self.U_EQ = self.prior_ctrl.U_EQ
         # GP and training parameters.
@@ -213,7 +214,7 @@ class SQPGPMPC(GPMPC):
         self.x_prev = None
         self.u_prev = None
         # exit()
-    
+
     def set_lin_gp_dynamics_func(self):
         '''Updates symbolic dynamics with actual control frequency.'''
         # Original version, used in shooting.
@@ -222,28 +223,28 @@ class SQPGPMPC(GPMPC):
         x_guess = cs.MX.sym('x_guess', self.model.nx, 1)
         u_guess = cs.MX.sym('u_guess', self.model.nu, 1)
         dfdxdfdu = self.model.df_func(x=x_guess, u=u_guess)
-        dfdx = dfdxdfdu['dfdx']#.toarray()
-        dfdu = dfdxdfdu['dfdu']#.toarray()
-        z = cs.MX.sym('z', self.model.nx + self.model.nu, 1) # query point (the linearization point)
+        dfdx = dfdxdfdu['dfdx']  # .toarray()
+        dfdu = dfdxdfdu['dfdu']  # .toarray()
+        z = cs.MX.sym('z', self.model.nx + self.model.nu, 1)  # query point (the linearization point)
         Ad = cs.DM_eye(self.model.nx) + dfdx * self.dt
         Bd = dfdu * self.dt
         A_gp = self.gaussian_process.casadi_linearized_predict(z=z)['A']
         B_gp = self.gaussian_process.casadi_linearized_predict(z=z)['B']
         assert A_gp.shape == (self.model.nx, self.model.nx)
         assert B_gp.shape == (self.model.nx, self.model.nu)
-        A = Ad + A_gp # TODO: check why Bd is used here correctly
+        A = Ad + A_gp  # TODO: check why Bd is used here correctly
         B = Bd + B_gp
         x_dot_lin = A @ delta_x + B @ delta_u
-        self.linear_gp_dynamics_func = cs.Function('linear_dynamics_func', 
-                                                [delta_x, delta_u, x_guess, u_guess, z], 
-                                                [x_dot_lin, A, B],
-                                                ['x0', 'p', 'x_guess', 'u_guess', 'z'],
-                                                ['xf', 'A', 'B'])
+        self.linear_gp_dynamics_func = cs.Function('linear_dynamics_func',
+                                                   [delta_x, delta_u, x_guess, u_guess, z],
+                                                   [x_dot_lin, A, B],
+                                                   ['x0', 'p', 'x_guess', 'u_guess', 'z'],
+                                                   ['xf', 'A', 'B'])
         self.dfdx = A
         self.dfdu = B
-    
+
     def setup_sqp_gp_optimizer(self):
-        print(f'Setting up SQP GP MPC optimizer.') 
+        print(f'Setting up SQP GP MPC optimizer.')
         before_optimizer_setup = time.time()
         nx, nu = self.model.nx, self.model.nu
         T = self.T
@@ -279,12 +280,10 @@ class SQPGPMPC(GPMPC):
         # for input_constraint in self.constraints.input_constraints:
         #     input_constraint_set.append(opti.parameter(input_constraint.num_constraints, T))
 
-
-
         # Sparse GP mean postfactor matrix. (not used here!)
         # TODO: check if this is needed
         mean_post_factor = opti.parameter(len(self.target_mask), self.train_data['train_targets'].shape[0])
-        
+
         # cost (cumulative)
         cost = 0
         cost_func = self.model.loss
@@ -309,14 +308,14 @@ class SQPGPMPC(GPMPC):
         # Constraints
         for i in range(self.T):
             # Dynamics constraints using the dynamics of the prior and the mean of the GP.
-            next_state = self.linear_gp_dynamics_func(x0=x_var[:, i], p=u_var[:, i], \
-                                                 x_guess=x_guess[:,i], u_guess=u_guess[:,i], \
-                                                 z=z[:, i])['xf']
+            next_state = self.linear_gp_dynamics_func(x0=x_var[:, i], p=u_var[:, i],
+                                                      x_guess=x_guess[:, i], u_guess=u_guess[:, i],
+                                                      z=z[:, i])['xf']
             opti.subject_to(x_var[:, i + 1] == next_state)
             # TODO: probablistic constraints tightening
             for sc_i, state_constraint in enumerate(self.state_constraints_sym):
                 opti.subject_to(state_constraint(x_var[:, i] + x_guess[:, i]) <= -self.constraint_tol)
-                
+
             for ic_i, input_constraint in enumerate(self.input_constraints_sym):
                 opti.subject_to(input_constraint(u_var[:, i] + u_guess[:, i]) <= -self.constraint_tol)
 
@@ -326,7 +325,7 @@ class SQPGPMPC(GPMPC):
         # initial condiiton constraints
         opti.subject_to(x_var[:, 0] + x_guess[:, 0] == x_init)
         opti.minimize(cost)
-        # create solver 
+        # create solver
         opts = {'expand': True}
         opti.solver(self.qp_solver, opts)
         self.opti_dict = {
@@ -354,7 +353,7 @@ class SQPGPMPC(GPMPC):
                 self.u_guess = u_val + self.u_guess
                 self.x_guess = x_val + self.x_guess
                 if np.linalg.norm(u_val - self.u_prev) < self.action_convergence_tol\
-                    and np.linalg.norm(x_val - self.x_prev) < self.action_convergence_tol:
+                        and np.linalg.norm(x_val - self.x_prev) < self.action_convergence_tol:
                     break
                 self.u_prev, self.x_prev = u_val, x_val
             print(f'Number of SQP iterations: {i}')
@@ -369,7 +368,7 @@ class SQPGPMPC(GPMPC):
             self.last_obs = obs
             self.last_action = action
         return action
-    
+
     def select_action_with_sqp_gp(self, obs):
         if self.x_guess is None or self.u_guess is None:
             self.compute_initial_guess(obs, self.get_references())
@@ -386,7 +385,7 @@ class SQPGPMPC(GPMPC):
 
         # Assign the initial state.
         opti.set_value(x_init, obs)
-         # Assign reference trajectory within horizon.
+        # Assign reference trajectory within horizon.
         goal_states = self.get_references()
         opti.set_value(x_ref, goal_states)
         opti.set_value(x_guess, self.x_guess)
@@ -445,7 +444,7 @@ class SQPGPMPC(GPMPC):
             self.traj = self.env.X_GOAL.T
             self.traj_step = 0
         # Dynamics model.
-        
+
         if self.gaussian_process is not None:
             self.set_lin_gp_dynamics_func()
             self.setup_sqp_gp_optimizer()
@@ -475,7 +474,7 @@ class SQPGPMPC(GPMPC):
             np.array: inputs for GP training, (N, nx+nu).
             np.array: targets for GP training, (N, nx).
         '''
-        print("=========== Preprocessing training data for SQP ===========")
+        print('=========== Preprocessing training data for SQP ===========')
         # Get the predicted dynamics. This is a linear prior, thus we need to account for the fact that
         # it is linearized about an eq using self.X_GOAL and self.U_GOAL.
         x_pred_seq = self.prior_dynamics_func(x0=x_seq.T,

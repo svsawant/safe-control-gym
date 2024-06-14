@@ -1,4 +1,4 @@
-algo: sac
+algo: td3
 algo_config:
   # model args
   hidden_dim: 128
@@ -7,16 +7,19 @@ algo_config:
   # loss args
   gamma: 0.98
   tau: 0.01
-  init_temperature: 0.2
-  use_entropy_tuning: False
-  target_entropy: null
+
+  # noise args
+  random_process:
+    func: OrnsteinUhlenbeckProcess
+    std:
+      func: LinearSchedule
+      args: 0.2
 
   # optim args
   train_interval: 100
-  train_batch_size: 512
+  train_batch_size: 64
   actor_lr: 0.003
   critic_lr: 0.003
-  entropy_lr: 0.003
 
   # runner args
   max_env_steps: 10000
@@ -32,5 +35,5 @@ algo_config:
   save_interval: 0
   num_checkpoints: 0
   eval_interval: 500
-  eval_save_best: True
+  eval_save_best: False
   tensorboard: False

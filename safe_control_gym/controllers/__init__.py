@@ -34,6 +34,10 @@ register(idx='sac',
          entry_point='safe_control_gym.controllers.sac.sac:SAC',
          config_entry_point='safe_control_gym.controllers.sac:sac.yaml')
 
+register(idx='td3',
+         entry_point='safe_control_gym.controllers.td3.td3:TD3',
+         config_entry_point='safe_control_gym.controllers.td3:td3.yaml')
+
 register(idx='ddpg',
          entry_point='safe_control_gym.controllers.ddpg.ddpg:DDPG',
          config_entry_point='safe_control_gym.controllers.ddpg:ddpg.yaml')
@@ -55,20 +59,17 @@ register(idx='sqp_mpc',
          config_entry_point='safe_control_gym.controllers.mpc:sqp_mpc.yaml')
 
 register(idx='sqp_gp_mpc',
-            entry_point='safe_control_gym.controllers.mpc.sqp_gp_mpc:SQPGPMPC',
-            config_entry_point='safe_control_gym.controllers.mpc:sqp_gp_mpc.yaml')
+         entry_point='safe_control_gym.controllers.mpc.sqp_gp_mpc:SQPGPMPC',
+         config_entry_point='safe_control_gym.controllers.mpc:sqp_gp_mpc.yaml')
 
 register(idx='mpc_acados',
-            entry_point='safe_control_gym.controllers.mpc.mpc_acados:MPC_ACADOS',
-            config_entry_point='safe_control_gym.controllers.mpc:mpc_acados.yaml')
+         entry_point='safe_control_gym.controllers.mpc.mpc_acados:MPC_ACADOS',
+         config_entry_point='safe_control_gym.controllers.mpc:mpc_acados.yaml')
 
 register(idx='gpmpc_acados',
-            entry_point='safe_control_gym.controllers.mpc.gpmpc_acados:GPMPC_ACADOS',
-            config_entry_point='safe_control_gym.controllers.mpc:gpmpc_acados.yaml')
+         entry_point='safe_control_gym.controllers.mpc.gpmpc_acados:GPMPC_ACADOS',
+         config_entry_point='safe_control_gym.controllers.mpc:gpmpc_acados.yaml')
+
 register(idx='qlearning_mpc',
          entry_point='safe_control_gym.controllers.mpc.qlearning_mpc:Qlearning_MPC',
          config_entry_point='safe_control_gym.controllers.mpc:qlearning_mpc.yaml')
-
-register(idx='td3',
-         entry_point='safe_control_gym.controllers.td3.td3:TD3',
-         config_entry_point='safe_control_gym.controllers.td3:td3.yaml')

@@ -91,6 +91,7 @@ def test_train_cartpole(SYS, TASK, ALGO, PRIOR, HYPERPARAMETER):
     # drop database
     drop(munch.Munch({'tag': f'{ALGO}_hpo'}))
 
+
 @pytest.mark.parametrize('SYS', ['quadrotor_2D', 'quadrotor_2D_attitude'])
 @pytest.mark.parametrize('TASK', ['track'])
 @pytest.mark.parametrize('ALGO', ['ppo', 'sac', 'gp_mpc'])
@@ -118,7 +119,7 @@ def test_train_quad(SYS, TASK, ALGO, PRIOR, HYPERPARAMETER):
             raise ValueError('optimimum hyperparameters are not available for quadrotor')
         else:
             raise ValueError('HYPERPARAMETER must be either default or optimimum')
-        
+
     if ALGO == 'gp_mpc':
         PRIOR = '150'
         sys.argv[1:] = ['--algo', ALGO,
@@ -142,7 +143,7 @@ def test_train_quad(SYS, TASK, ALGO, PRIOR, HYPERPARAMETER):
                             '--opt_hps', opt_hp_path,
                             '--seed', '6',
                             '--use_gpu', 'True'
-                            ]
+                        ]
 
     fac = ConfigFactory()
     fac.add_argument('--opt_hps', type=str, default='', help='yaml file as a result of HPO.')

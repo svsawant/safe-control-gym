@@ -420,7 +420,7 @@ class CartPole(BenchmarkEnv):
         Ur = cs.MX.sym('Ur', nu, 1)
         cost_func = 0.5 * (X - Xr).T @ Q @ (X - Xr) + 0.5 * (U - Ur).T @ R @ (U - Ur)
         # Define dynamics and cost dictionaries.
-        dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U},}
+        dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}, }
         cost = {'cost_func': cost_func, 'vars': {'X': X, 'U': U, 'Xr': Xr, 'Ur': Ur, 'Q': Q, 'R': R}}
         # Additional params to cache
         params = {
@@ -454,10 +454,10 @@ class CartPole(BenchmarkEnv):
         self.x_dot_threshold = 10
         self.theta_dot_threshold = 10
         # Limit set to 2x: i.e. a failing observation is still within bounds.
-        obs_bound = np.array([self.x_threshold * 2, 
-                              self.x_dot_threshold, #np.finfo(np.float32).max, 
-                              self.theta_threshold_radians * 2, 
-                              self.theta_dot_threshold]) # np.finfo(np.float32).max
+        obs_bound = np.array([self.x_threshold * 2,
+                              self.x_dot_threshold,  # np.finfo(np.float32).max,
+                              self.theta_threshold_radians * 2,
+                              self.theta_dot_threshold])  # np.finfo(np.float32).max
         self.state_space = spaces.Box(low=-obs_bound, high=obs_bound, dtype=np.float32)
 
         # Concatenate goal info for RL

@@ -478,10 +478,10 @@ class BenchmarkEnv(gym.Env, ABC):
             info (dict): The info after this step.
 
         Returns:
-            obs (ndarray): The udpdated observation after this step.
-            rew (float): The udpdated reward after this step.
+            obs (ndarray): The updated observation after this step.
+            rew (float): The updated reward after this step.
             done (bool): Whether the evaluation is done.
-            info (dict): The udpdated info after this step.
+            info (dict): The updated info after this step.
         """
         # Increment counters
         self.pyb_step_counter += self.PYB_STEPS_PER_CTRL

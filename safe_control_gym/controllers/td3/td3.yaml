@@ -9,16 +9,12 @@ clip_reward: 10.
 # loss args
 gamma: 0.99
 tau: 0.005
-init_temperature: 0.2
-use_entropy_tuning: False
-target_entropy: null
 
 # optim args
 train_interval: 100
 train_batch_size: 64
 actor_lr: 0.001
 critic_lr: 0.001
-entropy_lr: 0.001
 
 # runner args
 max_env_steps: 1000000

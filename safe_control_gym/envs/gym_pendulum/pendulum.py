@@ -292,7 +292,7 @@ class Pendulum(BenchmarkEnv):
         self.OVERRIDDEN_POLE_MASS = prop_values['pole_mass']
         # See `slender rod`, https://en.wikipedia.org/wiki/List_of_moments_of_inertia.
         # OVERRIDDEN_POLE_INERTIA = (1 / 12) * self.OVERRIDDEN_POLE_MASS * (2 * self.OVERRIDDEN_EFFECTIVE_POLE_LENGTH)**2
-        OVERRIDDEN_POLE_INERTIA = (1 / 3) * self.OVERRIDDEN_POLE_MASS * self.OVERRIDDEN_EFFECTIVE_POLE_LENGTH**2 # pole mass at the end of the rod
+        OVERRIDDEN_POLE_INERTIA = (1 / 3) * self.OVERRIDDEN_POLE_MASS * self.OVERRIDDEN_EFFECTIVE_POLE_LENGTH**2  # pole mass at the end of the rod
         # Load the cartpole with new urdf.
         override_urdf_tree = self._create_urdf(self.URDF_PATH, length=self.OVERRIDDEN_EFFECTIVE_POLE_LENGTH, inertia=OVERRIDDEN_POLE_INERTIA)
         # self.override_path = os.path.join(self.output_dir, f'pid-{os.getpid()}_id-{self.idx}_cartpole.urdf')
@@ -306,7 +306,7 @@ class Pendulum(BenchmarkEnv):
         # Remove cache file after loading it into PyBullet.
         os.remove(self.override_path)
         # Pendulum settings.
-        # for link_idx in [-1, 0, 1]:  # Slider, cart, and pole. # why is slider -1?    
+        # for link_idx in [-1, 0, 1]:  # Slider, cart, and pole. # why is slider -1?
         for link_idx in [-1, 0]:  # fixed cart and pole.
             p.changeDynamics(self.PENDULUM_ID, linkIndex=link_idx, linearDamping=0, angularDamping=0, physicsClientId=self.PYB_CLIENT)
         # for joint_idx in [0, 1]:  # Slider-to-cart and cart-to-pole joints.
@@ -438,7 +438,7 @@ class Pendulum(BenchmarkEnv):
         Xr = cs.MX.sym('Xr', nx, 1)
         Ur = cs.MX.sym('Ur', nu, 1)
         cost_func = 0.5 * (self.wrap_sym(X) - Xr).T @ Q @ (self.wrap_sym(X) - Xr) \
-                  + 0.5 * (U - Ur).T @ R @ (U - Ur)
+            + 0.5 * (U - Ur).T @ R @ (U - Ur)
         # cost_func = self.cost_func(X, U, Xr, Ur, Q, R)
         # Define dynamics and cost dictionaries.
         # dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}}
@@ -455,7 +455,7 @@ class Pendulum(BenchmarkEnv):
         }
         # Setup symbolic model.
         self.symbolic = SymbolicModel(dynamics=dynamics, cost=cost, dt=dt, params=params)
-    
+
     def wrap_sym(self, X):
         '''Wrap angle to [-pi, pi] when used in observation.
 
@@ -680,7 +680,7 @@ class Pendulum(BenchmarkEnv):
             if self.TASK == Task.STABILIZATION:
                 return float(
                     -1 * self.symbolic.loss(x=self.state,
-                    # -1 * self.symbolic.loss(x=state,
+                                            # -1 * self.symbolic.loss(x=state,
                                             Xr=self.X_GOAL,
                                             u=self.current_clipped_action,
                                             Ur=self.U_GOAL,
@@ -714,7 +714,7 @@ class Pendulum(BenchmarkEnv):
             # x, _, theta, _ = self.state
             theta, _ = self.state
             # if x < -self.x_threshold or x > self.x_threshold or theta < -self.theta_threshold_radians or theta > self.theta_threshold_radians:
-            if theta < -self.theta_threshold_radians or theta > self.theta_threshold_radians:    
+            if theta < -self.theta_threshold_radians or theta > self.theta_threshold_radians:
                 self.out_of_bounds = True
                 return True
         self.out_of_bounds = False
@@ -770,14 +770,14 @@ class Pendulum(BenchmarkEnv):
         '''
         URDF_TREE = (etxml.parse(file_name)).getroot()
         # EFFECTIVE_POLE_LENGTH = 0.5 * float(URDF_TREE[3][0][0][0].attrib['size'].split(' ')[-1])  # Note: HALF length of pole.
-        # POLE_MASS = float(URDF_TREE[3][1][1].attrib['value']) 
-        # CART_MASS = float(URDF_TREE[1][2][0].attrib['value']) 
-        # return EFFECTIVE_POLE_LENGTH, POLE_MASS, CART_MASS 
-        EFFECTIVE_POLE_LENGTH = float(URDF_TREE[1][0][0][0].attrib['size'].split(' ')[-1]) # Note: full length of pole.
+        # POLE_MASS = float(URDF_TREE[3][1][1].attrib['value'])
+        # CART_MASS = float(URDF_TREE[1][2][0].attrib['value'])
+        # return EFFECTIVE_POLE_LENGTH, POLE_MASS, CART_MASS
+        EFFECTIVE_POLE_LENGTH = float(URDF_TREE[1][0][0][0].attrib['size'].split(' ')[-1])  # Note: full length of pole.
         POLE_MASS = float(URDF_TREE[1][1][1].attrib['value'])
-        # print('pole length:', EFFECTIVE_POLE_LENGTH) 
-        # print('pole mass:', POLE_MASS) 
-        # print(URDF_TREE[3][0][0][0].attrib['size'].split(' ')[-1]) 
+        # print('pole length:', EFFECTIVE_POLE_LENGTH)
+        # print('pole mass:', POLE_MASS)
+        # print(URDF_TREE[3][0][0][0].attrib['size'].split(' ')[-1])
         return EFFECTIVE_POLE_LENGTH, POLE_MASS
 
     def _create_urdf(self, file_name, length=None, inertia=None):

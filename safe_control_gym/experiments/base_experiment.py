@@ -135,7 +135,7 @@ class BaseExperiment:
                         self.env.save_data()
                         obs, info = self._evaluation_reset(ctrl_data=ctrl_data, sf_data=sf_data)
                         break
-                    # elif 
+                    # elif
                         # otherwise, keep stepping
 
         elif n_steps is not None:
@@ -477,7 +477,7 @@ class MetricExtractor:
             episode_rewards (list): The total reward of each episode.
         '''
         return self.get_episode_data('reward', postprocess_func=sum, exponentiate=exponentiate)
-    
+
     def get_episode_exponentiated_returns(self):
         '''Total reward/return of episodes.
 

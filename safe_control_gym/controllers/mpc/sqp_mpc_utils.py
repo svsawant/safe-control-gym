@@ -17,7 +17,7 @@ def get_cost(r, Q, n_lookahead):
         S (np.array): The cost matrix
         Q (np.array): The state cost matrix
         R (np.array): The actuation cost matrix
-    
+
     '''
 
     I_r = np.eye(r.shape[0])
@@ -33,6 +33,5 @@ def get_cost(r, Q, n_lookahead):
     assert S.shape[0] == nx * (n_lookahead + 1) + nu * n_lookahead
     assert cost_action.shape[0] == nu * n_lookahead
     assert cost_state.shape[0] == nx * (n_lookahead + 1)
-    
-    return S, cost_state, cost_action
 
+    return S, cost_state, cost_action

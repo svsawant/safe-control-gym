@@ -6,14 +6,16 @@ from sys import platform
 import casadi as cs
 import numpy as np
 
+from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
 from safe_control_gym.controllers.mpc.mpc import MPC
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
-from safe_control_gym.controllers.lqr.lqr_utils import discretize_linear_system
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
+
 # from safe_control_gym.controllers.mpc.sqp_mpc_utils import get_cost
+
 
 class SQPMPC(MPC):
 
@@ -80,11 +82,11 @@ class SQPMPC(MPC):
                                                                 self.env)
             self.additional_constraints = additional_constraintsList.constraints
             self.constraints, self.state_constraints_sym, self.input_constraints_sym \
-                                                        = reset_constraints(self.env.constraints.constraints
-                                                                            + self.additional_constraints)
+                = reset_constraints(self.env.constraints.constraints
+                                    + self.additional_constraints)
         else:
             self.constraints, self.state_constraints_sym, self.input_constraints_sym \
-                                                        = reset_constraints(self.env.constraints.constraints)
+                = reset_constraints(self.env.constraints.constraints)
             self.additional_constraints = []
         # Model parameters
         self.model = self.get_prior(self.env)
@@ -100,7 +102,7 @@ class SQPMPC(MPC):
 
         # self.X_EQ = self.env.X_GOAL
         # self.U_EQ = self.env.U_GOAL
-        self.init_step_solver = 'ipopt' # for nonlinear warmstart
+        self.init_step_solver = 'ipopt'  # for nonlinear warmstart
         self.qp_solver = 'qrqp'
         self.max_qp_iter = 50
         self.action_convergence_tol = 1e-3
@@ -115,8 +117,8 @@ class SQPMPC(MPC):
         x_guess = cs.MX.sym('x_guess', self.model.nx, 1)
         u_guess = cs.MX.sym('u_guess', self.model.nu, 1)
         dfdxdfdu = self.model.df_func(x=x_guess, u=u_guess)
-        dfdx = dfdxdfdu['dfdx']#.toarray()
-        dfdu = dfdxdfdu['dfdu']#.toarray()
+        dfdx = dfdxdfdu['dfdx']  # .toarray()
+        dfdu = dfdxdfdu['dfdu']  # .toarray()
         # if exact: # NOTE: exact is not implemented because cs.expm is not supported
         #     # M = cs.SX.zeros(self.model.nx + self.model.nu, self.model.nx + self.model.nu)
         #     # M[:self.model.nx, :self.model.nx] = dfdx
@@ -126,7 +128,7 @@ class SQPMPC(MPC):
         #     Md = cs.expm(M * self.dt)
         #     Ad = Md[:self.model.nx, :self.model.nx]
         #     Bd = Md[:self.model.nx, self.model.nx:]
-        # else: 
+        # else:
         Ad = cs.DM_eye(self.model.nx) + dfdx * self.dt
         Bd = dfdu * self.dt
 
@@ -136,7 +138,6 @@ class SQPMPC(MPC):
                                                 [x_dot_lin, Ad, Bd],
                                                 ['x0', 'p', 'x_guess', 'u_guess'],
                                                 ['xf', 'Ad', 'Bd'])
-        
 
     def reset(self):
         '''Prepares for training or evaluation.'''
@@ -156,7 +157,7 @@ class SQPMPC(MPC):
 
         # Previously solved states & inputs, useful for warm start.
         # nominal solution
-        self.x_prev = None 
+        self.x_prev = None
         self.u_prev = None
         # # previous delta solution
         self.x_guess = None
@@ -167,7 +168,7 @@ class SQPMPC(MPC):
         # self.setup_optimizer()
         # self.setup_sqp_optimizer()
         self.setup_results_dict()
-    
+
     def compute_initial_guess(self, init_state, goal_states):
         print('=============Computing initial guess=============')
         time_before = time.time()
@@ -175,12 +176,12 @@ class SQPMPC(MPC):
         self.setup_optimizer(solver=self.init_step_solver)
         opti_dict = self.opti_dict
         opti = opti_dict['opti']
-        x_var = opti_dict['x_var'] # optimization variables
-        u_var = opti_dict['u_var'] # optimization variables
-        x_init = opti_dict['x_init'] # initial state
-        x_ref = opti_dict['x_ref'] # reference state/trajectory
+        x_var = opti_dict['x_var']  # optimization variables
+        u_var = opti_dict['u_var']  # optimization variables
+        x_init = opti_dict['x_init']  # initial state
+        x_ref = opti_dict['x_ref']  # reference state/trajectory
         # Assign the initial state.
-        opti.set_value(x_init, init_state) # initial state should have dim (nx,)
+        opti.set_value(x_init, init_state)  # initial state should have dim (nx,)
         # Assign reference trajectory within horizon.
         goal_states = self.get_references()
         opti.set_value(x_ref, goal_states)
@@ -249,8 +250,8 @@ class SQPMPC(MPC):
                           R=self.R)['l']
         for i in range(self.T):
             # Dynamics constraints.
-            next_state = self.linear_dynamics_func(x0=x_var[:, i], p=u_var[:, i], 
-                                                   x_guess=x_guess[:,i], u_guess=u_guess[:,i])['xf']
+            next_state = self.linear_dynamics_func(x0=x_var[:, i], p=u_var[:, i],
+                                                   x_guess=x_guess[:, i], u_guess=u_guess[:, i])['xf']
             opti.subject_to(x_var[:, i + 1] == next_state)
             # State and input constraints
             soft_con_coeff = 10
@@ -282,7 +283,7 @@ class SQPMPC(MPC):
         # initial condition constraints
         opti.subject_to(x_var[:, 0] + x_guess[:, 0] == x_init)
         opti.minimize(cost)
-        # create solver 
+        # create solver
         opts = {'expand': True}
         # if platform == 'linux':
         #     opts.update({'print_time': 1, 'print_header': 0})
@@ -306,10 +307,10 @@ class SQPMPC(MPC):
         }
         after_optimizer_setup = time.time()
         print('MPC setup_sqp_optimizer time: ', after_optimizer_setup - before_optimizer_setup)
-    
+
     def select_action(self, obs, info=None):
         before_select_action = time.time()
-        # use nonlinear solver to get an initial guess at initial step 
+        # use nonlinear solver to get an initial guess at initial step
         if self.x_guess is None or self.u_guess is None:
             self.compute_initial_guess(obs, self.get_references())
 
@@ -343,9 +344,9 @@ class SQPMPC(MPC):
         return action
 
     def select_qp_action(self,
-                      obs,
-                      info=None
-                      ):
+                         obs,
+                         info=None
+                         ):
         '''Solve nonlinear mpc problem to get next action.
 
         Args:
@@ -422,6 +423,3 @@ class SQPMPC(MPC):
         # action += self.u_guess[0]
         # self.prev_action = action
         # return action
-        
-        
-        
