@@ -754,7 +754,7 @@ class Quadrotor(BaseAviary):
             self.STATE_LABELS = ['x', 'x_dot', 'z', 'z_dot', 'theta', 'theta_dot']
             self.STATE_UNITS = ['m', 'm/s', 'm', 'm/s', 'rad', 'rad/s']
         elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
-            # obs/state = {x, x_dot, z, z_dot, theta}.
+            # obs/state = {x, x_dot, z, z_dot, theta, theta_dot}.
             low = np.array([
                 -self.x_threshold, -self.x_dot_threshold,
                 self.GROUND_PLANE_Z, -self.z_dot_threshold,
@@ -836,15 +836,16 @@ class Quadrotor(BaseAviary):
         if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
             collective_thrust, pitch = action
             # rpm = self.attitude_control._dslPIDAttitudeControl(individual_thrust,
-            #                                                    self.quat[0], np.array([0, pitch, 0])) # input thrsut is pwm
+            # self.quat[0], np.array([0, pitch, 0])) # input thrust is pwm
             # thrust_action = self.KF * rpm**2
             # thrust_action = self.attitude_control._dslPIDAttitudeControl(self.attitude_control.pwm2thrust(thrust_c/3),
-            #                                                             self.quat[0], np.array([0, pitch, 0])) # input thrsut is in Newton
+            # self.quat[0], np.array([0, pitch, 0])) # input thrust is in Newton
             # print(f"collective_thrust: {collective_thrust}, pitch: {pitch}")
             thrust_action = self.attitude_control._dslPIDAttitudeControl(collective_thrust / 4,
-                                                                         self.quat[0], np.array([0, pitch, 0]))  # input thrsut is in Newton
+                                                                         self.quat[0], np.array([0, pitch, 0]))  # input thrust is in Newton
             thrust = np.array([thrust_action[0] + thrust_action[3], thrust_action[1] + thrust_action[2]])
-            thrust = np.clip(thrust, np.full(2, self.physical_action_bounds[0][0] / 2), np.full(2, self.physical_action_bounds[1][0] / 2))
+            thrust = np.clip(thrust, np.full(2, self.physical_action_bounds[0][0] / 2),
+                             np.full(2, self.physical_action_bounds[1][0] / 2))
             pitch = np.clip(pitch, self.physical_action_bounds[0][1], self.physical_action_bounds[1][1])
             self.current_clipped_action = np.array([sum(thrust), pitch])
         else:
@@ -912,6 +913,9 @@ class Quadrotor(BaseAviary):
 
         full_state = self._get_drone_state_vector(0)
         pos, _, rpy, vel, ang_v, _ = np.split(full_state, [3, 7, 10, 13, 16])
+        # print(rpy)
+        # if rpy[1] > 0.2:
+        #     print([pos, rpy, vel, ang_v])
         if self.QUAD_TYPE == QuadType.ONE_D:
             # {z, z_dot}.
             self.state = np.hstack([pos[2], vel[2]]).reshape((2,))

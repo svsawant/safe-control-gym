@@ -50,8 +50,8 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
                 output_dir=curr_path + '/temp')
 
     # Load state_dict from trained.
-    ctrl.load(f'{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt')
-    # ctrl.load(f'{curr_path}/models/{config.algo}/model_best.pt')
+    # ctrl.load(f'{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt')
+    ctrl.load(f'{curr_path}/models/{config.algo}/model_best.pt')
 
     # Remove temporary files and directories
     shutil.rmtree(f'{curr_path}/temp', ignore_errors=True)
@@ -82,6 +82,8 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
             graph1_2 = 5
             graph3_1 = 0
             graph3_2 = 2
+            graph4_1 = 0
+            graph4_2 = 1
 
         _, ax = plt.subplots()
         ax.plot(results['obs'][0][:, graph1_1], results['obs'][0][:, graph1_2], 'r--', label='RL Trajectory')
@@ -119,6 +121,34 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
             ax3.set_ylabel(r'Z')
         ax3.set_box_aspect(0.5)
         ax3.legend(loc='upper right')
+
+        if config.task == Environment.QUADROTOR and system == 'quadrotor_4D':
+            _, ax4 = plt.subplots()
+            ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Thrust')
+            ax4.set_ylabel(r'Thrust')
+            _, ax5 = plt.subplots()
+            ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Pitch')
+            ax5.set_ylabel(r'Pitch')
+            _, ax6 = plt.subplots()
+            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Thrust')
+            ax6.set_ylabel(r'Pitch')
+            _, ax7 = plt.subplots()
+            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 6], 'r', label='Pitch')
+            ax7.set_ylabel(r'Pitch rate')
+
+        if config.task == Environment.QUADROTOR and system == 'quadrotor_2D':
+            # _, ax4 = plt.subplots()
+            # ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Thrust')
+            # ax4.set_ylabel(r'Thrust')
+            # _, ax5 = plt.subplots()
+            # ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Pitch')
+            # ax5.set_ylabel(r'Pitch')
+            _, ax6 = plt.subplots()
+            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Thrust')
+            ax6.set_ylabel(r'Pitch')
+            _, ax7 = plt.subplots()
+            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 6], 'r', label='Pitch')
+            ax7.set_ylabel(r'Pitch rate')
 
         plt.tight_layout()
         plt.show()

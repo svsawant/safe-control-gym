@@ -1,17 +1,17 @@
 #!/bin/bash
 
-SYS='cartpole'
-#SYS='quadrotor_2D'
+#SYS='cartpole'
+SYS='quadrotor_2D'
 #SYS='quadrotor_2D_attitude'
 #SYS='quadrotor_3D'
 
-TASK='stab'
-#TASK='track'
+#TASK='stab'
+TASK='track'
 
 #ALGO='ppo'
 #ALGO='sac'
-#ALGO='td3'
-ALGO='ddpg'
+ALGO='td3'
+#ALGO='ddpg'
 
 #ALGO='safe_explorer_ppo'
 
@@ -45,7 +45,7 @@ if [ "$ALGO" == 'safe_explorer_ppo' ]; then
 fi
 
 # Train the unsafe controller/agent.
-for SEED in {0..9}
+for SEED in {0..0}
 do
     python3 ../../safe_control_gym/experiments/train_rl_controller.py \
         --algo ${ALGO} \

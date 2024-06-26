@@ -73,7 +73,7 @@ class BaseAviary(BenchmarkEnv):
             record (bool, optional): Whether to save a video of the simulation in folder
                                      `files/videos/`.
             gui (bool, optional): Whether to use PyBullet's GUI.
-            verbose (bool, optional): If to suppress environment print statetments.
+            verbose (bool, optional): If to suppress environment print statements.
         '''
         # Constants.
         self.GRAVITY_ACC = 9.8

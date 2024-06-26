@@ -25,6 +25,7 @@ class TD3Agent:
                  act_space,
                  hidden_dim=256,
                  gamma=0.99,
+                 eps=0.01,
                  tau=0.005,
                  actor_lr=0.001,
                  critic_lr=0.001,
@@ -35,11 +36,12 @@ class TD3Agent:
         self.act_space = act_space
 
         self.gamma = gamma
+        self.eps = eps
         self.tau = tau
         self.activation = activation
 
         # model
-        self.ac = MLPActorCritic(obs_space, act_space, hidden_dims=[hidden_dim] * 2, activation=self.activation)
+        self.ac = MLPActorCritic(obs_space, act_space,eps=self.eps, hidden_dims=[hidden_dim] * 2, activation=self.activation)
 
         # target networks
         self.ac_targ = deepcopy(self.ac)
@@ -97,6 +99,8 @@ class TD3Agent:
 
         with torch.no_grad():
             next_act = self.ac.actor(next_obs)
+            noise = (0.5*torch.randn_like(next_act)).clamp(-0.2, 0.2)
+            next_act = (next_act+noise).clamp(self.act_space.low, self.act_space.high)
             next_q1_targ = self.ac_targ.q1(next_obs, next_act)
             next_q2_targ = self.ac_targ.q2(next_obs, next_act)
             next_q_targ = torch.min(next_q1_targ, next_q2_targ)
@@ -169,7 +173,7 @@ class MLPActorCritic(nn.Module):
         q1, q2 (MLPQFunction): q-value networks.
     """
 
-    def __init__(self, obs_space, act_space, hidden_dims=(64, 64), activation='relu'):
+    def __init__(self, obs_space, act_space, eps=0.01, hidden_dims=(64, 64), activation='relu'):
         super().__init__()
 
         obs_dim = obs_space.shape[0]

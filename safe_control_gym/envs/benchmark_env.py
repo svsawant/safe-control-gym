@@ -265,7 +265,7 @@ class BenchmarkEnv(gym.Env, ABC):
         """Randomizes a list of values according to desired distributions.
 
         Args:
-            original_values (dict): A dict of orginal values.
+            original_values (dict): A dict of original values.
             randomization_info (dict): A dictionary containing information about the distributions
                                        used to randomize original_values.
 
