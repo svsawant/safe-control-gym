@@ -244,7 +244,7 @@ class PPOBuffer(object):
     Attributes:
         max_length (int): maximum length of episode.
         batch_size (int): number of episodes per batch.
-        scheme (dict): describs shape & other info of data to be stored.
+        scheme (dict): describes shape & other info of data to be stored.
         keys (list): names of all data from scheme.
     '''
 

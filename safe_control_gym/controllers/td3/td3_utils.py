@@ -34,6 +34,9 @@ class TD3Agent:
         # params
         self.obs_space = obs_space
         self.act_space = act_space
+        low, high = act_space.low, act_space.high
+        self.action_space_low = torch.FloatTensor(low)
+        self.action_space_high = torch.FloatTensor(high)
 
         self.gamma = gamma
         self.eps = eps
@@ -100,7 +103,7 @@ class TD3Agent:
         with torch.no_grad():
             next_act = self.ac.actor(next_obs)
             noise = (0.5*torch.randn_like(next_act)).clamp(-0.2, 0.2)
-            next_act = (next_act+noise).clamp(self.act_space.low, self.act_space.high)
+            next_act = (next_act+noise).clamp(self.action_space_low, self.action_space_high)
             next_q1_targ = self.ac_targ.q1(next_obs, next_act)
             next_q2_targ = self.ac_targ.q2(next_obs, next_act)
             next_q_targ = torch.min(next_q1_targ, next_q2_targ)

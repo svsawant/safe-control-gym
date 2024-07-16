@@ -130,10 +130,10 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
             ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Pitch')
             ax5.set_ylabel(r'Pitch')
             _, ax6 = plt.subplots()
-            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Thrust')
+            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Thrust')
             ax6.set_ylabel(r'Pitch')
             _, ax7 = plt.subplots()
-            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 6], 'r', label='Pitch')
+            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Pitch')
             ax7.set_ylabel(r'Pitch rate')
 
         if config.task == Environment.QUADROTOR and system == 'quadrotor_2D':

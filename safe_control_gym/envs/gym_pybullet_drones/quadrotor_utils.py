@@ -69,6 +69,7 @@ class AttitudeControl(ABC):
 
     def __init__(self,
                  control_timestep,
+                 sim_timestep,
                  g: float = 9.8,
                  kf: float = 3.16e-10,
                  km: float = 7.94e-12,
@@ -84,6 +85,7 @@ class AttitudeControl(ABC):
 
         Args:
             control_timestep (float): The time step at which control is computed.
+            sim_timestep (float): The time step at which simulation is carried out.
             g (float, optional): The gravitational acceleration in m/s^2.
             kf (float, optional): Thrust coefficient.
             km (float, optional): Torque coefficient.
@@ -116,6 +118,7 @@ class AttitudeControl(ABC):
         self.integral_rpy_e = np.zeros(3)
 
         self.control_timestep = control_timestep
+        self.sim_timestep = sim_timestep
 
     def reset(self):
         """Reinitialize just the controller before a new run."""
@@ -149,6 +152,8 @@ class AttitudeControl(ABC):
             (4,1)-shaped array of integers containing the RPMs to apply to each of the 4 motors.
 
         """
+        # control_timestep = self.control_timestep
+        sim_timestep = self.sim_timestep
         cur_rotation = np.array(p.getMatrixFromQuaternion(cur_quat)).reshape(3, 3)
         cur_rpy = np.array(p.getEulerFromQuaternion(cur_quat))
         target_quat = (Rotation.from_euler('XYZ', target_euler, degrees=False)).as_quat()
@@ -156,9 +161,9 @@ class AttitudeControl(ABC):
         target_rotation = (Rotation.from_quat([w, x, y, z])).as_matrix()
         rot_matrix_e = np.dot((target_rotation.transpose()), cur_rotation) - np.dot(cur_rotation.transpose(), target_rotation)
         rot_e = np.array([rot_matrix_e[2, 1], rot_matrix_e[0, 2], rot_matrix_e[1, 0]])
-        rpy_rates_e = target_rpy_rates - (cur_rpy - self.last_rpy) / self.control_timestep
+        rpy_rates_e = target_rpy_rates - (cur_rpy - self.last_rpy) / sim_timestep
         self.last_rpy = cur_rpy
-        self.integral_rpy_e = self.integral_rpy_e - rot_e * self.control_timestep
+        self.integral_rpy_e = self.integral_rpy_e - rot_e * sim_timestep
         self.integral_rpy_e = np.clip(self.integral_rpy_e, -1500., 1500.)
         self.integral_rpy_e[0:2] = np.clip(self.integral_rpy_e[0:2], -1., 1.)
         #### PID target torques ####################################

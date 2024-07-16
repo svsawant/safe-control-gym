@@ -22,6 +22,7 @@ def train():
     fac = ConfigFactory()
     config = fac.merge()
     config.algo_config['training'] = True
+    config.use_gpu = True
 
     shutil.rmtree(config.output_dir, ignore_errors=True)
 
@@ -32,8 +33,7 @@ def train():
     env_func = partial(make,
                        config.task,
                        output_dir=config.output_dir,
-                       **config.task_config
-                       )
+                       **config.task_config)
 
     # Create the controller/control_agent.
     ctrl = make(config.algo,

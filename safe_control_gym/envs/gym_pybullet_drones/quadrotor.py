@@ -197,7 +197,7 @@ class Quadrotor(BaseAviary):
             if (self.QUAD_TYPE == QuadType.ONE_D and len(info_mse_metric_state_weight) == 2) or \
                     (self.QUAD_TYPE == QuadType.TWO_D and len(info_mse_metric_state_weight) == 6) or \
                     (self.QUAD_TYPE == QuadType.THREE_D and len(info_mse_metric_state_weight) == 12) or \
-                    (self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE and len(info_mse_metric_state_weight) == 5):
+                    (self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE and len(info_mse_metric_state_weight) == 6):
                 self.info_mse_metric_state_weight = np.array(info_mse_metric_state_weight, ndmin=1, dtype=float)
             else:
                 raise ValueError('[ERROR] in Quadrotor.__init__(), wrong info_mse_metric_state_weight argument size.')
@@ -344,7 +344,7 @@ class Quadrotor(BaseAviary):
 
         # Set attitude controller if quadtype is QuadType.TWO_D_ATTITUDE
         if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
-            self.attitude_control = AttitudeControl(self.CTRL_TIMESTEP)
+            self.attitude_control = AttitudeControl(self.CTRL_TIMESTEP, self.PYB_TIMESTEP)
 
         # Set prior/symbolic info.
         self._setup_symbolic()
@@ -438,7 +438,7 @@ class Quadrotor(BaseAviary):
         """
 
         # Get the preprocessed rpm for each motor
-        rpm = super().before_step(action)
+        action = super().before_step(action)
 
         # Determine disturbance force.
         disturb_force = None
@@ -468,7 +468,7 @@ class Quadrotor(BaseAviary):
                 disturb_force = np.asarray(disturb_force).flatten()
 
         # Advance the simulation.
-        super()._advance_simulation(rpm, disturb_force)
+        super()._advance_simulation(action, disturb_force)
         # Standard Gym return.
         obs = self._get_observation()
         rew = self._get_reward()
@@ -835,14 +835,17 @@ class Quadrotor(BaseAviary):
 
         if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
             collective_thrust, pitch = action
+
             # rpm = self.attitude_control._dslPIDAttitudeControl(individual_thrust,
             # self.quat[0], np.array([0, pitch, 0])) # input thrust is pwm
             # thrust_action = self.KF * rpm**2
             # thrust_action = self.attitude_control._dslPIDAttitudeControl(self.attitude_control.pwm2thrust(thrust_c/3),
             # self.quat[0], np.array([0, pitch, 0])) # input thrust is in Newton
             # print(f"collective_thrust: {collective_thrust}, pitch: {pitch}")
+
             thrust_action = self.attitude_control._dslPIDAttitudeControl(collective_thrust / 4,
-                                                                         self.quat[0], np.array([0, pitch, 0]))  # input thrust is in Newton
+                                                                         self.quat[0], np.array([0, pitch, 0]))
+            # input thrust is in Newton
             thrust = np.array([thrust_action[0] + thrust_action[3], thrust_action[1] + thrust_action[2]])
             thrust = np.clip(thrust, np.full(2, self.physical_action_bounds[0][0] / 2),
                              np.full(2, self.physical_action_bounds[1][0] / 2))
@@ -851,11 +854,9 @@ class Quadrotor(BaseAviary):
         else:
             thrust = np.clip(action, self.physical_action_bounds[0], self.physical_action_bounds[1])
             self.current_clipped_action = thrust
-        # print(sum(thrust))
         # convert to quad motor rpm commands
         pwm = cmd2pwm(thrust, self.PWM2RPM_SCALE, self.PWM2RPM_CONST, self.KF, self.MIN_PWM, self.MAX_PWM)
         rpm = pwm2rpm(pwm, self.PWM2RPM_SCALE, self.PWM2RPM_CONST)
-
         return rpm
 
     def normalize_action(self, action):
