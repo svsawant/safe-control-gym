@@ -263,6 +263,7 @@ class BaseAviary(BenchmarkEnv):
         time_before_stepping = time.time()
         # clipped_action = np.reshape(clipped_action, (self.NUM_DRONES, 4))
         clipped_action = np.expand_dims(clipped_action, axis=0)
+        # rpm = self._preprocess_control(clipped_action[0, :])
 
         # Repeat for as many as the aggregate physics steps.
         for _ in range(self.PYB_STEPS_PER_CTRL):
@@ -313,8 +314,8 @@ class BaseAviary(BenchmarkEnv):
                 p.stepSimulation(physicsClientId=self.PYB_CLIENT)
             # Save the last applied action (e.g. to compute drag).
             self.last_clipped_action = clipped_action
-            # Update and store the drones kinematic information.
-            self._update_and_store_kinematic_information()
+        # Update and store the drones kinematic information.
+        self._update_and_store_kinematic_information()
 
         time_after_stepping = time.time()
         # print('time stepping', time_after_stepping - time_before_stepping)

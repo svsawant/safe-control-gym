@@ -2,7 +2,8 @@
 
 #SYS='cartpole'
 #SYS='quadrotor_2D'
-SYS='quadrotor_2D_attitude'
+#SYS='quadrotor_2D_attitude'
+SYS='quadrotor_2D_attitude_5s'
 #SYS='quadrotor_3D'
 
 #TASK='stab'

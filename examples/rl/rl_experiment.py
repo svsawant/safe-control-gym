@@ -124,17 +124,17 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
 
         if config.task == Environment.QUADROTOR and system == 'quadrotor_4D':
             _, ax4 = plt.subplots()
-            ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Thrust')
-            ax4.set_ylabel(r'Thrust')
+            ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Action: Thrust')
+            ax4.set_ylabel(r'Action: Thrust')
             _, ax5 = plt.subplots()
-            ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Pitch')
-            ax5.set_ylabel(r'Pitch')
+            ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Action: Pitch')
+            ax5.set_ylabel(r'Action: Pitch')
             _, ax6 = plt.subplots()
-            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Thrust')
-            ax6.set_ylabel(r'Pitch')
+            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Obs: Pitch')
+            ax6.set_ylabel(r'Obs: Pitch')
             _, ax7 = plt.subplots()
-            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Pitch')
-            ax7.set_ylabel(r'Pitch rate')
+            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Obs: Pitch rate')
+            ax7.set_ylabel(r'Obs: Pitch rate')
 
         if config.task == Environment.QUADROTOR and system == 'quadrotor_2D':
             # _, ax4 = plt.subplots()
@@ -144,10 +144,10 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
             # ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Pitch')
             # ax5.set_ylabel(r'Pitch')
             _, ax6 = plt.subplots()
-            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Thrust')
+            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Thrust')
             ax6.set_ylabel(r'Pitch')
             _, ax7 = plt.subplots()
-            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 6], 'r', label='Pitch')
+            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Pitch')
             ax7.set_ylabel(r'Pitch rate')
 
         plt.tight_layout()

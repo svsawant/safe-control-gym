@@ -94,7 +94,7 @@ class PID(BaseController):
         step = self.extract_step(info)
 
         # Step the environment and print all returned information.
-        if self.env.QUAD_TYPE == 2 or self.env.QUAD_TYPE == 4:
+        if self.env.QUAD_TYPE == 2 or self.env.QUAD_TYPE == 4 or self.env.QUAD_TYPE == 5:
             cur_pos = np.array([obs[0], 0, obs[2]])
             cur_quat = np.array(p.getQuaternionFromEuler([0, obs[4], 0]))
             cur_vel = np.array([obs[1], 0, obs[3]])
@@ -103,7 +103,7 @@ class PID(BaseController):
             cur_quat = np.array(p.getQuaternionFromEuler([obs[6], obs[7], obs[8]]))
             cur_vel = np.array([obs[1], obs[3], obs[5]])
 
-        if self.env.QUAD_TYPE == 2 or self.env.QUAD_TYPE == 4:
+        if self.env.QUAD_TYPE == 2 or self.env.QUAD_TYPE == 4 or self.env.QUAD_TYPE == 5:
             if self.env.TASK == Task.TRAJ_TRACKING:
                 target_pos = np.array([self.reference[step, 0],
                                        0,
@@ -111,9 +111,6 @@ class PID(BaseController):
                 target_vel = np.array([self.reference[step, 1],
                                        0,
                                        self.reference[step, 3]])
-
-                # target_pos = np.array([0.2, 0, 0.2])
-                # target_vel = np.array([0, 0, 0])
             elif self.env.TASK == Task.STABILIZATION:
                 target_pos = np.array([self.reference[0], 0, self.reference[2]])
                 target_vel = np.array([0, 0, 0])
@@ -148,7 +145,7 @@ class PID(BaseController):
             action = rpm
             action = self.KF * action ** 2
             action = np.array([action[0] + action[3], action[1] + action[2]])
-        elif self.env.QUAD_TYPE == 4:  # 2D quadrotor with attitude control
+        elif self.env.QUAD_TYPE == 4 or self.env.QUAD_TYPE == 5:  # 2D quadrotor with attitude control
             action = np.array([self.env.attitude_control.pwm2thrust(thrust / 3) * 4, computed_target_rpy[1]])
         #### Extra checks
         # rpm = self.env.before_step(action)
