@@ -18,7 +18,7 @@ from safe_control_gym.envs.gym_pybullet_drones.base_aviary import BaseAviary
 from safe_control_gym.envs.gym_pybullet_drones.quadrotor_utils import (AttitudeControl, QuadType, cmd2pwm,
                                                                        pwm2rpm)
 from safe_control_gym.math_and_models.symbolic_systems import SymbolicModel
-from safe_control_gym.math_and_models.transformations import csRotXYZ, transform_trajectory
+from safe_control_gym.math_and_models.transformations import csRotXYZ, transform_trajectory, get_quaternion_from_euler
 
 
 class Quadrotor(BaseAviary):
@@ -596,7 +596,12 @@ class Quadrotor(BaseAviary):
                                z_dot,
                                (18.112984649321753 * T + 3.7613154938448576) * cs.cos(theta) - g,
                                theta_dot,
-                               -60.00143727772195 * theta + 60.00143727772195 * P)
+                               # 60 * (60 * (P - theta) - theta_dot)
+                               -143.9 * theta - 13.02 * theta_dot + 122.5 * P
+                               # 2.027 * (64.2 * P - 72.76 * theta) - 13.75 * theta_dot
+                               # -267.8 * theta - 13.41 * theta_dot + 187.5 * P
+                               # - 44.43 * theta - 10.33 * theta_dot + 32.81 * P
+                               )
             # Define observation.
             Y = cs.vertcat(x, x_dot, z, z_dot, theta, theta_dot)
         elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE_5S:
@@ -909,6 +914,7 @@ class Quadrotor(BaseAviary):
             # print(f"collective_thrust: {collective_thrust}, pitch: {pitch}")
 
             _, quat = p.getBasePositionAndOrientation(self.DRONE_IDS[0], physicsClientId=self.PYB_CLIENT)
+            # quat = get_quaternion_from_euler(self.rpy[0, :])
             thrust_action = self.attitude_control._dslPIDAttitudeControl(collective_thrust / 4,
                                                                          quat, np.array([0, pitch, 0]))
             # input thrust is in Newton

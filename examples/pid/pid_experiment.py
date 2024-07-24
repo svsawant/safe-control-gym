@@ -138,6 +138,8 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
         system = f'quadrotor_{str(config.task_config.quad_type)}D'
         if config.task_config.quad_type == 4:
             system = 'quadrotor_2D_attitude'
+        elif config.task_config.quad_type == 5:
+            system = 'quadrotor_2D_attitude_5s'
     else:
         system = config.task
 
@@ -153,6 +155,11 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
             graph3_1 = 0
             graph3_2 = 2
         elif system == 'quadrotor_2D_attitude':
+            graph1_1 = 4
+            graph1_2 = 5
+            graph3_1 = 0
+            graph3_2 = 2
+        elif system == 'quadrotor_2D_attitude_5s':
             graph1_1 = 4
             graph1_2 = 5
             graph3_1 = 0
@@ -232,6 +239,32 @@ def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
             plt.tight_layout()
             # save the plot
             plt.savefig(os.path.join(config.output_dir, 'pitch_rate_obs.png'))
+
+            _, ax6 = plt.subplots()
+            ax6.plot(trajs_data['timestamp'][0][0:] - trajs_data['timestamp'][0][0], trajs_data['action'][0][0:, 0])
+            ax6.set_xlabel(r'time')
+            ax6.set_ylabel(r'Thrust (rad) (action)')
+            plt.tight_layout()
+            # save the plot
+            plt.savefig(os.path.join(config.output_dir, 'thrust_action.png'))
+
+            _, ax7 = plt.subplots()
+            ax7.plot(trajs_data['timestamp'][0][0:] - trajs_data['timestamp'][0][0], trajs_data['action'][0][0:, 1])
+            ax7.set_xlabel(r'time')
+            ax7.set_ylabel(r'pitch (rad) (action)')
+            plt.tight_layout()
+            # save the plot
+            plt.savefig(os.path.join(config.output_dir, 'pitch_action.png'))
+
+        if config.task_config.task == Task.TRAJ_TRACKING and system == "quadrotor_2D_attitude_5s":
+            _, ax4 = plt.subplots()
+            ax4.plot(trajs_data['timestamp'][0][0:] - trajs_data['timestamp'][0][0], trajs_data['obs'][0][1:, 4])
+            ax4.set_xlabel(r'time')
+            ax4.set_ylabel(r'pitch (rad) (obs)')
+            # ax4.set_ylim([-0.4, 0.4])
+            plt.tight_layout()
+            # save the plot
+            plt.savefig(os.path.join(config.output_dir, 'pitch_obs.png'))
 
             _, ax6 = plt.subplots()
             ax6.plot(trajs_data['timestamp'][0][0:] - trajs_data['timestamp'][0][0], trajs_data['action'][0][0:, 0])

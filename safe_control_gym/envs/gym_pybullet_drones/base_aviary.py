@@ -314,6 +314,8 @@ class BaseAviary(BenchmarkEnv):
                 p.stepSimulation(physicsClientId=self.PYB_CLIENT)
             # Save the last applied action (e.g. to compute drag).
             self.last_clipped_action = clipped_action
+        # if self.PHYSICS == Physics.DYN_2D:
+        #     self._set_pybullet_information()
         # Update and store the drones kinematic information.
         self._update_and_store_kinematic_information()
 
@@ -355,6 +357,20 @@ class BaseAviary(BenchmarkEnv):
                     '——— angular velocity {:+06.4f}, {:+06.4f}, {:+06.4f} ——— '.
                     format(self.ang_v[i, 0], self.ang_v[i, 1], self.ang_v[i,
                                                                           2]))
+
+    def _set_pybullet_information(self):
+        """Set pybullet state information from external simulation"""
+        for i in range(self.NUM_DRONES):
+            # Set PyBullet's state.
+            p.resetBasePositionAndOrientation(self.DRONE_IDS[i],
+                                              self.pos[i, :],
+                                              p.getQuaternionFromEuler(self.rpy[i, :]),
+                                              physicsClientId=self.PYB_CLIENT)
+            # Note: the base's velocity only stored and not used #
+            p.resetBaseVelocity(self.DRONE_IDS[i],
+                                self.vel[i, :],
+                                self.ang_v[i, :],  # ang_vel not computed by DYN
+                                physicsClientId=self.PYB_CLIENT)
 
     def _update_and_store_kinematic_information(self):
         '''Updates and stores the drones kinematic information.
@@ -679,6 +695,7 @@ class BaseAviary(BenchmarkEnv):
         ang_v = self.ang_v[nth_drone, :]
         rpy_rates = self.rpy_rates[nth_drone, :]
         # rotation = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+
         # Compute forces and torques.
         forces = np.array(rpm ** 2) * self.KF
         # Update state with discrete time dynamics.
@@ -691,6 +708,7 @@ class BaseAviary(BenchmarkEnv):
         X_dot = self.X_dot_fun(state, action).full()[:, 0]
         next_state = state + X_dot*self.PYB_TIMESTEP
 
+        # Updated information
         pos = np.array([next_state[0], 0, next_state[4]])
         rpy = np.array([0, next_state[7], 0])
         vel = np.array([next_state[1], 0, next_state[5]])

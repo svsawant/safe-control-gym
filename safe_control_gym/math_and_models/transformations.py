@@ -135,8 +135,8 @@ def csRotZ(psi):
       R: casadi Rotation matrix
     '''
     R = cs.blockcat([[cs.cos(psi), -cs.sin(psi), 0],
-                     [cs.sin(psi),  cs.cos(psi), 0],
-                     [          0,            0, 1]])
+                     [cs.sin(psi), cs.cos(psi), 0],
+                     [0, 0, 1]])
     return R
 
 
@@ -149,8 +149,8 @@ def csRotY(theta):
     Returns:
       R: casadi Rotation matrix
     '''
-    R = cs.blockcat([[ cs.cos(theta), 0, cs.sin(theta)],
-                     [             0, 1,             0],
+    R = cs.blockcat([[cs.cos(theta), 0, cs.sin(theta)],
+                     [0, 1, 0],
                      [-cs.sin(theta), 0, cs.cos(theta)]])
     return R
 
@@ -164,9 +164,9 @@ def csRotX(phi):
     Returns:
       R: casadi Rotation matrix
     '''
-    R = cs.blockcat([[ 1,           0,            0],
-                     [ 0, cs.cos(phi), -cs.sin(phi)],
-                     [ 0, cs.sin(phi),  cs.cos(phi)]])
+    R = cs.blockcat([[1, 0, 0],
+                     [0, cs.cos(phi), -cs.sin(phi)],
+                     [0, cs.sin(phi), cs.cos(phi)]])
     return R
 
 
@@ -188,7 +188,7 @@ def csRotXYZ(phi, theta, psi):
 
 
 def RotXYZ(phi, theta, psi):
-    '''Rotation matrix from euller angles  following SDFormat http://sdformat.org/tutorials?tut=specify_pose&cat=specification&.
+    """Rotation matrix from euller angles  following SDFormat http://sdformat.org/tutorials?tut=specify_pose&cat=specification&.
     This represents the extrinsic X-Y-Z (or quivalently the intrinsic Z-Y-X (3-2-1)) euler angle rotation.
 
     Args:
@@ -198,7 +198,7 @@ def RotXYZ(phi, theta, psi):
 
     Returns:
       R: casadi Rotation matrix
-    '''
+    """
     R = csRotXYZ(phi, theta, psi).toarray()
     return R
 
@@ -206,24 +206,24 @@ def RotXYZ(phi, theta, psi):
 def npRotZ(psi):
     '''Numpy version of csRotZ.'''
     R = np.array([[np.cos(psi), -np.sin(psi), 0],
-                  [np.sin(psi),  np.cos(psi), 0],
-                  [          0,            0, 1]])
+                  [np.sin(psi), np.cos(psi), 0],
+                  [0, 0, 1]])
     return R
 
 
 def npRotY(theta):
     '''Numpy version of csRotY.'''
-    R = np.array([[ np.cos(theta), 0, np.sin(theta)],
-                  [             0, 1,             0],
+    R = np.array([[np.cos(theta), 0, np.sin(theta)],
+                  [0, 1, 0],
                   [-np.sin(theta), 0, np.cos(theta)]])
     return R
 
 
 def npRotX(phi):
     '''Numpy version of csRotX.'''
-    R = np.array([[ 1,           0,            0],
-                  [ 0, np.cos(phi), -np.sin(phi)],
-                  [ 0, np.sin(phi),  np.cos(phi)]])
+    R = np.array([[1, 0, 0],
+                  [0, np.cos(phi), -np.sin(phi)],
+                  [0, np.sin(phi), np.cos(phi)]])
     return R
 
 
@@ -241,3 +241,90 @@ def npRotXYZ(phi, theta, psi):
     '''
     R = npRotZ(psi) @ npRotY(theta) @ npRotX(phi)
     return R
+
+
+def quaternion_rotation_matrix(q):
+    """
+    Covert a quaternion into a full three-dimensional rotation matrix.
+
+    Input
+    :param q: A 4 element array representing the quaternion (q0,q1,q2,q3)
+
+    Output
+    :return: A 3x3 element matrix representing the full 3D rotation matrix.
+             This rotation matrix converts a point in the local reference
+             frame to a point in the global reference frame.
+    """
+    # Extract the values from Q
+    q0 = q[0]
+    q1 = q[1]
+    q2 = q[2]
+    q3 = q[3]
+
+    # First row of the rotation matrix
+    r00 = 2 * (q0 * q0 + q1 * q1) - 1
+    r01 = 2 * (q1 * q2 - q0 * q3)
+    r02 = 2 * (q1 * q3 + q0 * q2)
+
+    # Second row of the rotation matrix
+    r10 = 2 * (q1 * q2 + q0 * q3)
+    r11 = 2 * (q0 * q0 + q2 * q2) - 1
+    r12 = 2 * (q2 * q3 - q0 * q1)
+
+    # Third row of the rotation matrix
+    r20 = 2 * (q1 * q3 - q0 * q2)
+    r21 = 2 * (q2 * q3 + q0 * q1)
+    r22 = 2 * (q0 * q0 + q3 * q3) - 1
+
+    # 3x3 rotation matrix
+    rot_matrix = np.array([[r00, r01, r02],
+                           [r10, r11, r12],
+                           [r20, r21, r22]])
+
+    return rot_matrix
+
+
+def euler_from_quaternion(q):
+    """
+    Convert a quaternion into euler angles (roll, pitch, yaw)
+    roll is rotation around x in radians (counterclockwise)
+    pitch is rotation around y in radians (counterclockwise)
+    yaw is rotation around z in radians (counterclockwise)
+    """
+    x, y, z, w = q[0], q[1], q[2], q[3]
+    t0 = +2.0 * (w * x + y * z)
+    t1 = +1.0 - 2.0 * (x * x + y * y)
+    roll_x = math.atan2(t0, t1)
+
+    t2 = +2.0 * (w * y - z * x)
+    t2 = +1.0 if t2 > +1.0 else t2
+    t2 = -1.0 if t2 < -1.0 else t2
+    pitch_y = math.asin(t2)
+
+    t3 = +2.0 * (w * z + x * y)
+    t4 = +1.0 - 2.0 * (y * y + z * z)
+    yaw_z = math.atan2(t3, t4)
+
+    return np.array([roll_x, pitch_y, yaw_z])  # in radians
+
+
+def get_quaternion_from_euler(rpy):
+    """
+    Convert an Euler angle to a quaternion.
+    roll: The roll (rotation around x-axis) angle in radians.
+    pitch: The pitch (rotation around y-axis) angle in radians.
+    yaw: The yaw (rotation around z-axis) angle in radians.
+
+    Input
+      :param rpy: roll, pitch, yaw
+
+    Output
+      :return qx, qy, qz, qw: The orientation in quaternion [x,y,z,w] format
+    """
+    roll, pitch, yaw = rpy[0], rpy[1], rpy[2]
+    qx = np.sin(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) - np.cos(roll / 2) * np.sin(pitch / 2) * np.sin(yaw / 2)
+    qy = np.cos(roll / 2) * np.sin(pitch / 2) * np.cos(yaw / 2) + np.sin(roll / 2) * np.cos(pitch / 2) * np.sin(yaw / 2)
+    qz = np.cos(roll / 2) * np.cos(pitch / 2) * np.sin(yaw / 2) - np.sin(roll / 2) * np.sin(pitch / 2) * np.cos(yaw / 2)
+    qw = np.cos(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) + np.sin(roll / 2) * np.sin(pitch / 2) * np.sin(yaw / 2)
+
+    return qx, qy, qz, qw

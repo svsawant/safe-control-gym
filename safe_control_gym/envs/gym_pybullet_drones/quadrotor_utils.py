@@ -5,6 +5,7 @@ from enum import IntEnum
 
 import numpy as np
 import pybullet as p
+from safe_control_gym.math_and_models.transformations import quaternion_rotation_matrix, euler_from_quaternion
 from scipy.spatial.transform import Rotation
 
 
@@ -157,6 +158,8 @@ class AttitudeControl(ABC):
         sim_timestep = self.sim_timestep
         cur_rotation = np.array(p.getMatrixFromQuaternion(cur_quat)).reshape(3, 3)
         cur_rpy = np.array(p.getEulerFromQuaternion(cur_quat))
+        # cur_rotation = quaternion_rotation_matrix(cur_quat)
+        # cur_rpy = euler_from_quaternion(cur_quat)
         target_quat = (Rotation.from_euler('XYZ', target_euler, degrees=False)).as_quat()
         w, x, y, z = target_quat
         target_rotation = (Rotation.from_quat([w, x, y, z])).as_matrix()
