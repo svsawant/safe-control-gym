@@ -328,3 +328,14 @@ def get_quaternion_from_euler(rpy):
     qw = np.cos(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) + np.sin(roll / 2) * np.sin(pitch / 2) * np.sin(yaw / 2)
 
     return qx, qy, qz, qw
+
+
+def get_angularvelocity_rpy(rpy, rpy_rates):
+    """
+    Convert rpy and rpy_rates to body-frame angular velocity
+    """
+    phi, theta, psi = rpy[0], rpy[1], rpy[2]
+    ang_v = np.array([[1, 0, -np.sin(theta)],
+                      [0, np.cos(phi), np.sin(phi) * np.cos(theta)],
+                      [0, -np.sin(phi), np.cos(phi) * np.cos(theta)]]) @ rpy_rates
+    return ang_v
