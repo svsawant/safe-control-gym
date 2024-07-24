@@ -271,7 +271,7 @@ class BaseAviary(BenchmarkEnv):
             # Between aggregate steps for certain types of update.
             if self.PYB_STEPS_PER_CTRL > 1 and self.PHYSICS in [
                 Physics.DYN, Physics.PYB_GND, Physics.PYB_DRAG,
-                Physics.PYB_DW, Physics.PYB_GND_DRAG_DW, Physics.RK4, Physics.DYN_2D
+                Physics.PYB_DW, Physics.PYB_GND_DRAG_DW, Physics.RK4 #, Physics.DYN_2D
             ]:
                 self._update_and_store_kinematic_information()
             # Step the simulation using the desired physics update.
@@ -314,8 +314,8 @@ class BaseAviary(BenchmarkEnv):
                 p.stepSimulation(physicsClientId=self.PYB_CLIENT)
             # Save the last applied action (e.g. to compute drag).
             self.last_clipped_action = clipped_action
-        # if self.PHYSICS == Physics.DYN_2D:
-        #     self._set_pybullet_information()
+        if self.PHYSICS == Physics.DYN_2D:
+            self._set_pybullet_information()
         # Update and store the drones kinematic information.
         self._update_and_store_kinematic_information()
 
@@ -715,16 +715,20 @@ class BaseAviary(BenchmarkEnv):
         ang_v = np.array([0, next_state[10], 0])
         ang_v = np.squeeze(ang_v)
 
-        # Set PyBullet's state.
-        p.resetBasePositionAndOrientation(self.DRONE_IDS[nth_drone],
-                                          pos,
-                                          p.getQuaternionFromEuler(rpy),
-                                          physicsClientId=self.PYB_CLIENT)
-        # Note: the base's velocity only stored and not used #
-        p.resetBaseVelocity(self.DRONE_IDS[nth_drone],
-                            vel,
-                            ang_v,  # ang_vel not computed by DYN
-                            physicsClientId=self.PYB_CLIENT)
+        # # Set PyBullet's state.
+        # p.resetBasePositionAndOrientation(self.DRONE_IDS[nth_drone],
+        #                                   pos,
+        #                                   p.getQuaternionFromEuler(rpy),
+        #                                   physicsClientId=self.PYB_CLIENT)
+        # # Note: the base's velocity only stored and not used #
+        # p.resetBaseVelocity(self.DRONE_IDS[nth_drone],
+        #                     vel,
+        #                     ang_v,  # ang_vel not computed by DYN
+        #                     physicsClientId=self.PYB_CLIENT)
+        self.pos[nth_drone, :] = pos.copy()
+        self.rpy[nth_drone, :] = rpy.copy()
+        self.vel[nth_drone, :] = vel.copy()
+        self.ang_v[nth_drone, :] = ang_v.copy()
         # Store the roll, pitch, yaw rates for the next step #
         self.rpy_rates[nth_drone, :] = X_dot[6:9]
 
