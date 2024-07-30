@@ -598,9 +598,6 @@ class Quadrotor(BaseAviary):
                                theta_dot,
                                # 60 * (60 * (P - theta) - theta_dot)
                                -143.9 * theta - 13.02 * theta_dot + 122.5 * P
-                               # 2.027 * (64.2 * P - 72.76 * theta) - 13.75 * theta_dot
-                               # -267.8 * theta - 13.41 * theta_dot + 187.5 * P
-                               # - 44.43 * theta - 10.33 * theta_dot + 32.81 * P
                                )
             # Define observation.
             Y = cs.vertcat(x, x_dot, z, z_dot, theta, theta_dot)
@@ -883,6 +880,7 @@ class Quadrotor(BaseAviary):
         self.DISTURBANCE_MODES['dynamics']['dim'] = int(self.QUAD_TYPE)
         super()._setup_disturbances()
 
+    # noinspection PyUnreachableCode
     def _preprocess_control(self, action):
         """Converts the action passed to .step() into motors' RPMs (ndarray of shape (4,)).
 
@@ -988,10 +986,7 @@ class Quadrotor(BaseAviary):
         """
 
         full_state = self._get_drone_state_vector(0)
-        pos, _, rpy, vel, ang_v, _ = np.split(full_state, [3, 7, 10, 13, 16])
-        # print(rpy)
-        # if rpy[1] > 0.2:
-        #     print([pos, rpy, vel, ang_v])
+        pos, _, rpy, vel, ang_v, rpy_rate, _ = np.split(full_state, [3, 7, 10, 13, 16, 19])
         if self.QUAD_TYPE == QuadType.ONE_D:
             # {z, z_dot}.
             self.state = np.hstack([pos[2], vel[2]]).reshape((2,))

@@ -223,9 +223,11 @@ class BaseAviary(BenchmarkEnv):
         self.rpy = np.zeros((self.NUM_DRONES, 3))
         self.vel = np.zeros((self.NUM_DRONES, 3))
         self.ang_v = np.zeros((self.NUM_DRONES, 3))
-        if (self.PHYSICS == Physics.DYN or self.PHYSICS == Physics.RK4
-                or self.PHYSICS == Physics.DYN_2D or self.PHYSICS == Physics.DYN_SI):
-            self.rpy_rates = np.zeros((self.NUM_DRONES, 3))
+        self.rpy_rates = np.zeros((self.NUM_DRONES, 3))
+        # if (self.PHYSICS == Physics.DYN or self.PHYSICS == Physics.RK4
+        #         or self.PHYSICS == Physics.DYN_2D or self.PHYSICS == Physics.DYN_SI):
+        #     self.rpy_rates = np.zeros((self.NUM_DRONES, 3))
+
         # Set PyBullet's parameters.
         p.resetSimulation(physicsClientId=self.PYB_CLIENT)
         p.setGravity(0, 0, -self.GRAVITY_ACC, physicsClientId=self.PYB_CLIENT)
@@ -288,7 +290,7 @@ class BaseAviary(BenchmarkEnv):
                 elif self.PHYSICS == Physics.DYN_2D:
                     self._dynamics_2d(rpm, i)
                 elif self.PHYSICS == Physics.DYN_SI:
-                    self._dynamics_si(clipped_action, i)
+                    self._dynamics_si(clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.RK4:
                     self._dynamics_rk4(clipped_action[i, :], i)
                 elif self.PHYSICS == Physics.PYB_GND:
@@ -423,7 +425,7 @@ class BaseAviary(BenchmarkEnv):
         state = np.hstack([
             self.pos[nth_drone, :], self.quat[nth_drone, :],
             self.rpy[nth_drone, :], self.vel[nth_drone, :],
-            self.ang_v[nth_drone, :], self.last_clipped_action[nth_drone, :]
+            self.ang_v[nth_drone, :], self.rpy_rates[nth_drone, :], self.last_clipped_action[nth_drone, :]
         ])
         # state.reshape(20, )
         return state.copy()
@@ -844,7 +846,6 @@ class BaseAviary(BenchmarkEnv):
                            # 60 * (60 * (P - theta) - theta_dot)
                            -143.9 * theta - 13.02 * theta_dot + 122.5 * Pitch
                            )
-
         self.X_dot_fun = cs.Function("X_dot", [X, U], [X_dot])
 
     def _show_drone_local_axes(self, nth_drone):
