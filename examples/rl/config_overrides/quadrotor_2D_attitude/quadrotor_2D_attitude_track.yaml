@@ -5,12 +5,12 @@ task_config:
   pyb_freq: 1200
   physics: pyb
   quad_type: 4
-  normalized_rl_action_space: True
+  normalized_rl_action_space: False
 
   init_state:
     init_x: 0
     init_x_dot: 0
-    init_z: 1.15
+    init_z: 1.0
     init_z_dot: 0
     init_theta: 0
     init_theta_dot: 0
@@ -20,20 +20,20 @@ task_config:
   init_state_randomization_info:
     init_x:
       distrib: 'uniform'
-      low: -0.01
-      high: 0.01
+      low: -0.02
+      high: 0.02
     init_x_dot:
       distrib: 'uniform'
-      low: -0.01
-      high: 0.01
+      low: -0.02
+      high: 0.02
     init_z:
       distrib: 'uniform'
-      low: -0.01
-      high: 0.01
+      low: -0.02
+      high: 0.02
     init_z_dot:
       distrib: 'uniform'
-      low: -0.01
-      high: 0.01
+      low: -0.02
+      high: 0.02
     init_theta:
       distrib: 'uniform'
       low: -0.02
@@ -60,9 +60,14 @@ task_config:
   obs_goal_horizon: 1
 
   # RL Reward
-  rew_state_weight: [1.0, 0.01, 1.0, 0.01, 0.1, 0.1]
+  rew_state_weight: [10.0, 0.1, 10.0, 0.1, 0.1, 0.001]
   rew_act_weight: 0.1
   rew_exponential: True
+
+  disturbances:
+    observation:
+      - disturbance_func: white_noise
+        std: [0.02, 0.02, 0.04, 0.04, 0.04, 0.1, 0., 0., 0., 0., 0., 0.]
 
 #  constraints:
 #    - constraint_form: default_constraint
