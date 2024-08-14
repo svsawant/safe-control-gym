@@ -1,4 +1,4 @@
-'''Model Predictive Control.'''
+"""Q learning for Model Predictive Control."""
 
 from copy import deepcopy
 
@@ -14,7 +14,7 @@ from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constr
 
 
 class Qlearning_MPC(BaseController):
-    '''MPC with full nonlinear model.'''
+    """MPC with full nonlinear model."""
 
     def __init__(
             self,
@@ -34,7 +34,7 @@ class Qlearning_MPC(BaseController):
             seed: int = 0,
             **kwargs
     ):
-        '''Creates task and controller.
+        """Creates task and controller.
 
         Args:
             env_func (Callable): function to instantiate task/environment.
@@ -49,7 +49,7 @@ class Qlearning_MPC(BaseController):
             additional_constraints (list): List of additional constraints
             use_gpu (bool): False (use cpu) True (use cuda).
             seed (int): random seed.
-        '''
+        """
         super().__init__(env_func, output_dir, use_gpu, seed, **kwargs)
         for k, v in locals().items():
             if k != 'self' and k != 'kwargs' and '__' not in k:
@@ -88,21 +88,21 @@ class Qlearning_MPC(BaseController):
     def add_constraints(self,
                         constraints
                         ):
-        '''Add the constraints (from a list) to the system.
+        """Add the constraints (from a list) to the system.
 
         Args:
             constraints (list): List of constraints controller is subject too.
-        '''
+        """
         self.constraints, self.state_constraints_sym, self.input_constraints_sym = reset_constraints(constraints + self.constraints.constraints)
 
     def remove_constraints(self,
                            constraints
                            ):
-        '''Remove constraints from the current constraint list.
+        """Remove constraints from the current constraint list.
 
         Args:
             constraints (list): list of constraints to be removed.
-        '''
+        """
         old_constraints_list = self.constraints.constraints
         for constraint in constraints:
             assert constraint in self.constraints.constraints, \
@@ -111,11 +111,11 @@ class Qlearning_MPC(BaseController):
         self.constraints, self.state_constraints_sym, self.input_constraints_sym = reset_constraints(old_constraints_list)
 
     def close(self):
-        '''Cleans up resources.'''
+        """Cleans up resources."""
         self.env.close()
 
     def reset(self):
-        '''Prepares for training or evaluation.'''
+        """Prepares for training or evaluation."""
         # Setup reference input.
         if self.env.TASK == Task.STABILIZATION:
             self.mode = 'stabilization'
@@ -136,7 +136,7 @@ class Qlearning_MPC(BaseController):
         self.setup_results_dict()
 
     def set_dynamics_func(self):
-        '''Updates symbolic dynamics with actual control frequency.'''
+        """Updates symbolic dynamics with actual control frequency."""
         # self.dynamics_func = cs.integrator('fd', 'rk',
         #                                   {
         #                                    'x': self.model.x_sym,
@@ -150,7 +150,7 @@ class Qlearning_MPC(BaseController):
                                          self.dt)
 
     def compute_initial_guess(self, init_state, goal_states, x_lin, u_lin):
-        '''Use LQR to get an initial guess of the '''
+        """Use LQR to get an initial guess of the """
         dfdxdfdu = self.model.df_func(x=x_lin, u=u_lin)
         dfdx = dfdxdfdu['dfdx'].toarray()
         dfdu = dfdxdfdu['dfdu'].toarray()
@@ -168,7 +168,7 @@ class Qlearning_MPC(BaseController):
         return x_guess, u_guess
 
     def setup_optimizer(self):
-        '''Sets up nonlinear optimization problem.'''
+        """Sets up nonlinear optimization problem."""
         nx, nu = self.model.nx, self.model.nu
         T = self.T
         # Define optimizer and variables.
@@ -253,7 +253,7 @@ class Qlearning_MPC(BaseController):
                       obs,
                       info=None
                       ):
-        '''Solves nonlinear mpc problem to get next action.
+        """Solves nonlinear mpc problem to get next action.
 
         Args:
             obs (ndarray): Current state/observation.
@@ -261,7 +261,7 @@ class Qlearning_MPC(BaseController):
 
         Returns:
             action (ndarray): Input/action to the task/env.
-        '''
+        """
 
         opti_dict = self.opti_dict
         opti = opti_dict['opti']
@@ -308,7 +308,7 @@ class Qlearning_MPC(BaseController):
         return action
 
     def get_references(self):
-        '''Constructs reference states along mpc horizon.(nx, T+1).'''
+        """Constructs reference states along mpc horizon.(nx, T+1)."""
         if self.env.TASK == Task.STABILIZATION:
             # Repeat goal state for horizon steps.
             goal_states = np.tile(self.env.X_GOAL.reshape(-1, 1), (1, self.T + 1))
@@ -326,7 +326,7 @@ class Qlearning_MPC(BaseController):
         return goal_states  # (nx, T+1).
 
     def setup_results_dict(self):
-        '''Setup the results dictionary to store run information.'''
+        """Setup the results dictionary to store run information."""
         self.results_dict = {'obs': [],
                              'reward': [],
                              'done': [],
@@ -350,7 +350,7 @@ class Qlearning_MPC(BaseController):
             max_steps=None,
             terminate_run_on_done=None
             ):
-        '''Runs evaluation with current policy.
+        """Runs evaluation with current policy.
 
         Args:
             render (bool): if to do real-time rendering.
@@ -358,7 +358,7 @@ class Qlearning_MPC(BaseController):
 
         Returns:
             dict: evaluation statisitcs, rendered frames.
-        '''
+        """
         if env is None:
             env = self.env
         if terminate_run_on_done is None:
@@ -440,16 +440,17 @@ class Qlearning_MPC(BaseController):
             self.results_dict['total_rmse_state_error'] = compute_state_rmse(self.results_dict['state'])
             self.results_dict['total_rmse_obs_error'] = compute_state_rmse(self.results_dict['obs'])
         except ValueError:
-            raise Exception('[ERROR] mpc.run().py: MPC could not find a solution for the first step given the initial conditions. '
+            raise Exception('[ERROR] mpc.run().py: MPC could not find a solution for '
+                            'the first step given the initial conditions. '
                             'Check to make sure initial conditions are feasible.')
         return deepcopy(self.results_dict)
 
     def reset_before_run(self, obs, info=None, env=None):
-        '''Reinitialize just the controller before a new run.
+        """Reinitialize just the controller before a new run.
 
         Args:
             obs (ndarray): The initial observation for the new run.
             info (dict): The first info of the new run.
             env (BenchmarkEnv): The environment to be used for the new run.
-        '''
+        """
         self.reset()

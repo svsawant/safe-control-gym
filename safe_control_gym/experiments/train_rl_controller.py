@@ -28,6 +28,7 @@ def train():
 
     set_seed_from_config(config)
     set_device_from_config(config)
+    print(config)
 
     # Define function to create task/env.
     env_func = partial(make,
@@ -43,6 +44,8 @@ def train():
                 use_gpu=config.use_gpu,
                 seed=config.seed,
                 **config.algo_config)
+    if 'pretrain_path' in config.keys():
+        ctrl.load(config.pretrain_path)
     ctrl.reset()
 
     # Training.
