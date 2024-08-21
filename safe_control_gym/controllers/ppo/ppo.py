@@ -252,7 +252,7 @@ class PPO(BaseController):
             if done:
                 assert 'episode' in info
                 ep_rmse_mean.append(np.array(mse).mean()**0.5)
-                ep_rmse_std.append(np.array(mse).std()**0.5)
+                ep_rmse_std.append(np.array(mse).std())
                 mse = []
                 ep_returns.append(info['episode']['r'])
                 ep_lengths.append(info['episode']['l'])
