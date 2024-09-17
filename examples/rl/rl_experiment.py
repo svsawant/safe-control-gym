@@ -12,7 +12,7 @@ from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 
 
-def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
+def run(gui=False, plot=True, n_episodes=10, n_steps=None, curr_path='.'):
     """Main function to run RL experiments.
 
     Args:
@@ -38,6 +38,8 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
     else:
         system = config.task
 
+    # config.task_config.disturbances.observation[0].std = [config.task_config.noise_scale*i
+    #                                                       for i in config.task_config.disturbances.observation[0].std]
     env_func = partial(make,
                        config.task,
                        **config.task_config)
@@ -51,7 +53,11 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
 
     # Load state_dict from trained.
     # ctrl.load(f'{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt')
-    ctrl.load(f'{curr_path}/models/{config.algo}/model_best.pt')
+    # ctrl.load(f'{curr_path}/models/{config.algo}/model_best.pt')
+    if 'pretrain_path' in config.keys():
+        ctrl.load(config.pretrain_path+"/model_latest.pt")
+    else:
+        ctrl.load(f'{curr_path}/models/{config.algo}/model_latest.pt')
 
     # Remove temporary files and directories
     shutil.rmtree(f'{curr_path}/temp', ignore_errors=True)
@@ -60,6 +66,9 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
     experiment = BaseExperiment(env, ctrl)
     results, metrics = experiment.run_evaluation(n_episodes=n_episodes, n_steps=n_steps)
     ctrl.close()
+    # metrics['noise_scale'] = config.task_config.noise_scale
+    # temp = config.pretrain_path+"/metric_"+str(config.task_config.noise_scale)+".npy"
+    # np.save(temp, metrics, allow_pickle=True)
 
     if plot is True:
         if system == Environment.CARTPOLE:

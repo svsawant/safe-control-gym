@@ -839,12 +839,12 @@ class BaseAviary(BenchmarkEnv):
         Pitch = cs.MX.sym('P')
         U = cs.vertcat(Thrust, Pitch)
         X_dot = cs.vertcat(x_dot,
-                           (18.112984649321753 * Thrust + 3.7613154938448576) * cs.sin(theta),
+                           (18.1130 * Thrust + 3.6800) * cs.sin(theta) - 0.0080,
                            z_dot,
-                           (18.112984649321753 * Thrust + 3.7613154938448576) * cs.cos(theta) - g,
+                           (18.1130 * Thrust + 3.6800) * cs.cos(theta) - g,
                            theta_dot,
                            # 60 * (60 * (P - theta) - theta_dot)
-                           -143.9 * theta - 13.02 * theta_dot + 122.5 * Pitch
+                           -140.8000 * theta -13.4000 * theta_dot + 124.8000 * Pitch
                            )
         self.X_dot_fun = cs.Function("X_dot", [X, U], [X_dot])
 

@@ -22,7 +22,6 @@ def train():
     fac = ConfigFactory()
     config = fac.merge()
     config.algo_config['training'] = True
-    config.use_gpu = True
 
     shutil.rmtree(config.output_dir, ignore_errors=True)
 

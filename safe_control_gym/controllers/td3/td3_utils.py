@@ -30,21 +30,24 @@ class TD3Agent:
                  actor_lr=0.001,
                  critic_lr=0.001,
                  activation='relu',
+                 device=None,
                  **kwargs):
         # params
         self.obs_space = obs_space
         self.act_space = act_space
         low, high = act_space.low, act_space.high
-        self.action_space_low = torch.FloatTensor(low)
-        self.action_space_high = torch.FloatTensor(high)
+        self.action_space_low = torch.FloatTensor(low).to(device)
+        self.action_space_high = torch.FloatTensor(high).to(device)
 
         self.gamma = gamma
         self.eps = eps
         self.tau = tau
         self.activation = activation
+        self.device = device
 
         # model
-        self.ac = MLPActorCritic(obs_space, act_space,eps=self.eps, hidden_dims=[hidden_dim] * 2, activation=self.activation)
+        self.ac = MLPActorCritic(obs_space, act_space, eps=self.eps,
+                                 hidden_dims=[hidden_dim] * 2, activation=self.activation)
 
         # target networks
         self.ac_targ = deepcopy(self.ac)
@@ -115,7 +118,7 @@ class TD3Agent:
         critic_loss = q1_loss + q2_loss
         return critic_loss
 
-    def update(self, batch):
+    def update(self, batch, device=None):
         """Updates model parameters based on current training batch."""
         results = defaultdict(list)
 

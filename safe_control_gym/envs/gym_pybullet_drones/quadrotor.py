@@ -382,7 +382,6 @@ class Quadrotor(BaseAviary):
             obs (ndarray): The initial state of the environment.
             info (dict): A dictionary with information about the dynamics and constraints symbolic models.
         """
-
         super().before_reset(seed=seed)
         # PyBullet simulation reset.
         super()._reset_simulation()
@@ -901,8 +900,16 @@ class Quadrotor(BaseAviary):
             self.current_physical_action = self.current_physical_action + self.adv_action
         self.current_noisy_physical_action = self.current_physical_action
 
+        # Identified dynamics model works with collective thrust and pitch directly
+        # No need to compute RPMs, (save compute)
+        self.current_clipped_action = np.clip(self.current_noisy_physical_action,
+                                              self.physical_action_bounds[0],
+                                              self.physical_action_bounds[1])[0]
+        if self.PHYSICS == Physics.DYN_SI:
+            return None
+
         if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE or self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE_5S:
-            collective_thrust, pitch = action
+            collective_thrust, pitch = self.current_clipped_action
 
             # rpm = self.attitude_control._dslPIDAttitudeControl(individual_thrust,
             # self.quat[0], np.array([0, pitch, 0])) # input thrust is pwm
@@ -969,7 +976,6 @@ class Quadrotor(BaseAviary):
 
                 thrust = (1 + self.norm_act_scale * action[0]) * self.hover_thrust
                 # thrust = self.attitude_control.thrust2pwm(thrust)
-
                 # thrust = self.HOVER_RPM * (1+0.05*action[0])
 
                 action = np.array([thrust, action[1]])
@@ -984,7 +990,6 @@ class Quadrotor(BaseAviary):
         Returns:
             obs (ndarray): The state of the quadrotor, of size 2 or 6 depending on QUAD_TYPE.
         """
-
         full_state = self._get_drone_state_vector(0)
         pos, _, rpy, vel, ang_v, rpy_rate, _ = np.split(full_state, [3, 7, 10, 13, 16, 19])
         if self.QUAD_TYPE == QuadType.ONE_D:
@@ -998,7 +1003,7 @@ class Quadrotor(BaseAviary):
         elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
             # {x, x_dot, z, z_dot, theta, theta_dot}.
             self.state = np.hstack(
-                [pos[0], vel[0], pos[2], vel[2], rpy[1], ang_v[1]]
+                [pos[0], vel[0], pos[2], vel[2], rpy[1], rpy_rate[1]]
             ).reshape((6,))
         elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE_5S:
             # {x, x_dot, z, z_dot, theta, theta_dot}.
@@ -1021,18 +1026,17 @@ class Quadrotor(BaseAviary):
         #             '[WARNING]: observation was clipped in Quadrotor._get_observation().'
         #         )
 
-        # Apply observation disturbance.
-        obs = deepcopy(self.state)
-
         # Concatenate goal info (references state(s)) for RL.
         # Plus two because ctrl_step_counter has not incremented yet, and we want to return the obs (which would be
         # ctrl_step_counter + 1 as the action has already been applied), and the next state (+ 2) for the RL to see
         # the next state.
+        obs = deepcopy(self.state)
         if self.at_reset:
             obs = self.extend_obs(obs, 1)
         else:
             obs = self.extend_obs(obs, self.ctrl_step_counter + 2)
 
+        # Apply observation disturbance.
         if 'observation' in self.disturbances:
             obs = self.disturbances['observation'].apply(obs, self)
         return obs
@@ -1046,7 +1050,7 @@ class Quadrotor(BaseAviary):
         # RL cost.
         if self.COST == Cost.RL_REWARD:
             state = self.state
-            act = np.asarray(self.current_noisy_physical_action)
+            act = np.asarray(self.current_clipped_action)
             act_error = act - self.U_GOAL
             # Quadratic costs w.r.t state and action
             # TODO: consider using multiple future goal states for cost in tracking
