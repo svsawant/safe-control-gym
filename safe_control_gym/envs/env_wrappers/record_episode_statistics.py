@@ -1,4 +1,4 @@
-'''Record Episode Statistics.'''
+"""Record Episode Statistics."""
 
 import time
 from collections import deque
@@ -11,10 +11,10 @@ from safe_control_gym.envs.env_wrappers.vectorized_env.vec_env import VecEnvWrap
 
 
 class RecordEpisodeStatistics(gym.Wrapper):
-    '''Keep track of episode length and returns per instantiated env
+    """Keep track of episode length and returns per instantiated env
 
        Based on OpenAI's Gym wrapper record_episode_statistics.py
-    '''
+    """
 
     def __init__(self,
                  env,
@@ -38,12 +38,12 @@ class RecordEpisodeStatistics(gym.Wrapper):
                     init_value,
                     mode='accumulate'
                     ):
-        '''Adds a specific stat to be tracked (accumulate|queue).
+        """Adds a specific stat to be tracked (accumulate|queue).
 
         Modes to track stats
             * accumulate: rolling sum, e.g. total # of constraint violations during training.
             * queue: finite, individual storage, e.g. returns, lengths, constraint costs.
-        '''
+        """
         self.episode_stats[name] = init_value
         if mode == 'accumulate':
             self.accumulated_stats[name] = init_value
@@ -90,10 +90,10 @@ class RecordEpisodeStatistics(gym.Wrapper):
 
 
 class VecRecordEpisodeStatistics(VecEnvWrapper):
-    '''A vectorized wrapper that records episodic statistics.
+    """A vectorized wrapper that records episodic statistics.
 
     E.g. episode lengths, returns, constraint violations.
-    '''
+    """
 
     def __init__(self,
                  venv,
@@ -116,7 +116,7 @@ class VecRecordEpisodeStatistics(VecEnvWrapper):
                     init_value,
                     mode='accumulate'
                     ):
-        '''Adds a specific stat to be tracked (accumulated).'''
+        """Adds a specific stat to be tracked (accumulated)."""
         self.episode_stats[name] = [init_value for _ in range(self.num_envs)]
         if mode == 'accumulate':
             self.accumulated_stats[name] = init_value

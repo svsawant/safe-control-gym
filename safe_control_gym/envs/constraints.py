@@ -178,7 +178,7 @@ class Constraint:
             raise ValueError('[ERROR] the tolerance dimension does not match the number of constraints.')
 
 
-class QuadraticContstraint(Constraint):
+class QuadraticConstraint(Constraint):
     '''Constraint class for constraints of the form x.T @ P @ x <= b.'''
 
     def __init__(self,
@@ -352,9 +352,9 @@ class DefaultConstraint(BoundedConstraint):
         Args:
             env (BenchmarkEnv): Environment for the constraint.
             lower_bounds (list, np.array): 1D array or list of the lower bounds. Length must match
-                the environemt observation space dimension. If none, the env defaults are used
+                the environment observation space dimension. If none, the env defaults are used
             upper_bounds (list, np.array): 1D array or list of the lower bounds. Length must match
-                the environemt observation space dimension. If None, the env defaults are used.
+                the environment observation space dimension. If None, the env defaults are used.
             strict (optional, bool): Whether the constraint is violated also when equal to its threshold.
             tolerance (float): The distance at which is_almost_active(env) triggers.
             decimals (optional, int): Specifies the number of decimal places to round the constraint evaluation too.
@@ -400,7 +400,7 @@ class DefaultConstraint(BoundedConstraint):
 class SymmetricStateConstraint(BoundedConstraint):
     '''Symmetric state bound constraint.
 
-    Note: speficially intended for Cartpole and Safe Exploration (Dalal 2018).
+    Note: specially intended for Cartpole and Safe Exploration (Dalal 2018).
     '''
 
     def __init__(self,
@@ -420,9 +420,9 @@ class SymmetricStateConstraint(BoundedConstraint):
             constrained_variable (ConstrainedVariableType): Specifies the input type to the constraint as a constraint
                                                          that acts on the state, input, or both.
             bound (list, np.array): 1D array or list of the bounds. Length must match
-                the environemt observation space dimension. If none, the env defaults are used
+                the environment observation space dimension. If none, the env defaults are used
             strict (optional, bool): Whether the constraint is violated also when equal to its threshold.
-            active_dims (list of ints): Filters the constraint to only act on select certian dimensions.
+            active_dims (list of ints): Filters the constraint to only act on select certain dimensions.
             tolerance (list or np.array): The distance from the constraint at which is_almost_active returns True.
             decimals (optional, int): Specifies the number of decimal places to round the constraint evaluation too.
         '''
@@ -639,7 +639,7 @@ class ConstraintList:
 
 GENERAL_CONSTRAINTS = {
     'linear_constraint': LinearConstraint,
-    'quadratic_constraint': QuadraticContstraint,
+    'quadratic_constraint': QuadraticConstraint,
     'bounded_constraint': BoundedConstraint,
     'default_constraint': DefaultConstraint
 }
@@ -649,7 +649,7 @@ def create_constraint_list(constraint_specs, available_constraints, env):
     '''Creates a ConstraintList from yaml constraint specification.
 
     Args:
-        constraint_specs (list): List of dicts defining the constraints info.
+        constraint_specs (list): List of dicts defining the constraints' info.
         available_constraints (dict): Dict of the constraints that are available
         env (BenchmarkEnv): The environment for which the constraints will be applied
     '''

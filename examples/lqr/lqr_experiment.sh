@@ -2,12 +2,12 @@
 
 # LQR Experiment.
 
-# SYS='cartpole'
+#SYS='cartpole'
 # SYS='quadrotor_2D'
 SYS='quadrotor_2D_attitude'
 # SYS='quadrotor_3D'
 
-# TASK='stabilization'
+#TASK='stabilization'
 TASK='tracking'
 
 ALGO='lqr'

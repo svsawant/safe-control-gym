@@ -1,7 +1,7 @@
-'''PID control class for Crazyflies.
+"""PID control class for Crazyflies.
 
 Based on work conducted at UTIAS' DSL by SiQi Zhou and James Xu.
-'''
+"""
 
 import math
 import os
@@ -15,7 +15,7 @@ from safe_control_gym.envs.benchmark_env import Environment, Task
 
 
 class PID(BaseController):
-    '''PID Class.'''
+    """PID Class."""
 
     def __init__(self,
                  env_func=None,
@@ -34,7 +34,7 @@ class PID(BaseController):
                  max_pwm: float = 65535,
                  **kwargs
                  ):
-        '''Common control classes __init__ method.
+        """Common control classes __init__ method.
 
         Args:
             g (float, optional): The gravitational acceleration in m/s^2.
@@ -50,7 +50,7 @@ class PID(BaseController):
             pwm2rpm_const (float, optional): PWM-to-RPM constant factor.
             min_pwm (float, optional): Minimum PWM.
             max_pwm (float, optional): Maximum PWM.
-        '''
+        """
 
         super().__init__(env_func, **kwargs)
 
@@ -81,7 +81,7 @@ class PID(BaseController):
         self.reset()
 
     def select_action(self, obs, info=None):
-        '''Determine the action to take at the current timestep.
+        """Determine the action to take at the current timestep.
 
         Args:
             obs (ndarray): The observation at this timestep.
@@ -89,12 +89,12 @@ class PID(BaseController):
 
         Returns:
             action (ndarray): The action chosen by the controller.
-        '''
+        """
 
         step = self.extract_step(info)
 
         # Step the environment and print all returned information.
-        if self.env.QUAD_TYPE == 2 or self.env.QUAD_TYPE == 4:
+        if self.env.QUAD_TYPE == 2 or self.env.QUAD_TYPE == 4 or self.env.QUAD_TYPE == 5:
             cur_pos = np.array([obs[0], 0, obs[2]])
             cur_quat = np.array(p.getQuaternionFromEuler([0, obs[4], 0]))
             cur_vel = np.array([obs[1], 0, obs[3]])
@@ -103,7 +103,7 @@ class PID(BaseController):
             cur_quat = np.array(p.getQuaternionFromEuler([obs[6], obs[7], obs[8]]))
             cur_vel = np.array([obs[1], obs[3], obs[5]])
 
-        if self.env.QUAD_TYPE == 2 or self.env.QUAD_TYPE == 4:
+        if self.env.QUAD_TYPE == 2 or self.env.QUAD_TYPE == 4 or self.env.QUAD_TYPE == 5:
             if self.env.TASK == Task.TRAJ_TRACKING:
                 target_pos = np.array([self.reference[step, 0],
                                        0,
@@ -135,21 +135,18 @@ class PID(BaseController):
                                                                      cur_vel,
                                                                      target_pos,
                                                                      target_rpy,
-                                                                     target_vel
-                                                                     )
-        rpm = self._dslPIDAttitudeControl(thrust,
-                                          cur_quat,
-                                          computed_target_rpy,
-                                          target_rpy_rates
-                                          )
-
-        action = rpm
-        action = self.KF * action**2
+                                                                     target_vel)
+        action = np.zeros(2)
         if self.env.QUAD_TYPE == 2:
+            rpm = self._dslPIDAttitudeControl(thrust,
+                                              cur_quat,
+                                              computed_target_rpy,
+                                              target_rpy_rates)
+            action = rpm
+            action = self.KF * action ** 2
             action = np.array([action[0] + action[3], action[1] + action[2]])
-        elif self.env.QUAD_TYPE == 4:  # 2D quadrotor with attitude control
-            action = np.array([self.env.attitude_control.pwm2thrust(thrust/3)*4, computed_target_rpy[1]])
-
+        elif self.env.QUAD_TYPE == 4 or self.env.QUAD_TYPE == 5:  # 2D quadrotor with attitude control
+            action = np.array([self.env.attitude_control.pwm2thrust(thrust / 3) * 4, computed_target_rpy[1]])
         return action
 
     def _dslPIDPositionControl(self,
@@ -160,7 +157,7 @@ class PID(BaseController):
                                target_rpy,
                                target_vel
                                ):
-        '''DSL's CF2.x PID position control.
+        """DSL's CF2.x PID position control.
 
         Args:
             cur_pos (ndarray): (3,1)-shaped array of floats containing the current position.
@@ -174,7 +171,7 @@ class PID(BaseController):
             thrust (float): The target thrust along the drone z-axis.
             target_euler (ndarray): (3,1)-shaped array of floats containing the target roll, pitch, and yaw.
             pos_e (float): The current position error.
-        '''
+        """
 
         cur_rotation = np.array(p.getMatrixFromQuaternion(cur_quat)).reshape(3, 3)
         pos_e = target_pos - cur_pos
@@ -199,7 +196,8 @@ class PID(BaseController):
         target_euler = (Rotation.from_matrix(target_rotation)).as_euler('XYZ', degrees=False)
 
         if np.any(np.abs(target_euler) > math.pi):
-            raise ValueError('\n[ERROR] ctrl it', self.control_counter, 'in Control._dslPIDPositionControl(), values outside range [-pi,pi]')
+            raise ValueError('\n[ERROR] ctrl it', self.control_counter, 'in Control._dslPIDPositionControl(), '
+                                                                        'values outside range [-pi,pi]')
 
         return thrust, target_euler, pos_e
 
@@ -209,7 +207,7 @@ class PID(BaseController):
                                target_euler,
                                target_rpy_rates
                                ):
-        '''DSL's CF2.x PID attitude control.
+        """DSL's CF2.x PID attitude control.
 
         Args:
             thrust (float): The target thrust along the drone z-axis.
@@ -219,7 +217,7 @@ class PID(BaseController):
 
         Returns:
             rpm (ndarray): (4,1)-shaped array of integers containing the RPMs to apply to each of the 4 motors.
-        '''
+        """
 
         cur_rotation = np.array(p.getMatrixFromQuaternion(cur_quat)).reshape(3, 3)
         cur_rpy = np.array(p.getEulerFromQuaternion(cur_quat))
@@ -245,22 +243,22 @@ class PID(BaseController):
         return self.PWM2RPM_SCALE * pwm + self.PWM2RPM_CONST
 
     def reset(self):
-        '''Resets the control classes. The previous step's and integral
+        """Resets the control classes. The previous step's and integral
            errors for both position and attitude are set to zero.
-        '''
+        """
         self.model = self.get_prior(self.env, self.prior_info)
         self.GRAVITY = self.g * self.model.quad_mass  # The gravitational force (g*M) acting on each drone.
         self.env.reset()
         self.reset_before_run()
 
     def reset_before_run(self, obs=None, info=None, env=None):
-        '''Reinitialize just the controller before a new run.
+        """Reinitialize just the controller before a new run.
 
         Args:
             obs (ndarray): The initial observation for the new run.
             info (dict): The first info of the new run.
             env (BenchmarkEnv): The environment to be used for the new run.
-        '''
+        """
         # Clear PID control variables.
         self.integral_pos_e = np.zeros(3)
         self.last_rpy = np.zeros(3)
@@ -268,23 +266,23 @@ class PID(BaseController):
         self.setup_results_dict()
 
     def close(self):
-        '''Shuts down and cleans up lingering resources.'''
+        """Shuts down and cleans up lingering resources."""
         self.env.close()
 
     def save(self, path):
-        '''Saves integral errors to checkpoint path.
+        """Saves integral errors to checkpoint path.
 
         Args:
             path (str): The path where to the saved integral errors.
-        '''
+        """
         path_dir = os.path.dirname(path)
         os.makedirs(path_dir, exist_ok=True)
         np.save(path, (self.integral_pos_e, self.last_rpy, self.integral_rpy_e))
 
     def load(self, path):
-        '''Restores integral errors given checkpoint path.
+        """Restores integral errors given checkpoint path.
 
         Args:
             path (str): The path where the integral errors are saved.
-        '''
+        """
         self.integral_pos_e, self.last_rpy, self.integral_rpy_e = np.load(path)

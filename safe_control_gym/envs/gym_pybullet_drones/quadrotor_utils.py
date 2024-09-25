@@ -1,15 +1,16 @@
-'''Helper functions for the quadrotor environment.'''
+"""Helper functions for the quadrotor environment."""
 
 from abc import ABC
 from enum import IntEnum
 
 import numpy as np
 import pybullet as p
+from safe_control_gym.math_and_models.transformations import quaternion_rotation_matrix, euler_from_quaternion
 from scipy.spatial.transform import Rotation
 
 
 class QuadType(IntEnum):
-    '''Quadrotor types numeration class.'''
+    """Quadrotor types numeration class."""
 
     ONE_D = 1  # One-dimensional (along z) movement.
     TWO_D = 2  # Two-dimensional (in the x-z plane) movement.
@@ -19,7 +20,7 @@ class QuadType(IntEnum):
 
 
 def cmd2pwm(thrust, pwm2rpm_scale, pwm2rpm_const, ct, pwm_min, pwm_max):
-    '''Generic cmd to pwm function.
+    """Generic cmd to pwm function.
 
     For 1D, thrust is the total of all 4 motors; for 2D, 1st thrust is total of motor
     1 & 4, 2nd thrust is total of motor 2 & 3; for 4D, thrust is thrust of each motor.
@@ -34,7 +35,7 @@ def cmd2pwm(thrust, pwm2rpm_scale, pwm2rpm_const, ct, pwm_min, pwm_max):
 
     Returns:
         ndarray: array of length 4 containing PWM.
-    '''
+    """
     n_motor = 4 // int(thrust.size)
     thrust = np.clip(thrust, np.zeros_like(thrust), None)  # Make sure thrust is not negative.
     motor_pwm = (np.sqrt(thrust / n_motor / ct) - pwm2rpm_const) / pwm2rpm_scale
@@ -51,7 +52,7 @@ def cmd2pwm(thrust, pwm2rpm_scale, pwm2rpm_const, ct, pwm_min, pwm_max):
 
 
 def pwm2rpm(pwm, pwm2rpm_scale, pwm2rpm_const):
-    '''Computes motor squared rpm from pwm.
+    """Computes motor squared rpm from pwm.
 
     Args:
         pwm (ndarray): Array of length 4 containing PWM.
@@ -60,7 +61,7 @@ def pwm2rpm(pwm, pwm2rpm_scale, pwm2rpm_const):
 
     Returns:
         ndarray: Array of length 4 containing RPMs.
-    '''
+    """
     rpm = pwm2rpm_scale * pwm + pwm2rpm_const
     return rpm
 
@@ -157,6 +158,8 @@ class AttitudeControl(ABC):
         sim_timestep = self.sim_timestep
         cur_rotation = np.array(p.getMatrixFromQuaternion(cur_quat)).reshape(3, 3)
         cur_rpy = np.array(p.getEulerFromQuaternion(cur_quat))
+        # cur_rotation = quaternion_rotation_matrix(cur_quat)
+        # cur_rpy = euler_from_quaternion(cur_quat)
         target_quat = (Rotation.from_euler('XYZ', target_euler, degrees=False)).as_quat()
         w, x, y, z = target_quat
         target_rotation = (Rotation.from_quat([w, x, y, z])).as_matrix()

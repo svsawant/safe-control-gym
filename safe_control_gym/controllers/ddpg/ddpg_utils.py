@@ -7,6 +7,8 @@ import torch.nn as nn
 
 from safe_control_gym.controllers.sac.sac_utils import SACBuffer, soft_update
 from safe_control_gym.math_and_models.neural_networks import MLP
+from safe_control_gym.math_and_models.random_processes import OrnsteinUhlenbeckProcess
+from safe_control_gym.math_and_models.schedule import LinearSchedule
 
 # -----------------------------------------------------------------------------------
 #                   Agent
@@ -14,7 +16,7 @@ from safe_control_gym.math_and_models.neural_networks import MLP
 
 
 class DDPGAgent:
-    '''A DDPG class that encapsulates model, optimizer and update functions.'''
+    """A DDPG class that encapsulates model, optimizer and update functions."""
 
     def __init__(self,
                  obs_space,
@@ -46,20 +48,20 @@ class DDPGAgent:
         self.critic_opt = torch.optim.Adam(self.ac.q.parameters(), critic_lr)
 
     def to(self, device):
-        '''Puts agent to device.'''
+        """Puts agent to device."""
         self.ac.to(device)
         self.ac_targ.to(device)
 
     def train(self):
-        '''Sets training mode.'''
+        """Sets training mode."""
         self.ac.train()
 
     def eval(self):
-        '''Sets evaluation mode.'''
+        """Sets evaluation mode."""
         self.ac.eval()
 
     def state_dict(self):
-        '''Snapshots agent state.'''
+        """Snapshots agent state."""
         return {
             'ac': self.ac.state_dict(),
             'ac_targ': self.ac_targ.state_dict(),
@@ -68,14 +70,14 @@ class DDPGAgent:
         }
 
     def load_state_dict(self, state_dict):
-        '''Restores agent state.'''
+        """Restores agent state."""
         self.ac.load_state_dict(state_dict['ac'])
         self.ac_targ.load_state_dict(state_dict['ac_targ'])
         self.actor_opt.load_state_dict(state_dict['actor_opt'])
         self.critic_opt.load_state_dict(state_dict['critic_opt'])
 
     def compute_policy_loss(self, batch):
-        '''Returns policy loss(es) given batch of data.'''
+        """Returns policy loss(es) given batch of data."""
         obs = batch['obs']
         act = self.ac.actor(obs)
         q = self.ac.q(obs, act)
@@ -83,7 +85,7 @@ class DDPGAgent:
         return policy_loss
 
     def compute_q_loss(self, batch):
-        '''Returns q-value loss(es) given batch of data.'''
+        """Returns q-value loss(es) given batch of data."""
         obs, act, rew, next_obs, mask = batch['obs'], batch['act'], batch['rew'], batch['next_obs'], batch['mask']
         q = self.ac.q(obs, act)
 
@@ -97,7 +99,7 @@ class DDPGAgent:
         return critic_loss
 
     def update(self, batch):
-        '''Updates model parameters based on current training batch.'''
+        """Updates model parameters based on current training batch."""
         results = defaultdict(list)
 
         # actor update
@@ -150,7 +152,7 @@ class MLPQFunction(nn.Module):
 
 
 class MLPActorCritic(nn.Module):
-    '''Model for the actor-critic agent.'''
+    """Model for the actor-critic agent."""
 
     def __init__(self, obs_space, act_space, hidden_dims=(64, 64), activation='relu'):
         super().__init__()
@@ -180,14 +182,14 @@ class MLPActorCritic(nn.Module):
 # -----------------------------------------------------------------------------------
 
 class DDPGBuffer(SACBuffer):
-    '''Storage for replay buffer during training.
+    """Storage for replay buffer during training.
 
     Attributes:
         max_size (int): maximum size of the replay buffer.
         batch_size (int): number of samples (steps) per batch.
-        scheme (dict): describs shape & other info of data to be stored.
+        scheme (dict): describes shape & other info of data to be stored.
         keys (list): names of all data from scheme.
-    '''
+    """
 
     def __init__(self, obs_space, act_space, max_size, batch_size=None):
         self.max_size = max_size
@@ -224,7 +226,7 @@ class DDPGBuffer(SACBuffer):
 # -----------------------------------------------------------------------------------
 
 def make_action_noise_process(noise_config, act_space):
-    '''Construct a process for generating action noise during agent training.'''
+    """Construct a process for generating action noise during agent training."""
     process_func = noise_config.pop('func')
     std_config = noise_config.pop('std')
 

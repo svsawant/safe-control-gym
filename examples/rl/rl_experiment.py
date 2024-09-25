@@ -1,4 +1,4 @@
-'''This script tests the RL implementation.'''
+"""This script tests the RL implementation."""
 
 import shutil
 from functools import partial
@@ -12,8 +12,8 @@ from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 
 
-def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
-    '''Main function to run RL experiments.
+def run(gui=False, plot=True, n_episodes=10, n_steps=None, curr_path='.'):
+    """Main function to run RL experiments.
 
     Args:
         gui (bool): Whether to display the gui.
@@ -26,7 +26,7 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
         X_GOAL (np.ndarray): The goal (stabilization or reference trajectory) of the experiment.
         results (dict): The results of the experiment.
         metrics (dict): The metrics of the experiment.
-    '''
+    """
 
     # Create the configuration dictionary.
     fac = ConfigFactory()
@@ -41,6 +41,8 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
     else:
         system = config.task
 
+    # config.task_config.disturbances.observation[0].std = [config.task_config.noise_scale*i
+    #                                                       for i in config.task_config.disturbances.observation[0].std]
     env_func = partial(make,
                        config.task,
                        **config.task_config)
@@ -53,7 +55,12 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
                 output_dir=curr_path + '/temp')
 
     # Load state_dict from trained.
-    ctrl.load(f'{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt')
+    # ctrl.load(f'{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt')
+    # ctrl.load(f'{curr_path}/models/{config.algo}/model_best.pt')
+    if 'pretrain_path' in config.keys():
+        ctrl.load(config.pretrain_path+"/model_latest.pt")
+    else:
+        ctrl.load(f'{curr_path}/models/{config.algo}/model_latest.pt')
 
     # Remove temporary files and directories
     shutil.rmtree(f'{curr_path}/temp', ignore_errors=True)
@@ -62,6 +69,9 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
     experiment = BaseExperiment(env, ctrl)
     results, metrics = experiment.run_evaluation(n_episodes=n_episodes, n_steps=n_steps)
     ctrl.close()
+    # metrics['noise_scale'] = config.task_config.noise_scale
+    # temp = config.pretrain_path+"/metric_"+str(config.task_config.noise_scale)+".npy"
+    # np.save(temp, metrics, allow_pickle=True)
 
     if plot is True:
         if system == Environment.CARTPOLE:
@@ -79,6 +89,20 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
             graph1_2 = 9
             graph3_1 = 0
             graph3_2 = 4
+        elif system == 'quadrotor_4D':
+            graph1_1 = 4
+            graph1_2 = 5
+            graph3_1 = 0
+            graph3_2 = 2
+            graph4_1 = 0
+            graph4_2 = 1
+        elif system == 'quadrotor_5D':
+            graph1_1 = 4
+            graph1_2 = 5
+            graph3_1 = 0
+            graph3_2 = 2
+            graph4_1 = 0
+            graph4_2 = 1
 
         _, ax = plt.subplots()
         ax.plot(results['obs'][0][:, graph1_1], results['obs'][0][:, graph1_2], 'r--', label='RL Trajectory')
@@ -117,8 +141,46 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path='.'):
         ax3.set_box_aspect(0.5)
         ax3.legend(loc='upper right')
 
+        if config.task == Environment.QUADROTOR and system == 'quadrotor_2D':
+            # _, ax4 = plt.subplots()
+            # ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Thrust')
+            # ax4.set_ylabel(r'Thrust')
+            # _, ax5 = plt.subplots()
+            # ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Pitch')
+            # ax5.set_ylabel(r'Pitch')
+            _, ax6 = plt.subplots()
+            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Thrust')
+            ax6.set_ylabel(r'Pitch')
+            _, ax7 = plt.subplots()
+            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Pitch')
+            ax7.set_ylabel(r'Pitch rate')
+        if config.task == Environment.QUADROTOR and system == 'quadrotor_4D':
+            _, ax4 = plt.subplots()
+            ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Action: Thrust')
+            ax4.set_ylabel(r'Action: Thrust')
+            _, ax5 = plt.subplots()
+            ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Action: Pitch')
+            ax5.set_ylabel(r'Action: Pitch')
+            _, ax6 = plt.subplots()
+            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Obs: Pitch')
+            ax6.set_ylabel(r'Obs: Pitch')
+            _, ax7 = plt.subplots()
+            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Obs: Pitch rate')
+            ax7.set_ylabel(r'Obs: Pitch rate')
+        if config.task == Environment.QUADROTOR and system == 'quadrotor_5D':
+            _, ax4 = plt.subplots()
+            ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Action: Thrust')
+            ax4.set_ylabel(r'Action: Thrust')
+            _, ax5 = plt.subplots()
+            ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Action: Pitch')
+            ax5.set_ylabel(r'Action: Pitch')
+            _, ax6 = plt.subplots()
+            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Obs: Pitch')
+            ax6.set_ylabel(r'Obs: Pitch')
+
         plt.tight_layout()
         plt.show()
+        # plt.savefig(f"{curr_path}/perf.png")
 
     return env.X_GOAL, results, metrics
 

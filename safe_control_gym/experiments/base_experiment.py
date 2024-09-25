@@ -1,4 +1,4 @@
-'''To standardize training/evaluation interface.'''
+"""To standardize training/evaluation interface."""
 
 from collections import defaultdict
 from copy import deepcopy
@@ -14,7 +14,7 @@ from safe_control_gym.utils.utils import is_wrapped
 
 
 class BaseExperiment:
-    '''Generic Experiment Class.'''
+    """Generic Experiment Class."""
 
     def __init__(self,
                  env,
@@ -23,15 +23,15 @@ class BaseExperiment:
                  safety_filter=None,
                  verbose: bool = False,
                  ):
-        '''Creates a generic experiment class to run evaluations and collect standard metrics.
+        """Creates a generic experiment class to run evaluations and collect standard metrics.
 
         Args:
             env (BenchmarkEnv): The environment for the task.
             ctrl (BaseController): The controller for the task.
             train_env (BenchmarkEnv): The environment used for training.
             safety_filter (BaseSafetyFilter): The safety filter to filter the controller.
-            verbose (bool, optional): If to suppress BaseExperiment print statetments.
-        '''
+            verbose (bool, optional): If to suppress BaseExperiment print statements.
+        """
 
         self.metric_extractor = MetricExtractor()
         self.verbose = verbose
@@ -49,7 +49,7 @@ class BaseExperiment:
         self.reset()
 
     def run_evaluation(self, training=False, n_episodes=None, n_steps=None, done_on_max_steps=None, log_freq=None, verbose=True, **kwargs):
-        '''Evaluate a trained controller.
+        """Evaluate a trained controller.
 
         Args:
             training (bool): Whether run_evaluation is being run as part of a training loop or not.
@@ -60,7 +60,7 @@ class BaseExperiment:
         Returns:
             trajs_data (dict): The raw data from the executed runs.
             metrics (dict): The metrics calculated from the raw data.
-        '''
+        """
 
         if not training:
             self.reset()
@@ -79,7 +79,7 @@ class BaseExperiment:
         return dict(trajs_data), metrics
 
     def _execute_evaluations(self, n_episodes=None, n_steps=None, done_on_max_steps=None, log_freq=None, seeds=None):
-        '''Runs the experiments and collects all the required data.
+        """Runs the experiments and collects all the required data.
 
         Args:
             n_episodes (int): Number of runs to execute.
@@ -89,7 +89,7 @@ class BaseExperiment:
 
         Returns:
             trajs_data (defaultdict(list)): The raw data from the executed runs.
-        '''
+        """
 
         if n_episodes is None and n_steps is None:
             raise ValueError('One of n_episodes or n_steps must be defined.')
@@ -111,7 +111,16 @@ class BaseExperiment:
 
         if n_episodes is not None:
             while trajs < n_episodes:
+                # if the 'done' flag is not set, repeat stepping
                 action = self._select_action(obs=obs, info=info)
+                # try:
+                #     action = self._select_action(obs=obs, info=info)
+                # except RuntimeError:
+                #     print('RuntimeError in selecting action, using last available action')
+                #     if 'action' in locals():
+                #         action = action  # use the previous action
+                #     else:
+                #         action = np.zeros(self.env.action_space.shape)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
                     steps += 1
@@ -126,6 +135,9 @@ class BaseExperiment:
                         self.env.save_data()
                         obs, info = self._evaluation_reset(ctrl_data=ctrl_data, sf_data=sf_data)
                         break
+                    # elif
+                        # otherwise, keep stepping
+
         elif n_steps is not None:
             while steps < n_steps:
                 action = self._select_action(obs=obs, info=info)
@@ -156,7 +168,7 @@ class BaseExperiment:
         return munchify(trajs_data)
 
     def _select_action(self, obs, info):
-        '''Determines the executed action using the controller and safety filter.
+        """Determines the executed action using the controller and safety filter.
 
         Args:
             obs (ndarray): The observation at this timestep.
@@ -164,7 +176,7 @@ class BaseExperiment:
 
         Returns:
             action (ndarray): The action chosen by the controller and safety filter.
-        '''
+        """
         action = self.ctrl.select_action(obs, info)
 
         if self.safety_filter is not None:
@@ -177,7 +189,7 @@ class BaseExperiment:
         return action
 
     def _evaluation_reset(self, ctrl_data, sf_data, seed=None):
-        '''Resets the evaluation between runs.
+        """Resets the evaluation between runs.
 
         Args:
             ctrl_data (defaultdict): The controller specific data collected during execution.
@@ -187,7 +199,7 @@ class BaseExperiment:
         Returns:
             obs (ndarray): The initial observation.
             info (dict): The initial info.
-        '''
+        """
         if self.env.INFO_IN_RESET:
             obs, info = self.env.reset(seed=seed)
         else:
@@ -205,11 +217,11 @@ class BaseExperiment:
         return obs, info
 
     def launch_training(self, **kwargs):
-        '''Since the learning loop varies among controllers, can only delegate to its own `learn()` method.
+        """Since the learning loop varies among controllers, can only delegate to its own `learn()` method.
 
         Returns:
             trajs_data (defaultdict(list)): The raw data from the training.
-        '''
+        """
 
         self.reset()
         self.ctrl.learn(env=self.train_env, **kwargs)
@@ -225,21 +237,21 @@ class BaseExperiment:
         return dict(trajs_data)
 
     def compute_metrics(self, trajs_data):
-        '''Compute all standard metrics on the given trajectory data.
+        """Compute all standard metrics on the given trajectory data.
 
         Args:
             trajs_data (defaultdict(list)): The raw data from the executed runs.
 
         Returns:
             metrics (dict): The metrics calculated from the raw data.
-        '''
+        """
 
         metrics = self.metric_extractor.compute_metrics(data=trajs_data, verbose=self.verbose)
 
         return metrics
 
     def reset(self):
-        '''Resets the environments, controller, and safety filter to prepare for training or evaluation.'''
+        """Resets the environments, controller, and safety filter to prepare for training or evaluation."""
 
         self.env.reset()
         self.env.clear_data()
@@ -253,7 +265,7 @@ class BaseExperiment:
             self.train_env.clear_data()
 
     def close(self):
-        '''Closes the environments, controller, and safety filter.'''
+        """Closes the environments, controller, and safety filter."""
 
         self.env.close()
         self.ctrl.close()
@@ -265,12 +277,12 @@ class BaseExperiment:
             self.train_env.close()
 
     def load(self, ctrl_path=None, safety_filter_path=None):
-        '''Restores model of the controller and/or safety filter given checkpoint paths.
+        """Restores model of the controller and/or safety filter given checkpoint paths.
 
         Args:
             ctrl_path (str): The path used to load the controller's model.
             safety_filter_path (str): The path used to load the safety_filter's model.
-        '''
+        """
 
         if ctrl_path is not None:
             self.ctrl.load(ctrl_path)
@@ -278,12 +290,12 @@ class BaseExperiment:
             self.safety_filter.load(safety_filter_path)
 
     def save(self, ctrl_path=None, safety_filter_path=None):
-        '''Saves the model of the controller and/or safety filter given checkpoint paths.
+        """Saves the model of the controller and/or safety filter given checkpoint paths.
 
         Args:
             ctrl_path (str): The path used to save the controller's model.
             safety_filter_path (str): The path used to save the safety_filter's model.
-        '''
+        """
 
         if ctrl_path is not None:
             self.ctrl.save(ctrl_path)
@@ -292,13 +304,13 @@ class BaseExperiment:
 
 
 class RecordDataWrapper(gym.Wrapper):
-    '''A wrapper to standardizes logging for benchmark envs.
+    """A wrapper to standardizes logging for benchmark envs.
 
     currently saved info
     * obs, reward, done, info, action
     * env.state, env.current_physical_action,
     env.current_noisy_physical_action, env.current_clipped_action
-    '''
+    """
 
     def __init__(self, env):
         super().__init__(env)
@@ -306,7 +318,7 @@ class RecordDataWrapper(gym.Wrapper):
         self.clear_data()
 
     def save_data(self):
-        '''Saves the current self.episode_data to self.data and clears self.episode_data.'''
+        """Saves the current self.episode_data to self.data and clears self.episode_data."""
         if self.episode_data:
             # save to data container
             for key, ep_val in self.episode_data.items():
@@ -318,12 +330,12 @@ class RecordDataWrapper(gym.Wrapper):
             self.episode_data = defaultdict(list)
 
     def clear_data(self):
-        '''Clears all data in self.data and self.episode_data.'''
+        """Clears all data in self.data and self.episode_data."""
         self.data = defaultdict(list)
         self.episode_data = defaultdict(list)
 
     def reset(self, **kwargs):
-        '''Wrapper for the gym.env reset function.'''
+        """Wrapper for the gym.env reset function."""
 
         if self.env.INFO_IN_RESET:
             obs, info = self.env.reset(**kwargs)
@@ -347,7 +359,7 @@ class RecordDataWrapper(gym.Wrapper):
             return obs
 
     def step(self, action):
-        '''Wrapper for the gym.env step function.'''
+        """Wrapper for the gym.env step function."""
 
         obs, reward, done, info = self.env.step(action)
         # save to episode data container
@@ -371,7 +383,7 @@ class RecordDataWrapper(gym.Wrapper):
 
 
 class MetricExtractor:
-    '''A utility class that computes metrics given collected trajectory data.
+    """A utility class that computes metrics given collected trajectory data.
 
     metrics that can be derived
     * episode lengths, episode total rewards/returns
@@ -380,18 +392,18 @@ class MetricExtractor:
         (0/1 for each episode, failure rate = #occurrences/#episodes)
     * episode constraint violation steps
         (how many constraint violations happened in each episode)
-    '''
+    """
 
     def compute_metrics(self, data, verbose=False):
-        '''Compute all standard metrics on the given trajectory data.
+        """Compute all standard metrics on the given trajectory data.
 
         Args:
             data (defaultdict(list)): The raw data from the executed runs.
-            verbose (bool, optional): If to suppress compute_metrics print statetments.
+            verbose (bool, optional): If to suppress compute_metrics print statements.
 
         Returns:
             metrics (dict): The metrics calculated from the raw data.
-        '''
+        """
 
         self.data = data
         self.verbose = verbose
@@ -413,8 +425,8 @@ class MetricExtractor:
         }
         return metrics
 
-    def get_episode_data(self, key, postprocess_func=lambda x: x):
-        '''Extract data field from recorded trajectory data, optionally postprocess each episode data (e.g. get sum).
+    def get_episode_data(self, key, postprocess_func=lambda x: x, exponentiate=False):
+        """Extract data field from recorded trajectory data, optionally postprocess each episode data (e.g. get sum).
 
         Args:
             key (str): The key of the data to retrieve.
@@ -422,7 +434,7 @@ class MetricExtractor:
 
         Returns:
             episode_data (list): The desired data.
-        '''
+        """
 
         if key in self.data:
             episode_data = [postprocess_func(ep_val) for ep_val in self.data[key]]
@@ -442,44 +454,52 @@ class MetricExtractor:
         return episode_data
 
     def get_episode_lengths(self):
-        '''Total length of episodes.
+        """Total length of episodes.
 
         Returns:
             episode_lengths (list): The lengths of each episode.
-        '''
+        """
         return self.get_episode_data('length', postprocess_func=sum)
 
-    def get_episode_returns(self):
-        '''Total reward/return of episodes.
+    def get_episode_returns(self, exponentiate=False):
+        """Total reward/return of episodes.
 
         Returns:
             episode_rewards (list): The total reward of each episode.
-        '''
+        """
+        return self.get_episode_data('reward', postprocess_func=sum, exponentiate=exponentiate)
+
+    def get_episode_exponentiated_returns(self):
+        """Total reward/return of episodes.
+
+        Returns:
+            episode_rewards (list): The total reward of each episode.
+        """
         return self.get_episode_data('reward', postprocess_func=sum)
 
     def get_episode_rmse(self):
-        '''Root mean square error of episodes.
+        """Root-mean-square error of episodes.
 
         Returns:
             episode_rmse (list): The total rmse of each episode.
-        '''
+        """
         return self.get_episode_data('mse',
                                      postprocess_func=lambda x: float(np.sqrt(np.mean(x))))
 
     def get_episode_constraint_violations(self):
-        '''Occurence of any violation in episodes.
+        """Occurrence of any violation in episodes.
 
         Returns:
             episode_violated (list): Whether each episode had a constraint violation.
-        '''
+        """
         return self.get_episode_data('constraint_violation',
                                      postprocess_func=lambda x: float(any(x)))
 
     def get_episode_constraint_violation_steps(self):
-        '''Total violation steps of episodes.
+        """Total violation steps of episodes.
 
         Returns:
             episode_violations (list): The total number of constraint violations of each episode.
-        '''
+        """
         return self.get_episode_data('constraint_violation',
                                      postprocess_func=sum)

@@ -3,7 +3,7 @@
 import casadi as cs
 
 
-class SymbolicModel():
+class SymbolicModel:
     '''Implements the dynamics model with symbolic variables.
 
     x_dot = f(x,u), y = g(x,u), with other pre-defined, symbolic functions

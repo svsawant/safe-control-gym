@@ -1,4 +1,4 @@
-'''Template training/plotting/testing script.'''
+"""Template training/plotting/testing script."""
 
 import os
 import shutil
@@ -14,10 +14,10 @@ from safe_control_gym.utils.utils import mkdirs, set_device_from_config, set_see
 
 
 def train():
-    '''Training template.
+    """Training template.
 
     TODO: Add restore functionality
-    '''
+    """
     # Create the configuration dictionary.
     fac = ConfigFactory()
     config = fac.merge()
@@ -27,13 +27,13 @@ def train():
 
     set_seed_from_config(config)
     set_device_from_config(config)
+    print(config)
 
     # Define function to create task/env.
     env_func = partial(make,
                        config.task,
                        output_dir=config.output_dir,
-                       **config.task_config
-                       )
+                       **config.task_config)
 
     # Create the controller/control_agent.
     ctrl = make(config.algo,
@@ -43,6 +43,8 @@ def train():
                 use_gpu=config.use_gpu,
                 seed=config.seed,
                 **config.algo_config)
+    if 'pretrain_path' in config.keys():
+        ctrl.load(config.pretrain_path)
     ctrl.reset()
 
     # Training.
@@ -57,12 +59,12 @@ def train():
 
 
 def make_plots(config):
-    '''Produces plots for logged stats during training.
+    """Produces plots for logged stats during training.
     Usage
         * use with `--func plot` and `--restore {dir_path}` where `dir_path` is
             the experiment folder containing the logs.
         * save figures under `dir_path/plots/`.
-    '''
+    """
     # Define source and target log locations.
     log_dir = os.path.join(config.output_dir, 'logs')
     plot_dir = os.path.join(config.output_dir, 'plots')

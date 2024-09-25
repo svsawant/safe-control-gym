@@ -1,4 +1,4 @@
-'''Cartpole environment using PyBullet physics.
+"""Cartpole environment using PyBullet physics.
 
 Classic cart-pole system implemented by Rich Sutton et al.
     * http://incompleteideas.net/sutton/book/code/pole.c
@@ -6,7 +6,7 @@ Classic cart-pole system implemented by Rich Sutton et al.
 Also see:
     * github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
     * github.com/bulletphysics/bullet3/blob/master/examples/pybullet/gym/pybullet_envs/bullet/cartpole_bullet.py
-'''
+"""
 
 import math
 import os
@@ -156,6 +156,8 @@ class CartPole(BenchmarkEnv):
         # BenchmarkEnv constructor, called after defining the custom args,
         # since some BenchmarkEnv init setup can be task(custom args)-dependent.
         super().__init__(init_state=init_state, inertial_prop=inertial_prop, **kwargs)
+        self.Q = np.diag(self.rew_state_weight)
+        self.R = np.diag(self.rew_act_weight)
 
         # Create PyBullet client connection.
         self.PYB_CLIENT = -1
@@ -250,13 +252,14 @@ class CartPole(BenchmarkEnv):
         obs, rew, done, info = super().after_step(obs, rew, done, info)
         return obs, rew, done, info
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, init_state=None):
         '''(Re-)initializes the environment to start an episode.
 
         Mandatory to call at least once after __init__().
 
         Args:
             seed (int): An optional seed to reseed the environment.
+            init_state: manually set initial state
 
         Returns:
             obs (ndarray): The initial state of the environment.
@@ -308,9 +311,15 @@ class CartPole(BenchmarkEnv):
             mass=self.OVERRIDDEN_POLE_MASS,
             physicsClientId=self.PYB_CLIENT)
         # Randomize initial state.
-        init_values = {'init_x': self.INIT_X, 'init_x_dot': self.INIT_X_DOT, 'init_theta': self.INIT_THETA, 'init_theta_dot': self.INIT_THETA_DOT}
-        if self.RANDOMIZED_INIT:
-            init_values = self._randomize_values_by_info(init_values, self.INIT_STATE_RAND_INFO)
+        if init_state is None:
+            init_values = {'init_x': self.INIT_X, 'init_x_dot': self.INIT_X_DOT, 'init_theta': self.INIT_THETA, 'init_theta_dot': self.INIT_THETA_DOT}
+            if self.RANDOMIZED_INIT:
+                init_values = self._randomize_values_by_info(init_values, self.INIT_STATE_RAND_INFO)
+        elif init_state is not None:
+            # if manually set initial state, override init state randomization
+            init_values = init_state
+        # print('init values in class', init_values)
+        # exit()
         OVERRIDDEN_INIT_X = init_values['init_x']
         OVERRIDDEN_INIT_X_DOT = init_values['init_x_dot']
         OVERRIDDEN_INIT_THETA = init_values['init_theta']
@@ -411,7 +420,7 @@ class CartPole(BenchmarkEnv):
         Ur = cs.MX.sym('Ur', nu, 1)
         cost_func = 0.5 * (X - Xr).T @ Q @ (X - Xr) + 0.5 * (U - Ur).T @ R @ (U - Ur)
         # Define dynamics and cost dictionaries.
-        dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}}
+        dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}, }
         cost = {'cost_func': cost_func, 'vars': {'X': X, 'U': U, 'Xr': Xr, 'Ur': Ur, 'Q': Q, 'R': R}}
         # Additional params to cache
         params = {
@@ -445,10 +454,10 @@ class CartPole(BenchmarkEnv):
         self.x_dot_threshold = 10
         self.theta_dot_threshold = 10
         # Limit set to 2x: i.e. a failing observation is still within bounds.
-        obs_bound = np.array([self.x_threshold * 2, 
-                              self.x_dot_threshold, #np.finfo(np.float32).max, 
-                              self.theta_threshold_radians * 2, 
-                              self.theta_dot_threshold]) # np.finfo(np.float32).max
+        obs_bound = np.array([self.x_threshold * 2,
+                              self.x_dot_threshold,  # np.finfo(np.float32).max,
+                              self.theta_threshold_radians * 2,
+                              self.theta_dot_threshold])  # np.finfo(np.float32).max
         self.state_space = spaces.Box(low=-obs_bound, high=obs_bound, dtype=np.float32)
 
         # Concatenate goal info for RL
@@ -613,8 +622,8 @@ class CartPole(BenchmarkEnv):
             act = np.asarray(self.current_noisy_physical_action)
             if self.TASK == Task.STABILIZATION:
                 state_error = state - self.X_GOAL
-                dist = np.sum(self.rew_state_weight * state_error * state_error)
-                dist += np.sum(self.rew_act_weight * act * act)
+                dist = 0.5 * np.sum(self.rew_state_weight * state_error * state_error)
+                dist += 0.5 * np.sum(self.rew_act_weight * act * act)
             if self.TASK == Task.TRAJ_TRACKING:
                 wp_idx = min(self.ctrl_step_counter + 1, self.X_GOAL.shape[0] - 1)  # +1 because state has already advanced but counter not incremented.
                 state_error = state - self.X_GOAL[wp_idx]
