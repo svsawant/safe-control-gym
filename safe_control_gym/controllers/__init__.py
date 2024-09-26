@@ -71,5 +71,13 @@ register(idx='gpmpc_acados',
          config_entry_point='safe_control_gym.controllers.mpc:gpmpc_acados.yaml')
 
 register(idx='qlearning_mpc',
-         entry_point='safe_control_gym.controllers.mpc.qlearning_mpc:Qlearning_MPC',
-         config_entry_point='safe_control_gym.controllers.mpc:qlearning_mpc.yaml')
+         entry_point='safe_control_gym.controllers.rlmpc.qlearning_mpc:Qlearning_MPC',
+         config_entry_point='safe_control_gym.controllers.rlmpc:qlearning_mpc.yaml')
+
+register(idx='td3_mpc',
+         entry_point='safe_control_gym.controllers.rlmpc.td3_mpc:TD3_MPC',
+         config_entry_point='safe_control_gym.controllers.rlmpc:td3_mpc.yaml')
+
+register(idx='dppo',
+         entry_point='safe_control_gym.controllers.dppo.dppo:DPPO',
+         config_entry_point='safe_control_gym.controllers.dppo:dppo.yaml')

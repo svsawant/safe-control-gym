@@ -9,18 +9,21 @@ import time
 from collections import defaultdict
 
 from safe_control_gym.controllers.base_controller import BaseController
-from safe_control_gym.controllers.rlmpc.q_mpc_utils import QMPC, ReplayBuffer
+from safe_control_gym.controllers.rlmpc.td3_mpc_utils import TD3MPC, ReplayBuffer
 from safe_control_gym.envs.env_wrappers.record_episode_statistics import RecordEpisodeStatistics
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
+from safe_control_gym.math_and_models.normalization import (BaseNormalizer, MeanStdNormalizer,
+                                                            RewardStdNormalizer)
+
 from safe_control_gym.utils.logging import ExperimentLogger
 from safe_control_gym.utils.utils import is_wrapped
 
 
-class Qlearning_MPC(BaseController):
+class TD3_MPC(BaseController):
     """MPC with full nonlinear model."""
 
     def __init__(
@@ -28,7 +31,7 @@ class Qlearning_MPC(BaseController):
             env_func,
             # runner args
             # shared/base args
-            mpc_config,
+            ac_config,
             training=True,
             checkpoint_path='model_latest.pt',
             output_dir: str = 'results/temp',
@@ -60,7 +63,17 @@ class Qlearning_MPC(BaseController):
 
         # Agent
         model = self.get_prior(self.env)
-        self.agent = QMPC(self.env, model, **mpc_config)
+        self.agent = TD3MPC(self.env, self.env.observation_space, self.env.action_space, self.gamma, model, **ac_config)
+
+        # pre-/post-processing
+        self.obs_normalizer = BaseNormalizer()
+        if self.norm_obs:
+            self.obs_normalizer = MeanStdNormalizer(shape=self.env.observation_space.shape, clip=self.clip_obs,
+                                                    epsilon=1e-8)
+
+        self.reward_normalizer = BaseNormalizer()
+        if self.norm_reward:
+            self.reward_normalizer = RewardStdNormalizer(gamma=self.gamma, clip=self.clip_reward, epsilon=1e-8)
 
         # logging
         if self.training:
@@ -245,13 +258,12 @@ class Qlearning_MPC(BaseController):
             # Regardless of how long you wait between updates,
             # the ratio of env steps to gradient steps is locked to 1.
             # alternatively, can update once each step
-            for j in range(self.train_interval):
-                batch = self.buffer.sample(self.train_batch_size, self.device)
-                res = self.agent.update(batch)
-                # for k, v in res.items():
-                #     results[k].append(v)
-            print(self.agent.q_mpc, self.agent.r_mpc)
-            p()
+            #for j in range(self.train_interval):
+            for j in range(10):
+                batch, batch_th = self.buffer.sample(self.train_batch_size, self.device)
+                res = self.agent.update(batch, batch_th)
+                for k, v in res.items():
+                    results[k].append(v)
         results = {k: sum(v) / len(v) for k, v in results.items()}
         results.update({'step': self.total_steps, 'elapsed_time': time.time() - start})
         return results
@@ -339,7 +351,7 @@ class Qlearning_MPC(BaseController):
             self.logger.add_scalars(
                 {
                     k: results[k]
-                    for k in ['policy_loss', 'critic_loss', 'entropy_loss']
+                    for k in ['policy_loss', 'critic_loss']
                 },
                 step,
                 prefix='loss')

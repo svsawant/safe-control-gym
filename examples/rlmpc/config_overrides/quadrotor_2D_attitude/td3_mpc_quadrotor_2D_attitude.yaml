@@ -1,0 +1,44 @@
+algo_config:
+  ac_config:
+    horizon: 20
+    r_mpc:
+      - 0.1
+      - 0.1
+    q_mpc:
+      - 0.1
+      - 0.1
+      - 0.1
+      - 0.1
+      - 0.1
+      - 0.01
+    # Prior info
+    warmstart: True
+    eps: 0.05
+    actor_lr: 0.3
+    critic_lr: 0.03
+
+  prior_info:
+    prior_prop: null
+    randomize_prior_prop: False
+    prior_prop_rand_info: null
+
+  # optim args
+  train_interval: 540
+  train_batch_size: 16
+
+  # runner args
+  max_env_steps: 5400
+  num_workers: 1
+  max_buffer_size: 5400
+  eval_batch_size: 1
+  rollout_batch_size: 1
+  # rollout_steps: 540
+
+  # misc
+  log_interval: 540
+  save_interval: 5400
+  num_checkpoints: 0
+  eval_interval: 540
+  eval_save_best: True
+  tensorboard: False
+
