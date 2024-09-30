@@ -228,6 +228,7 @@ class MPCPolicyFunction:
         self.set_dynamics_func()
         self.setup_optimizer()
         self._init_theta_val()
+        self.temp = 0
 
     def reset(self):
         # Previously solved states & inputs, useful for warm start.
@@ -384,8 +385,8 @@ class MPCPolicyFunction:
         # Create solver (IPOPT solver in this version)
         opts_setting = {
             "ipopt.max_iter": 50,
-            "ipopt.print_level": 0,
-            "print_time": 0,
+            "ipopt.print_level": 5,
+            "print_time": 5,
             "ipopt.mu_target": etau,
             "ipopt.mu_init": etau,
             "ipopt.acceptable_tol": 1e-4,
@@ -586,6 +587,7 @@ class MPCPolicyFunction:
             temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, opt_vars_fn, dpi, sensitivity_compute]
             eval_data_batch.append(temp)
         soln_batch = self.multi_pool.map(_select_action, eval_data_batch)
+        p()
 
         action_batch = []
         nabla_pi_batch = []

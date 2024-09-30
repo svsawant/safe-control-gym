@@ -15,7 +15,7 @@ from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 
 
-def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
+def run(gui=False, n_episodes=1, n_steps=None, save_data=True):
     '''The main function running MPC and Linear MPC experiments.
 
     Args:
@@ -41,6 +41,7 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
                 env_func,
                 **config.algo_config
                 )
+    obs, _ = ctrl.env.reset()
 
     all_trajs = defaultdict(list)
     n_episodes = 1 if n_episodes is None else n_episodes
@@ -48,12 +49,13 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
     # Run the experiment.
     for _ in range(n_episodes):
         # Get initial state and create environments
-        init_state, _ = random_env.reset()
-        static_env = env_func(gui=gui, randomized_init=False, init_state=init_state)
-        static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
+        # init_state, _ = random_env.reset()
+        # static_env = env_func(gui=gui, randomized_init=False, init_state=init_state)
+        # static_train_env = env_func(gui=False, randomized_init=False, init_state=init_state)
 
         # Create experiment, train, and run evaluation
-        experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
+        # experiment = BaseExperiment(env=static_env, ctrl=ctrl, train_env=static_train_env)
+        experiment = BaseExperiment(ctrl.env, ctrl)
         experiment.launch_training()
 
         if n_steps is None:
@@ -61,12 +63,12 @@ def run(gui=True, n_episodes=1, n_steps=None, save_data=False):
         else:
             trajs_data, _ = experiment.run_evaluation(training=True, n_steps=n_steps)
 
-        if gui:
+        if True:
             post_analysis(trajs_data['obs'][0], trajs_data['action'][0], ctrl.env)
 
         # Close environments
-        static_env.close()
-        static_train_env.close()
+        # static_env.close()
+        # static_train_env.close()
 
         # Merge in new trajectory data
         for key, value in trajs_data.items():
@@ -128,6 +130,16 @@ def post_analysis(state_stack, input_stack, env):
         axs[k].yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
     axs[0].set_title('Input Trajectories')
     axs[-1].set(xlabel='time (sec)')
+
+    # Plot trajectory
+    _, axs = plt.subplots(1)
+    axs.plot(np.array(state_stack).transpose()[0, 0:plot_length],
+             np.array(state_stack).transpose()[2, 0:plot_length], label='actual')
+    axs.plot(reference.transpose()[0, 0:plot_length],
+             reference.transpose()[2, 0:plot_length], color='r', label='desired')
+    axs.set_xlabel('x [m]')
+    axs.set_ylabel('z [m]')
+    axs.set_title('State path in x-z plane')
 
     plt.show()
 

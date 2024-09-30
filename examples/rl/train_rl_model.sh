@@ -9,12 +9,14 @@ SYS='quadrotor_2D_attitude'
 #TASK='stab'
 TASK='track'
 
-#ALGO='ppo'
-ALGO='sac'
+ALGO='ppo'
+#ALGO='sac'
 #ALGO='td3'
 #ALGO='ddpg'
 #ALGO='dppo'
 #ALGO='safe_explorer_ppo'
+
+EXP_NAME='Benchmark/ilqr_ref'
 
 if [ "$SYS" == 'cartpole' ]; then
     SYS_NAME=$SYS
@@ -54,7 +56,7 @@ do
         --overrides \
             ./config_overrides/${SYS}/${ALGO}_${SYS}.yaml \
             ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
-        --output_dir ./Results/${SYS}_${ALGO}_data/${SEED}/ \
+        --output_dir ./Results/${EXP_NAME}/${SYS}_${ALGO}_data/${SEED}/ \
         --seed ${SEED} \
         --use_gpu\
         --kv_overrides \

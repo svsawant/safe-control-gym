@@ -94,45 +94,13 @@ def run(gui=False, plot=True, n_episodes=10, n_steps=None, curr_path='.'):
             graph1_2 = 5
             graph3_1 = 0
             graph3_2 = 2
-            graph4_1 = 0
-            graph4_2 = 1
-        elif system == 'quadrotor_5D':
-            graph1_1 = 4
-            graph1_2 = 5
-            graph3_1 = 0
-            graph3_2 = 2
-            graph4_1 = 0
-            graph4_2 = 1
-
-        _, ax = plt.subplots()
-        ax.plot(results['obs'][0][:, graph1_1], results['obs'][0][:, graph1_2], 'r--', label='RL Trajectory')
-        ax.scatter(results['obs'][0][0, graph1_1], results['obs'][0][0, graph1_2], color='g', marker='o', s=100, label='Initial State')
-        ax.set_xlabel(r'$\theta$')
-        ax.set_ylabel(r'$\dot{\theta}$')
-        ax.set_box_aspect(0.5)
-        ax.legend(loc='upper right')
-
-        if config.task_config.task == Task.TRAJ_TRACKING and config.task == Environment.CARTPOLE:
-            _, ax2 = plt.subplots()
-            ax2.plot(np.linspace(0, 20, results['obs'][0].shape[0]), results['obs'][0][:, 0], 'r--', label='RL Trajectory')
-            ax2.plot(np.linspace(0, 20, results['obs'][0].shape[0]), env.X_GOAL[:, 0], 'b', label='Reference')
-            ax2.set_xlabel(r'Time')
-            ax2.set_ylabel(r'X')
-            ax2.set_box_aspect(0.5)
-            ax2.legend(loc='upper right')
-        elif config.task == Environment.QUADROTOR:
-            _, ax2 = plt.subplots()
-            ax2.plot(results['obs'][0][:, graph3_1 + 1], results['obs'][0][:, graph3_2 + 1], 'r--', label='RL Trajectory')
-            ax2.set_xlabel(r'x_dot')
-            ax2.set_ylabel(r'z_dot')
-            ax2.set_box_aspect(0.5)
-            ax2.legend(loc='upper right')
 
         _, ax3 = plt.subplots()
         ax3.plot(results['obs'][0][:, graph3_1], results['obs'][0][:, graph3_2], 'r--', label='RL Trajectory')
         if config.task_config.task == Task.TRAJ_TRACKING and config.task == Environment.QUADROTOR:
             ax3.plot(env.X_GOAL[:, graph3_1], env.X_GOAL[:, graph3_2], 'g--', label='Reference')
-        ax3.scatter(results['obs'][0][0, graph3_1], results['obs'][0][0, graph3_2], color='g', marker='o', s=100, label='Initial State')
+        ax3.scatter(results['obs'][0][0, graph3_1], results['obs'][0][0, graph3_2], color='g', marker='o', s=100,
+                    label='Initial State')
         ax3.set_xlabel(r'X')
         if config.task == Environment.CARTPOLE:
             ax3.set_ylabel(r'Vel')
@@ -141,48 +109,54 @@ def run(gui=False, plot=True, n_episodes=10, n_steps=None, curr_path='.'):
         ax3.set_box_aspect(0.5)
         ax3.legend(loc='upper right')
 
-        if config.task == Environment.QUADROTOR and system == 'quadrotor_2D':
-            # _, ax4 = plt.subplots()
-            # ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Thrust')
-            # ax4.set_ylabel(r'Thrust')
-            # _, ax5 = plt.subplots()
-            # ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Pitch')
-            # ax5.set_ylabel(r'Pitch')
-            _, ax6 = plt.subplots()
-            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Thrust')
-            ax6.set_ylabel(r'Pitch')
-            _, ax7 = plt.subplots()
-            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Pitch')
-            ax7.set_ylabel(r'Pitch rate')
-        if config.task == Environment.QUADROTOR and system == 'quadrotor_4D':
-            _, ax4 = plt.subplots()
-            ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Action: Thrust')
-            ax4.set_ylabel(r'Action: Thrust')
-            _, ax5 = plt.subplots()
-            ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Action: Pitch')
-            ax5.set_ylabel(r'Action: Pitch')
-            _, ax6 = plt.subplots()
-            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Obs: Pitch')
-            ax6.set_ylabel(r'Obs: Pitch')
-            _, ax7 = plt.subplots()
-            ax7.plot(results['timestamp'][0][:], results['obs'][0][1:, 5], 'r', label='Obs: Pitch rate')
-            ax7.set_ylabel(r'Obs: Pitch rate')
-        if config.task == Environment.QUADROTOR and system == 'quadrotor_5D':
-            _, ax4 = plt.subplots()
-            ax4.plot(results['timestamp'][0][:], results['action'][0][:, graph4_1], 'r', label='Action: Thrust')
-            ax4.set_ylabel(r'Action: Thrust')
-            _, ax5 = plt.subplots()
-            ax5.plot(results['timestamp'][0][:], results['action'][0][:, graph4_2], 'r', label='Action: Pitch')
-            ax5.set_ylabel(r'Action: Pitch')
-            _, ax6 = plt.subplots()
-            ax6.plot(results['timestamp'][0][:], results['obs'][0][1:, 4], 'r', label='Obs: Pitch')
-            ax6.set_ylabel(r'Obs: Pitch')
-
-        plt.tight_layout()
-        plt.show()
+        post_analysis(results['obs'][0], results['action'][0], env)
         # plt.savefig(f"{curr_path}/perf.png")
 
     return env.X_GOAL, results, metrics
+
+def post_analysis(state_stack, input_stack, env):
+    '''Plots the input and states to determine iLQR's success.
+
+    Args:
+        state_stack (ndarray): The list of observations of iLQR in the latest run.
+        input_stack (ndarray): The list of inputs of iLQR in the latest run.
+    '''
+    model = env.symbolic
+    stepsize = model.dt
+
+    plot_length = np.min([np.shape(input_stack)[0], np.shape(state_stack)[0]])
+    times = np.linspace(0, stepsize * plot_length, plot_length)
+
+    reference = env.X_GOAL
+    if env.TASK == Task.STABILIZATION:
+        reference = np.tile(reference.reshape(1, model.nx), (plot_length, 1))
+
+    # Plot states
+    fig, axs = plt.subplots(model.nx)
+    for k in range(model.nx):
+        axs[k].plot(times, np.array(state_stack).transpose()[k, 0:plot_length], label='actual')
+        axs[k].plot(times, reference.transpose()[k, 0:plot_length], color='r', label='desired')
+        axs[k].set(ylabel=env.STATE_LABELS[k] + f'\n[{env.STATE_UNITS[k]}]')
+        axs[k].yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+        if k != model.nx - 1:
+            axs[k].set_xticks([])
+    axs[0].set_title('State Trajectories')
+    axs[-1].legend(ncol=3, bbox_transform=fig.transFigure, bbox_to_anchor=(1, 0), loc='lower right')
+    axs[-1].set(xlabel='time (sec)')
+
+    # Plot inputs
+    _, axs = plt.subplots(model.nu)
+    if model.nu == 1:
+        axs = [axs]
+    for k in range(model.nu):
+        axs[k].plot(times, np.array(input_stack).transpose()[k, 0:plot_length])
+        axs[k].set(ylabel=f'input {k}')
+        axs[k].set(ylabel=env.ACTION_LABELS[k] + f'\n[{env.ACTION_UNITS[k]}]')
+        axs[k].yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    axs[0].set_title('Input Trajectories')
+    axs[-1].set(xlabel='time (sec)')
+
+    plt.show()
 
 
 if __name__ == '__main__':

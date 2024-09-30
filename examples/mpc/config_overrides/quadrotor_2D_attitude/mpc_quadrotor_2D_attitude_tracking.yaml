@@ -5,12 +5,12 @@ algo_config:
     - 0.1
     - 0.1
   q_mpc:
-    - 5.0
+    - 1.0
     - 0.1
-    - 5.0
+    - 1.0
     - 0.1
     - 0.1
-    - 0.1
+    - 0.001
   # Prior info
   prior_info:
     prior_prop: null

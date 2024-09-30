@@ -1,4 +1,6 @@
-'''Template hyperparameter optimization/hyperparameter evaluation script.'''
+"""Template hyperparameter optimization/hyperparameter evaluation script.
+
+"""
 import os
 from functools import partial
 
@@ -15,11 +17,12 @@ from safe_control_gym.utils.utils import set_device_from_config, set_dir_from_co
 
 
 def hpo(config):
-    '''Hyperparameter optimization.
+    """Hyperparameter optimization.
 
     Usage:
         * to start HPO, use with `--func hpo`.
-    '''
+
+    """
 
     # Experiment setup.
     if config.hpo_config.hpo:
@@ -43,11 +46,12 @@ def hpo(config):
 
 
 def train(config):
-    '''Training for a given set of hyperparameters.
+    """Training for a given set of hyperparameters.
 
     Usage:
         * to start training, use with `--func train`.
-    '''
+
+    """
     # Override algo_config with given yaml file
     if config.opt_hps == '':
         # if no opt_hps file is given
@@ -62,7 +66,8 @@ def train(config):
             else:
                 config.algo_config[hp] = opt_hps[hp]
     # Experiment setup.
-    set_dir_from_config(config)
+    if config.plot_best is False:
+        set_dir_from_config(config)
     set_seed_from_config(config)
     set_device_from_config(config)
 
@@ -83,10 +88,14 @@ def train(config):
     control_agent.reset()
 
     eval_env = env_func(seed=config.seed * 111)
-    # Run experiment
-    experiment = BaseExperiment(eval_env, control_agent)
-    experiment.launch_training()
-    results, metrics = experiment.run_evaluation(n_episodes=1, n_steps=None, done_on_max_steps=True)
+
+    if config.plot_best:
+        control_agent.load('examples/hpo/results/2D/seed6_May-15-11-07-56_v0.5.0-611-gce9662f/model_best.pt')
+        experiment = BaseExperiment(eval_env, control_agent)
+    else:
+        experiment = BaseExperiment(eval_env, control_agent)
+        experiment.launch_training()
+    results, metrics = experiment.run_evaluation(n_episodes=config.n_episodes, n_steps=None, done_on_max_steps=True)
     control_agent.close()
 
     if config.task == Environment.QUADROTOR:
@@ -173,17 +182,20 @@ MAIN_FUNCS = {'hpo': hpo, 'train': train}
 
 
 if __name__ == '__main__':
+
     # Make config.
     fac = ConfigFactory()
     fac.add_argument('--func', type=str, default='train', help='main function to run.')
     fac.add_argument('--opt_hps', type=str, default='', help='yaml file as a result of HPO.')
     fac.add_argument('--load_study', type=bool, default=False, help='whether to load study from a previous HPO.')
     fac.add_argument('--sampler', type=str, default='TPESampler', help='which sampler to use in HPO.')
+    fac.add_argument('--n_episodes', type=int, default=1, help='number of episodes to run.')
+    fac.add_argument('--plot_best', type=bool, default=False, help='plot best agent trajectory.')
     # merge config
     config = fac.merge()
 
     # Execute.
     func = MAIN_FUNCS.get(config.func, None)
     if func is None:
-        raise Exception(f'Main function {config.func} not supported.')
+        raise Exception('Main function {} not supported.'.format(config.func))
     func(config)

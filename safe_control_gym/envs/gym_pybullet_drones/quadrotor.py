@@ -432,8 +432,7 @@ class Quadrotor(BaseAviary):
             INIT_ANG_VEL = [0, init_values.get('init_theta_dot', 0.), 0]
             self.attitude_control.reset()
         else:
-            INIT_ANG_VEL = [init_values.get('init_' + k, 0.) for k in
-                            ['p', 'q', 'r']]  # TODO: transform from body rates.
+            INIT_ANG_VEL = [init_values.get('init_' + k, 0.) for k in ['p', 'q', 'r']]  # TODO: transform from body rates.
         p.resetBasePositionAndOrientation(self.DRONE_IDS[0], INIT_XYZ,
                                           p.getQuaternionFromEuler(INIT_RPY),
                                           physicsClientId=self.PYB_CLIENT)
@@ -511,7 +510,7 @@ class Quadrotor(BaseAviary):
         return obs, rew, done, info
 
     def render(self, mode='human', close=False):
-        """Retrieves a frame from PyBullet rendering.
+        '''Retrieves a frame from PyBullet rendering.
 
         Args:
             mode (str): Unused.
@@ -519,7 +518,7 @@ class Quadrotor(BaseAviary):
 
         Returns:
             frame (ndarray): A multidimensional array with the RGB frame captured by PyBullet's camera.
-        """
+        '''
 
         [w, h, rgb, _, _] = p.getCameraImage(width=self.RENDER_WIDTH,
                                              height=self.RENDER_HEIGHT,
@@ -533,7 +532,7 @@ class Quadrotor(BaseAviary):
         return np.reshape(rgb, (h, w, 4))
 
     def _setup_symbolic(self, prior_prop={}, **kwargs):
-        """Creates symbolic (CasADi) models for dynamics, observation, and cost.
+        '''Creates symbolic (CasADi) models for dynamics, observation, and cost.
 
         Args:
             prior_prop (dict): specify the prior inertial prop to use in the symbolic model.
@@ -675,15 +674,11 @@ class Quadrotor(BaseAviary):
             Mb = cs.vertcat(length / cs.sqrt(2.0) * (f1 + f2 - f3 - f4),
                             length / cs.sqrt(2.0) * (-f1 + f2 + f3 - f4),
                             gamma * (-f1 + f2 - f3 + f4))
-            rate_dot = Jinv @ (
-                        Mb - (cs.skew(cs.vertcat(p_body, q_body, r_body)) @ J @ cs.vertcat(p_body, q_body, r_body)))
+            rate_dot = Jinv @ (Mb - (cs.skew(cs.vertcat(p_body, q_body, r_body)) @ J @ cs.vertcat(p_body, q_body, r_body)))
             ang_dot = cs.blockcat([[1, cs.sin(phi) * cs.tan(theta), cs.cos(phi) * cs.tan(theta)],
                                    [0, cs.cos(phi), -cs.sin(phi)],
-                                   [0, cs.sin(phi) / cs.cos(theta), cs.cos(phi) / cs.cos(theta)]]) @ cs.vertcat(p_body,
-                                                                                                                q_body,
-                                                                                                                r_body)
-            X_dot = cs.vertcat(pos_dot[0], pos_ddot[0], pos_dot[1], pos_ddot[1], pos_dot[2], pos_ddot[2], ang_dot,
-                               rate_dot)
+                                   [0, cs.sin(phi) / cs.cos(theta), cs.cos(phi) / cs.cos(theta)]]) @ cs.vertcat(p_body, q_body, r_body)
+            X_dot = cs.vertcat(pos_dot[0], pos_ddot[0], pos_dot[1], pos_ddot[1], pos_dot[2], pos_ddot[2], ang_dot, rate_dot)
 
             Y = cs.vertcat(x, x_dot, y, y_dot, z, z_dot, phi, theta, psi, p_body, q_body, r_body)
         # Set the equilibrium values for linearizations.
@@ -759,8 +754,8 @@ class Quadrotor(BaseAviary):
                                            np.array([np.full(1, a_high, np.float32), np.full(1, max_pitch_rad, np.float32)]).flatten())
         else:
             n_mot = 4 / action_dim
-            a_low = self.KF * n_mot * (self.PWM2RPM_SCALE * self.MIN_PWM + self.PWM2RPM_CONST) ** 2
-            a_high = self.KF * n_mot * (self.PWM2RPM_SCALE * self.MAX_PWM + self.PWM2RPM_CONST) ** 2
+            a_low = self.KF * n_mot * (self.PWM2RPM_SCALE * self.MIN_PWM + self.PWM2RPM_CONST)**2
+            a_high = self.KF * n_mot * (self.PWM2RPM_SCALE * self.MAX_PWM + self.PWM2RPM_CONST)**2
             self.physical_action_bounds = (np.full(action_dim, a_low, np.float32),
                                            np.full(action_dim, a_high, np.float32))
 

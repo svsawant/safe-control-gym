@@ -33,6 +33,7 @@ class SACAgent:
                  critic_lr=0.001,
                  entropy_lr=0.001,
                  activation='relu',
+                 update_freq=1,
                  **kwargs):
         # params
         self.obs_space = obs_space
@@ -64,7 +65,9 @@ class SACAgent:
         # optimizers
         self.actor_opt = torch.optim.Adam(self.ac.actor.parameters(), actor_lr)
         self.critic_opt = torch.optim.Adam(list(self.ac.q1.parameters()) + list(self.ac.q2.parameters()), critic_lr)
-        self.alpha_opt = torch.optim.Adam([self.log_alpha], entropy_lr)
+        self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=entropy_lr)
+        self.update_freq = update_freq
+        self.count = 0
 
     @property
     def alpha(self):
@@ -80,12 +83,12 @@ class SACAgent:
     def train(self):
         '''Sets training mode.'''
         self.ac.train()
-        self.log_alpha.requires_grad = True
+        # self.log_alpha.requires_grad = True
 
     def eval(self):
         '''Sets evaluation mode.'''
         self.ac.eval()
-        self.log_alpha.requires_grad = False
+        # self.log_alpha.requires_grad = False
 
     def state_dict(self):
         '''Snapshots agent state.'''
@@ -180,7 +183,7 @@ class SACAgent:
 
 class MLPActor(nn.Module):
 
-    def __init__(self, obs_dim, act_dim, hidden_dims, activation, postprocess_fn=lambda x: x):
+    def __init__(self, obs_dim, act_dim, action_space, hidden_dims, activation, postprocess_fn=lambda x: x):
         super().__init__()
         self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
         self.postprocess_fn = postprocess_fn
@@ -207,14 +210,31 @@ class MLPActor(nn.Module):
         log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
         dist = self.dist_fn(mu, log_std)
 
-        if deterministic:
-            action = dist.mode()
-        else:
-            action = dist.rsample()
+        # if deterministic:
+        #     action = dist.mode()
+        # else:
+        #     action = dist.rsample()
 
+        # if with_logprob:
+        #     logp = dist.log_prob(action)
+        #     logp -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1, keepdim=True)
+        # else:
+        #     logp = None
+
+        # action = torch.tanh(action)
+        # action = self.postprocess_fn(action)
+        # return action, logp
+
+        if deterministic:
+            x_t = dist.mode()
+        else:
+            x_t = dist.rsample()
+        y_t = torch.tanh(x_t)
+        action = y_t * self.action_scale + self.action_bias
         if with_logprob:
-            logp = dist.log_prob(action)
-            logp -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(axis=1, keepdim=True)
+            logp = dist.log_prob(x_t)
+            logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(-1, keepdim=True)
+            logp = logp.sum(1, keepdim=True)
         else:
             logp = None
 
@@ -291,7 +311,7 @@ class MLPActorCritic(nn.Module):
             def unscale_fn(x):  # Rescale action from [-1, 1] to [low, high]
                 return low.to(x.device) + (0.5 * (x + 1.0) * (high.to(x.device) - low.to(x.device)))
 
-            self.actor = MLPActor(obs_dim, act_dim, hidden_dims, activation, postprocess_fn=unscale_fn)
+            self.actor = MLPActor(obs_dim, act_dim, act_space, hidden_dims, activation, postprocess_fn=unscale_fn)
 
         # Q functions
         self.q1 = MLPQFunction(obs_dim, act_dim, hidden_dims, activation)

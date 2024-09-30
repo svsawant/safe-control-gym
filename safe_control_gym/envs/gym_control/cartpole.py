@@ -529,15 +529,14 @@ class CartPole(BenchmarkEnv):
 
         return action
 
-    def _advance_simulation(self, action):
+    def _advance_simulation(self, force):
         '''Apply the commanded forces and adversarial actions to the cartpole.
 
         The PyBullet simulation is stepped PYB_FREQ/CTRL_FREQ times.
 
         Args:
-            action (float): The force to apply to the slider-to-cart joint.
+            force (float): The force to apply to the slider-to-cart joint.
         '''
-        force = self._preprocess_control(action)
         tab_force = None
         # Determine the disturbance force.
         passive_disturb = 'dynamics' in self.disturbances

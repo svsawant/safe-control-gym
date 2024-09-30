@@ -12,6 +12,7 @@ from safe_control_gym.envs.benchmark_env import Environment, Task
 from safe_control_gym.experiments.base_experiment import BaseExperiment
 from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
+from safe_control_gym.utils.utils import set_dir_from_config
 
 
 def run(gui=False, n_episodes=1, n_steps=None, save_data=False):
