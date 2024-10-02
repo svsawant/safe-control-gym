@@ -1,10 +1,10 @@
 from collections import defaultdict, deque
-import numpy as np
-import casadi as cs
 from copy import deepcopy
 from multiprocessing import Pool
+
+import casadi as cs
+import numpy as np
 from gymnasium.spaces import Box
-from collections import deque
 
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
@@ -12,6 +12,7 @@ from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gai
 from safe_control_gym.controllers.rlmpc.rlmpc_utils import AdamOptimizer, euler_discrete
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
+
 
 class QMPC:
     """An MPC-based Q function approximator"""
@@ -141,9 +142,9 @@ class QMPC:
         #                                  self.model.nu,
         #                                  self.dt)
         self.dynamics_func = euler_discrete(self.model.fc_func,
-                                         self.model.nx,
-                                         self.model.nu,
-                                         self.dt)
+                                            self.model.nx,
+                                            self.model.nu,
+                                            self.dt)
 
     def compute_initial_guess(self, init_state, goal_states, x_lin, u_lin):
         """Use LQR to get an initial guess of the """
@@ -180,22 +181,22 @@ class QMPC:
 
         # Define optimizer and variables.
         # States.
-        x_var = cs.MX.sym("x_var", nx, T + 1)
+        x_var = cs.MX.sym('x_var', nx, T + 1)
         # Inputs.
-        u_var = cs.MX.sym("u_var", nu, T)
+        u_var = cs.MX.sym('u_var', nu, T)
         # Add slack variables
-        state_slack = cs.MX.sym("sigma_var", nx, T + 1)
+        state_slack = cs.MX.sym('sigma_var', nx, T + 1)
         opt_vars = cs.vertcat(cs.reshape(u_var, -1, 1),
                               cs.reshape(x_var, -1, 1),
                               cs.reshape(state_slack, -1, 1))
-        opt_vars_fn = cs.Function("opt_vars_fun", [opt_vars], [x_var, u_var, state_slack])
+        opt_vars_fn = cs.Function('opt_vars_fun', [opt_vars], [x_var, u_var, state_slack])
 
         # Parameters
         # Fixed parameters
         # Initial state.
-        x_init = cs.MX.sym("x_init", nx, 1)
+        x_init = cs.MX.sym('x_init', nx, 1)
         # Reference (equilibrium point or trajectory, last step for terminal cost).
-        x_ref = cs.MX.sym("x_ref", nx, T + 1)
+        x_ref = cs.MX.sym('x_ref', nx, T + 1)
         fixed_param = cs.vertcat(x_init, cs.reshape(x_ref, -1, 1))
 
         # Learnable parameters
@@ -258,45 +259,45 @@ class QMPC:
 
         # Create solver (IPOPT solver in this version)
         opts_setting = {
-            "ipopt.max_iter": 100,
-            "ipopt.print_level": 0,
-            "print_time": 0,
-            "ipopt.mu_target": etau,
-            "ipopt.mu_init": etau,
-            "ipopt.acceptable_tol": 1e-4,
-            "ipopt.acceptable_obj_change_tol": 1e-4,
+            'ipopt.max_iter': 100,
+            'ipopt.print_level': 0,
+            'print_time': 0,
+            'ipopt.mu_target': etau,
+            'ipopt.mu_init': etau,
+            'ipopt.acceptable_tol': 1e-4,
+            'ipopt.acceptable_obj_change_tol': 1e-4,
         }
         vnlp_prob = {
-            "f": cost,
-            "x": opt_vars,
-            "p": cs.vertcat(fixed_param, theta_param),
-            "g": constraint_exp,
+            'f': cost,
+            'x': opt_vars,
+            'p': cs.vertcat(fixed_param, theta_param),
+            'g': constraint_exp,
         }
-        vsolver = cs.nlpsol("vsolver", "ipopt", vnlp_prob, opts_setting)
+        vsolver = cs.nlpsol('vsolver', 'ipopt', vnlp_prob, opts_setting)
 
         # Sensitivity
         # Multipliers
-        lamb = cs.MX.sym("lambda", G.shape[0])
-        mu_u = cs.MX.sym("muu", Hu.shape[0])
-        mu_x = cs.MX.sym("mux", Hx.shape[0])
-        mu_s = cs.MX.sym("mus", Hs.shape[0])
+        lamb = cs.MX.sym('lambda', G.shape[0])
+        mu_u = cs.MX.sym('muu', Hu.shape[0])
+        mu_x = cs.MX.sym('mux', Hx.shape[0])
+        mu_s = cs.MX.sym('mus', Hs.shape[0])
         mult = cs.vertcat(lamb, mu_u, mu_x, mu_s)
 
         # Build Lagrangian
         lagrangian = (
-                cost
-                + cs.transpose(lamb) @ G
-                + cs.transpose(mu_u) @ Hu
-                + cs.transpose(mu_x) @ Hx
-                + cs.transpose(mu_s) @ Hs
+            cost
+            + cs.transpose(lamb) @ G
+            + cs.transpose(mu_u) @ Hu
+            + cs.transpose(mu_x) @ Hx
+            + cs.transpose(mu_s) @ Hs
         )
-        lagrangian_fn = cs.Function("Lag", [opt_vars, mult, fixed_param, theta_param], [lagrangian])
+        lagrangian_fn = cs.Function('Lag', [opt_vars, mult, fixed_param, theta_param], [lagrangian])
 
         # Generate sensitivity of the Lagrangian
         dlag_fn = lagrangian_fn.factory(
-            "dlag_fn",
-            ["i0", "i1", "i2", "i3"],
-            ["jac:o0:i0", "jac:o0:i3"],
+            'dlag_fn',
+            ['i0', 'i1', 'i2', 'i3'],
+            ['jac:o0:i0', 'jac:o0:i3'],
         )
         dlag_dw, dlag_dtheta = dlag_fn(opt_vars, mult, fixed_param, theta_param)
         dlag_dw_fn = cs.Function('dlag_dw_fn', [opt_vars, mult, fixed_param, theta_param], [dlag_dw])
@@ -327,24 +328,24 @@ class QMPC:
 
         # Define optimizer and variables.
         # States.
-        x_var = cs.MX.sym("x_var", nx, T + 1)
+        x_var = cs.MX.sym('x_var', nx, T + 1)
         # Inputs.
-        u_var = cs.MX.sym("u_var", nu, T)
+        u_var = cs.MX.sym('u_var', nu, T)
         # Add slack variables
-        state_slack = cs.MX.sym("sigma_var", nx, T + 1)
+        state_slack = cs.MX.sym('sigma_var', nx, T + 1)
         opt_vars = cs.vertcat(cs.reshape(u_var, -1, 1),
                               cs.reshape(x_var, -1, 1),
                               cs.reshape(state_slack, -1, 1))
-        opt_vars_fn = cs.Function("opt_vars_fun", [opt_vars], [x_var, u_var, state_slack])
+        opt_vars_fn = cs.Function('opt_vars_fun', [opt_vars], [x_var, u_var, state_slack])
 
         # Parameters
         # Fixed parameters
         # Initial state.
-        x_init = cs.MX.sym("x_init", nx, 1)
+        x_init = cs.MX.sym('x_init', nx, 1)
         # Initial action.
-        u_init = cs.MX.sym("u_init", nu, 1)
+        u_init = cs.MX.sym('u_init', nu, 1)
         # Reference (equilibrium point or trajectory, last step for terminal cost).
-        x_ref = cs.MX.sym("x_ref", nx, T + 1)
+        x_ref = cs.MX.sym('x_ref', nx, T + 1)
         fixed_param = cs.vertcat(x_init, cs.reshape(x_ref, -1, 1), u_init)
 
         # Learnable parameters
@@ -408,45 +409,45 @@ class QMPC:
 
         # Create solver (IPOPT solver in this version)
         opts_setting = {
-            "ipopt.max_iter": 50,
-            "ipopt.print_level": 0,
-            "print_time": 0,
-            "ipopt.mu_target": etau,
-            "ipopt.mu_init": etau,
-            "ipopt.acceptable_tol": 1e-6,
-            "ipopt.acceptable_obj_change_tol": 1e-6,
+            'ipopt.max_iter': 50,
+            'ipopt.print_level': 0,
+            'print_time': 0,
+            'ipopt.mu_target': etau,
+            'ipopt.mu_init': etau,
+            'ipopt.acceptable_tol': 1e-6,
+            'ipopt.acceptable_obj_change_tol': 1e-6,
         }
         vnlp_prob = {
-            "f": cost,
-            "x": opt_vars,
-            "p": cs.vertcat(fixed_param, theta_param),
-            "g": constraint_exp,
+            'f': cost,
+            'x': opt_vars,
+            'p': cs.vertcat(fixed_param, theta_param),
+            'g': constraint_exp,
         }
-        qsolver = cs.nlpsol("qsolver", "ipopt", vnlp_prob, opts_setting)
+        qsolver = cs.nlpsol('qsolver', 'ipopt', vnlp_prob, opts_setting)
 
         # Sensitivity
         # Multipliers
-        lamb = cs.MX.sym("lambda", G.shape[0])
-        mu_u = cs.MX.sym("muu", Hu.shape[0])
-        mu_x = cs.MX.sym("mux", Hx.shape[0])
-        mu_s = cs.MX.sym("mus", Hs.shape[0])
+        lamb = cs.MX.sym('lambda', G.shape[0])
+        mu_u = cs.MX.sym('muu', Hu.shape[0])
+        mu_x = cs.MX.sym('mux', Hx.shape[0])
+        mu_s = cs.MX.sym('mus', Hs.shape[0])
         mult = cs.vertcat(lamb, mu_u, mu_x, mu_s)
 
         # Build Lagrangian
         lagrangian = (
-                cost
-                + cs.transpose(lamb) @ G
-                + cs.transpose(mu_u) @ Hu
-                + cs.transpose(mu_x) @ Hx
-                + cs.transpose(mu_s) @ Hs
+            cost
+            + cs.transpose(lamb) @ G
+            + cs.transpose(mu_u) @ Hu
+            + cs.transpose(mu_x) @ Hx
+            + cs.transpose(mu_s) @ Hs
         )
-        lagrangian_fn = cs.Function("Lag", [opt_vars, mult, fixed_param, theta_param], [lagrangian])
+        lagrangian_fn = cs.Function('Lag', [opt_vars, mult, fixed_param, theta_param], [lagrangian])
 
         # Generate sensitivity of the Lagrangian
         dlag_fn = lagrangian_fn.factory(
-            "dlag_fn",
-            ["i0", "i1", "i2", "i3"],
-            ["jac:o0:i0", "jac:o0:i3"],
+            'dlag_fn',
+            ['i0', 'i1', 'i2', 'i3'],
+            ['jac:o0:i0', 'jac:o0:i3'],
         )
         dlag_dw, dlag_dtheta = dlag_fn(opt_vars, mult, fixed_param, theta_param)
         dlag_dw_fn = cs.Function('dlag_dw_fn', [opt_vars, mult, fixed_param, theta_param], [dlag_dw])
@@ -556,7 +557,7 @@ class QMPC:
         else:
             action = np.array([self.u_prev[0]])
         if mode == 'train':
-            action += self.eps*(np.random.random(self.model.nu) - 0.5)
+            action += self.eps * (np.random.random(self.model.nu) - 0.5)
 
         # additional info
         info = {
@@ -564,7 +565,7 @@ class QMPC:
             'soln': deepcopy(soln),
             'fixed_param': deepcopy(fixed_param),
             'theta_param': deepcopy(theta_param),
-            'traj_step': deepcopy(self.traj_step)-1
+            'traj_step': deepcopy(self.traj_step) - 1
         }
         return action, info, results_dict
 
@@ -632,7 +633,7 @@ class QMPC:
         eval_data_batch = []
         for next_obs, info in zip(next_obs_batch, info_batch):
             traj_step, soln = info['traj_step'], info['soln']
-            goal_states = self.get_references(traj_step+1)
+            goal_states = self.get_references(traj_step + 1)
             fixed_param = np.concatenate((next_obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
 
             # shift previous solutions by 1 step
@@ -841,7 +842,7 @@ def _create_semi_definite_matrix(n):
     # WW = W.T @ W
 
     np = n
-    P = cs.MX.sym("P", n)
+    P = cs.MX.sym('P', n)
     W = cs.diag(P)
     WW = cs.sqrt(W.T @ W)
     return WW, P, np

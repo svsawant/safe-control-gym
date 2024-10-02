@@ -33,4 +33,3 @@ algo_config:
   eval_interval: 540
   eval_save_best: True
   tensorboard: False
-

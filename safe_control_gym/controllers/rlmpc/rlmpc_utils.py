@@ -1,5 +1,5 @@
-import numpy as np
 import casadi as cs
+import numpy as np
 
 
 def euler_discrete(f, n, m, dt):
@@ -22,6 +22,8 @@ def euler_discrete(f, n, m, dt):
     return eu_dyn
 
 # Adam Optimizer (use the class from the previous response)
+
+
 class AdamOptimizer:
     def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
         """
