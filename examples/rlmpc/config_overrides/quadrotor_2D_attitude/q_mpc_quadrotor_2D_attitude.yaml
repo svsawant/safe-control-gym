@@ -8,6 +8,7 @@ algo_config:
     warmstart: True
     lr: 0.003
     eps: 0.05
+    n_worker: 8
 
   prior_info:
     prior_prop: null
@@ -24,7 +25,7 @@ algo_config:
   rollout_batch_size: 1
   num_workers: 1
   max_buffer_size: 5400
-  eval_batch_size: 1
+  eval_batch_size: 5
 
   # misc
   log_interval: 540

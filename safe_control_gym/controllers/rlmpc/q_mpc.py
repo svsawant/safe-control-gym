@@ -153,6 +153,17 @@ class Q_MPC(BaseController):
         if self.num_checkpoints > 0:
             step_interval = np.linspace(0, self.max_env_steps, self.num_checkpoints)
             interval_save = np.zeros_like(step_interval, dtype=bool)
+
+        # initial evaluation
+        eval_results = self.run(env=self.eval_env, n_episodes=self.eval_batch_size)
+        results = {'step': 0, 'eval': eval_results}
+        self.logger.info('Eval | ep_lengths {:.2f} +/- {:.2f} | '
+                         'ep_return {:.3f} +/- {:.3f}'.format(eval_results['ep_lengths'].mean(),
+                                                              eval_results['ep_lengths'].std(),
+                                                              eval_results['ep_returns'].mean(),
+                                                              eval_results['ep_returns'].std()))
+        self.log_step(results, only_eval=True)
+
         while self.total_steps < self.max_env_steps:
             results = self.train_step()
 
@@ -173,8 +184,7 @@ class Q_MPC(BaseController):
                     interval_save[interval_id] = True
 
             # eval
-            if self.eval_interval and (self.initial_eval or self.total_steps % self.eval_interval == 0):
-                self.initial_eval = False
+            if self.eval_interval and self.total_steps % self.eval_interval == 0:
                 eval_results = self.run(env=self.eval_env, n_episodes=self.eval_batch_size)
                 results['eval'] = eval_results
                 self.logger.info('Eval | ep_lengths {:.2f} +/- {:.2f} | '
@@ -321,47 +331,48 @@ class Q_MPC(BaseController):
             eval_results.update(queued_stats)
         return eval_results
 
-    def log_step(self, results):
+    def log_step(self, results, only_eval=False):
         """Does logging after a training step."""
         step = results['step']
-        # runner stats
-        self.logger.add_scalars(
-            {
-                'step': step,
-                'time': results['elapsed_time'],
-                'progress': step / self.max_env_steps,
-            },
-            step,
-            prefix='time')
-
-        # learning stats
-        if 'td_error' in results:
+        if not only_eval:
+            # runner stats
             self.logger.add_scalars(
                 {
-                    k: results[k]
-                    for k in ['td_error']
+                    'step': step,
+                    'time': results['elapsed_time'],
+                    'progress': step / self.max_env_steps,
                 },
                 step,
-                prefix='loss')
+                prefix='time')
 
-        # performance stats
-        ep_lengths = np.asarray(self.env.length_queue)
-        ep_returns = np.asarray(self.env.return_queue)
-        ep_constraint_violation = np.asarray(self.env.queued_stats['constraint_violation'])
-        self.logger.add_scalars(
-            {
-                'ep_length': ep_lengths.mean(),
-                'ep_return': ep_returns.mean(),
-                'ep_return_std': ep_returns.std(),
-                'ep_reward': (ep_returns / ep_lengths).mean(),
-                'ep_constraint_violation': ep_constraint_violation.mean()
-            },
-            step,
-            prefix='stat')
+            # learning stats
+            if 'td_error' in results:
+                self.logger.add_scalars(
+                    {
+                        k: results[k]
+                        for k in ['td_error']
+                    },
+                    step,
+                    prefix='loss')
 
-        # total constraint violation during learning
-        total_violations = self.env.accumulated_stats['constraint_violation']
-        self.logger.add_scalars({'constraint_violation': total_violations}, step, prefix='stat')
+            # performance stats
+            ep_lengths = np.asarray(self.env.length_queue)
+            ep_returns = np.asarray(self.env.return_queue)
+            ep_constraint_violation = np.asarray(self.env.queued_stats['constraint_violation'])
+            self.logger.add_scalars(
+                {
+                    'ep_length': ep_lengths.mean(),
+                    'ep_return': ep_returns.mean(),
+                    'ep_return_std': ep_returns.std(),
+                    'ep_reward': (ep_returns / ep_lengths).mean(),
+                    'ep_constraint_violation': ep_constraint_violation.mean()
+                },
+                step,
+                prefix='stat')
+
+            # total constraint violation during learning
+            total_violations = self.env.accumulated_stats['constraint_violation']
+            self.logger.add_scalars({'constraint_violation': total_violations}, step, prefix='stat')
 
         if 'eval' in results:
             eval_ep_lengths = results['eval']['ep_lengths']
