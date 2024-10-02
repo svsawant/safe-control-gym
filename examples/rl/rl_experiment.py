@@ -5,6 +5,7 @@ from functools import partial
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import FormatStrFormatter
 
 from safe_control_gym.envs.benchmark_env import Environment, Task
 from safe_control_gym.experiments.base_experiment import BaseExperiment
@@ -89,7 +90,7 @@ def run(gui=False, plot=True, n_episodes=10, n_steps=None, curr_path='.'):
             graph1_2 = 9
             graph3_1 = 0
             graph3_2 = 4
-        elif system == 'quadrotor_4D':
+        elif system == 'quadrotor_2D_attitude':
             graph1_1 = 4
             graph1_2 = 5
             graph3_1 = 0

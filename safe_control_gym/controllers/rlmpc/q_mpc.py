@@ -20,7 +20,7 @@ from safe_control_gym.utils.logging import ExperimentLogger
 from safe_control_gym.utils.utils import is_wrapped
 
 
-class Qlearning_MPC(BaseController):
+class Q_MPC(BaseController):
     """MPC with full nonlinear model."""
 
     def __init__(
@@ -50,6 +50,7 @@ class Qlearning_MPC(BaseController):
         for k, v in locals().items():
             if k != 'self' and k != 'kwargs' and '__' not in k:
                 self.__dict__.update({k: v})
+        self.initial_eval = True
 
         # Task.
         self.env = env_func(seed=seed)
@@ -172,7 +173,8 @@ class Qlearning_MPC(BaseController):
                     interval_save[interval_id] = True
 
             # eval
-            if self.eval_interval and self.total_steps % self.eval_interval == 0:
+            if self.eval_interval and (self.initial_eval or self.total_steps % self.eval_interval == 0):
+                self.initial_eval = False
                 eval_results = self.run(env=self.eval_env, n_episodes=self.eval_batch_size)
                 results['eval'] = eval_results
                 self.logger.info('Eval | ep_lengths {:.2f} +/- {:.2f} | '
@@ -248,10 +250,9 @@ class Qlearning_MPC(BaseController):
             for j in range(self.train_interval):
                 batch = self.buffer.sample(self.train_batch_size, self.device)
                 res = self.agent.update(batch)
-                # for k, v in res.items():
-                #     results[k].append(v)
-            print(self.agent.q_mpc, self.agent.r_mpc)
-            p()
+                for k, v in res.items():
+                    results[k].append(v)
+            print(self.agent.param_dict)
         results = {k: sum(v) / len(v) for k, v in results.items()}
         results.update({'step': self.total_steps, 'elapsed_time': time.time() - start})
         return results
@@ -335,11 +336,11 @@ class Qlearning_MPC(BaseController):
             prefix='time')
 
         # learning stats
-        if 'policy_loss' in results:
+        if 'td_error' in results:
             self.logger.add_scalars(
                 {
                     k: results[k]
-                    for k in ['policy_loss', 'critic_loss', 'entropy_loss']
+                    for k in ['td_error']
                 },
                 step,
                 prefix='loss')

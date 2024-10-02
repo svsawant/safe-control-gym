@@ -1,13 +1,15 @@
+from collections import defaultdict, deque
 import numpy as np
 import casadi as cs
 from copy import deepcopy
-import torch
+from multiprocessing import Pool
 from gymnasium.spaces import Box
 from collections import deque
 
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
+from safe_control_gym.controllers.rlmpc.rlmpc_utils import AdamOptimizer, euler_discrete
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
 
@@ -20,12 +22,15 @@ class QMPC:
                  horizon: int = 5,
                  q_mpc: list = [2],
                  r_mpc: list = [1],
+                 qt_mpc: list = [2],
                  warmstart: bool = True,
                  soft_constraints: bool = True,
                  constraint_tol: float = 1e-6,
                  additional_constraints: list = None,
-                 lr=1e-4,
-                 eps=0.1,
+                 lr: float = 1e-4,
+                 eps: float = 0.1,
+                 tau: float = 0.01,
+                 n_worker: int = 16,
                  ):
         """Creates task and controller.
 
@@ -58,17 +63,15 @@ class QMPC:
         self.dt = self.model.dt
         self.T = horizon
         self.gamma = 0.98
-        self.q_mpc, self.r_mpc = q_mpc, r_mpc
-        self.target_q_mpc, self.target_r_mpc = q_mpc, r_mpc
-        self.Q = get_cost_weight_matrix(self.q_mpc, self.model.nx)
-        self.R = get_cost_weight_matrix(self.r_mpc, self.model.nu)
+        self.q_mpc, self.r_mpc, self.qt_mpc = q_mpc, r_mpc, qt_mpc
         self.lr = lr
+        self.tau = tau
         self.eps = eps
         self.update_step_count = 0
-
         self.soft_constraints = soft_constraints
         self.constraint_tol = constraint_tol
         self.warmstart = warmstart
+        self.multi_pool = Pool(n_worker)
 
         # Setup optimizer
         self.solver_dict, self.qfn_dict = None, None
@@ -76,8 +79,11 @@ class QMPC:
         self.set_dynamics_func()
         self.setup_optimizer()
         self.qfn_setup()
-
+        self._init_theta_val()
         self.reset()
+
+        # Optimizers
+        self.optimizer = AdamOptimizer(lr)
 
     def reset(self):
         # Previously solved states & inputs, useful for warm start.
@@ -130,7 +136,11 @@ class QMPC:
 
     def set_dynamics_func(self):
         """Updates symbolic dynamics with actual control frequency."""
-        self.dynamics_func = rk_discrete(self.model.fc_func,
+        # self.dynamics_func = rk_discrete(self.model.fc_func,
+        #                                  self.model.nx,
+        #                                  self.model.nu,
+        #                                  self.dt)
+        self.dynamics_func = euler_discrete(self.model.fc_func,
                                          self.model.nx,
                                          self.model.nu,
                                          self.dt)
@@ -153,11 +163,20 @@ class QMPC:
 
         return x_guess, u_guess
 
+    def _init_theta_val(self):
+        # self.theta_param_ = torch.FloatTensor(np.concatenate((self.q_mpc, self.r_mpc)))
+        # self.target_theta_param_ = torch.FloatTensor(np.concatenate((self.q_mpc, self.r_mpc)))
+        # self.theta_param_.requires_grad_()
+        # self.solver_dict['theta_param_val'] = np.concatenate((self.q_mpc, self.r_mpc, self.q_mpc)).copy()
+        self.param_dict = {'l': np.concatenate((self.q_mpc, self.r_mpc, self.qt_mpc)).copy()}
+        self.target_param_dict = {'l': np.concatenate((self.q_mpc, self.r_mpc, self.qt_mpc)).copy()}
+        # self.solver_dict['target_theta_param_val'] = np.concatenate((self.q_mpc, self.r_mpc)).copy()
+
     def setup_optimizer(self):
         """Sets up nonlinear optimization problem."""
         nx, nu = self.model.nx, self.model.nu
         T = self.T
-        etau = 1e-5
+        etau = 1e-4
 
         # Define optimizer and variables.
         # States.
@@ -178,10 +197,13 @@ class QMPC:
         # Reference (equilibrium point or trajectory, last step for terminal cost).
         x_ref = cs.MX.sym("x_ref", nx, T + 1)
         fixed_param = cs.vertcat(x_init, cs.reshape(x_ref, -1, 1))
+
         # Learnable parameters
-        theta_param = cs.MX.sym("theta_var", nx + nu)
-        Q = cs.diag(theta_param[:nx])
-        R = cs.diag(theta_param[nx:])
+        Q, th_q, nq = _create_semi_definite_matrix(nx)
+        R, th_r, nr = _create_semi_definite_matrix(nu)
+        Qt, th_qt, nqt = _create_semi_definite_matrix(nx)
+        # theta_param = cs.MX.sym("theta_var", nq + nr)
+        theta_param = cs.vertcat(th_q, th_r, th_qt)
 
         # cost (cumulative)
         cost = 0
@@ -200,7 +222,7 @@ class QMPC:
                                             u=np.zeros((nu, 1)),
                                             Xr=x_ref[:, -1],
                                             Ur=np.zeros((nu, 1)),
-                                            Q=Q,
+                                            Q=Qt,
                                             R=R)['l']
         # Constraints
         g, hu, hx, hs = [], [], [], []
@@ -236,7 +258,7 @@ class QMPC:
 
         # Create solver (IPOPT solver in this version)
         opts_setting = {
-            "ipopt.max_iter": 200,
+            "ipopt.max_iter": 100,
             "ipopt.print_level": 0,
             "print_time": 0,
             "ipopt.mu_target": etau,
@@ -324,10 +346,13 @@ class QMPC:
         # Reference (equilibrium point or trajectory, last step for terminal cost).
         x_ref = cs.MX.sym("x_ref", nx, T + 1)
         fixed_param = cs.vertcat(x_init, cs.reshape(x_ref, -1, 1), u_init)
+
         # Learnable parameters
-        theta_param = cs.MX.sym("theta_var", nx + nu)
-        Q = cs.diag(theta_param[:nx])
-        R = cs.diag(theta_param[nx:])
+        Q, th_q, nq = _create_semi_definite_matrix(nx)
+        R, th_r, nr = _create_semi_definite_matrix(nu)
+        Qt, th_qt, nqt = _create_semi_definite_matrix(nx)
+        # theta_param = cs.MX.sym("theta_var", nq + nr)
+        theta_param = cs.vertcat(th_q, th_r, th_qt)
 
         # cost (cumulative)
         cost = 0
@@ -346,7 +371,7 @@ class QMPC:
                                             u=np.zeros((nu, 1)),
                                             Xr=x_ref[:, -1],
                                             Ur=np.zeros((nu, 1)),
-                                            Q=Q,
+                                            Q=Qt,
                                             R=R)['l']
         # Constraints
         g, hu, hx, hs = [], [], [], []
@@ -383,7 +408,7 @@ class QMPC:
 
         # Create solver (IPOPT solver in this version)
         opts_setting = {
-            "ipopt.max_iter": 200,
+            "ipopt.max_iter": 50,
             "ipopt.print_level": 0,
             "print_time": 0,
             "ipopt.mu_target": etau,
@@ -481,9 +506,9 @@ class QMPC:
         # Collect the fixed param
         # Assign reference trajectory within horizon.
         goal_states = self.get_references()
-        fixed_param = np.concatenate((obs[:, None], goal_states.T.reshape(-1, 1)))
+        fixed_param = np.concatenate((obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
         # Collect learnable parameters
-        theta_param = np.concatenate((self.q_mpc, self.r_mpc))[:, None]
+        theta_param = self.param_dict['l'][:, None]
         if self.mode == 'tracking':
             self.traj_step += 1
 
@@ -544,69 +569,82 @@ class QMPC:
         return action, info, results_dict
 
     def update(self, batch):
-        td_error = 0.0
-        del_j = 0.0
-        theta_param = np.concatenate((self.q_mpc, self.r_mpc))[:, None]
-        next_theta_param = np.concatenate((self.target_q_mpc, self.target_r_mpc))[:, None]
-        for i in range(len(batch)):
-            if not batch['info'][i]['success']:
-                continue
-            obs = batch['obs'][i, :]
-            act = batch['act'][i, :]
-            next_obs = batch['next_obs'][i, :]
-            rew = -batch['rew'][i, 0]
-            mask = batch['mask'][i, 0]
-            soln = batch['info'][i]['soln']
-            fixed_param = batch['info'][i]['fixed_param']
-            traj_step = batch['info'][i]['traj_step']
+        results = defaultdict(list)
 
-            opt_vars_init = soln['x'].full()
-            qsoln = self.qfn_dict['solver'](
-                x0=opt_vars_init,
-                p=np.concatenate((fixed_param, act[:, None], theta_param))[:, 0],
-                lbg=self.qfn_dict['lower_bound'],
-                ubg=self.qfn_dict['upper_bound'],
-            )
-            if not self.qfn_dict['solver'].stats()['success']:
-                continue
-            opt_var, mult = qsoln['x'].full(), qsoln['lam_g'].full()
-            grad_q = self.qfn_dict['dlag_dtheta_fn'](opt_var, mult,
-                                                     np.concatenate((fixed_param, act[:, None])),
-                                                     theta_param).full()[0, :]
+        # current q
+        q, grad_q = self.get_q_batch(
+            batch['obs'], batch['act'], batch['info'], self.param_dict, sensitivity_compute=True
+        )
+        # next v
+        next_v = self.get_next_v_batch(batch['next_obs'], batch['info'], self.target_param_dict)
+        td = batch['rew'] + self.gamma * batch['mask'] * next_v[:, None] - q[:, None]
+        grads = {'l': (-td * grad_q).mean(axis=0)}
+        self.param_dict = self.optimizer.update_params(self.param_dict, grads)
 
-            next_goal_states = self.get_references(traj_step+1)
-            next_fixed_param = np.concatenate((next_obs[:, None], next_goal_states.T.reshape(-1, 1)))
-            x_val, u_val, sigma_val = self.solver_dict['opt_vars_fn'](soln['x'].full())
-            x_val, u_val, sigma_val = x_val.full(), u_val.full(), sigma_val.full()
-            u_val[:, :-1] = u_val[:, 1:]
-            x_val[:, :-1] = x_val[:, 1:]
-            sigma_val[:, :-1] = sigma_val[:, 1:]
-            opt_vars_init = np.concatenate((u_val.T.reshape(-1, 1),
-                                            x_val.T.reshape(-1, 1),
-                                            sigma_val.T.reshape(-1, 1)))
-            next_soln = self.solver_dict['solver'](
-                x0=opt_vars_init,
-                p=np.concatenate((next_fixed_param, next_theta_param))[:, 0],
-                lbg=self.solver_dict['lower_bound'],
-                ubg=self.solver_dict['upper_bound'],
-            )
-            if not self.solver_dict['solver'].stats()['success']:
-                continue
-
-            # Temporal difference error
-            td = rew + mask * self.gamma * next_soln['f'].full()[0, 0] - qsoln['f'].full()[0, 0]
-            print(rew, mask * self.gamma * next_soln['f'].full()[0, 0], qsoln['f'].full()[0, 0])
-            print(td)
-            td_error += td
-            del_j -= td*grad_q
-        print(del_j)
-        self.q_mpc -= self.lr * del_j[:self.model.nx]
-        self.r_mpc -= self.lr * del_j[self.model.nx:]
-        self.q_mpc, self.r_mpc = np.clip(self.q_mpc, 0, 100), np.clip(self.r_mpc, 0, 100)
         if self.update_step_count % 3 == 0:
-            self.target_q_mpc, self.target_r_mpc = self.q_mpc.copy(), self.r_mpc.copy()
+            soft_update(self.param_dict, self.target_param_dict, self.tau)
         self.update_step_count += 1
+        results['td_error'] = td.mean()
+        return results
 
+    def get_q_batch(self, obs_batch, act_batch, info_batch, param_dict, update_guess=False, sensitivity_compute=False):
+        solver_dict = self.qfn_dict
+        solver = solver_dict['solver']
+        lbg = solver_dict['lower_bound']
+        ubg = solver_dict['upper_bound']
+        theta_param = param_dict['l'][:, None]
+        dq = solver_dict['dlag_dtheta_fn']
+        opt_vars_fn = solver_dict['opt_vars_fn']
+
+        eval_data_batch = []
+        for obs, act, info in zip(obs_batch, act_batch, info_batch):
+            traj_step, soln = info['traj_step'], info['soln']
+            goal_states = self.get_references(traj_step)
+            fixed_param = np.concatenate((obs[:self.model.nx, None], goal_states.T.reshape(-1, 1), act[:, None]))
+
+            # shift previous solutions by 1 step
+            opt_vars_init = soln['x'].full()
+            if update_guess:
+                x_prev, u_prev, sigma_prev = solver_dict['opt_vars_fn'](opt_vars_init)
+                x_prev, u_prev, sigma_prev = x_prev.full(), u_prev.full(), sigma_prev.full()
+                opt_vars_init = update_initial_guess(x_prev, u_prev, sigma_prev)
+
+            temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, opt_vars_fn, dq, sensitivity_compute]
+            eval_data_batch.append(temp)
+        soln_batch = self.multi_pool.map(_get_q, eval_data_batch)
+
+        q_batch = []
+        grad_q_batch = []
+        for soln in soln_batch:
+            q, grad_q = soln
+            q_batch.append(q)
+            grad_q_batch.append(grad_q)
+        q_batch, grad_q_batch = np.array(q_batch), np.array(grad_q_batch)
+        return q_batch, grad_q_batch
+
+    def get_next_v_batch(self, next_obs_batch, info_batch, param_dict):
+        solver_dict = self.solver_dict
+        solver = solver_dict['solver']
+        lbg = solver_dict['lower_bound']
+        ubg = solver_dict['upper_bound']
+        theta_param = param_dict['l'][:, None]
+
+        eval_data_batch = []
+        for next_obs, info in zip(next_obs_batch, info_batch):
+            traj_step, soln = info['traj_step'], info['soln']
+            goal_states = self.get_references(traj_step+1)
+            fixed_param = np.concatenate((next_obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
+
+            # shift previous solutions by 1 step
+            opt_vars_init = soln['x'].full()
+            x_prev, u_prev, sigma_prev = solver_dict['opt_vars_fn'](opt_vars_init)
+            x_prev, u_prev, sigma_prev = x_prev.full(), u_prev.full(), sigma_prev.full()
+            opt_vars_init = update_initial_guess(x_prev, u_prev, sigma_prev)
+
+            temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg]
+            eval_data_batch.append(temp)
+        next_v_batch = self.multi_pool.map(_get_v, eval_data_batch)
+        return np.array(next_v_batch)
 
 
 class ReplayBuffer(object):
@@ -737,3 +775,79 @@ class ReplayBuffer(object):
                 # else:
                 #     batch[k] = torch.as_tensor(v, device=device)
         return batch
+
+
+# -----------------------------------------------------------------------------------
+#                   Misc
+# -----------------------------------------------------------------------------------
+
+
+def _get_q(eval_data):
+    solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, opt_vars_fn, dq, sensitivity_compute = eval_data
+
+    # Solve the optimization problem.
+    soln = solver(
+        x0=opt_vars_init,
+        p=np.concatenate((fixed_param, theta_param))[:, 0],
+        lbg=lbg,
+        ubg=ubg,
+    )
+    q = soln['f'].full()[0, 0]
+
+    # Sensitivity computation
+    if sensitivity_compute:
+        opt_var, mult = soln['x'].full(), soln['lam_g'].full()
+        grad_q = dq(opt_var, mult, fixed_param, theta_param).full()[0, :]
+    else:
+        grad_q = np.zeros((theta_param.shape[0]))
+    return q, grad_q
+
+
+def _get_v(eval_data):
+    solver, opt_vars_init, fixed_param, theta_param, lbg, ubg = eval_data
+
+    # Solve the optimization problem.
+    soln = solver(
+        x0=opt_vars_init,
+        p=np.concatenate((fixed_param, theta_param))[:, 0],
+        lbg=lbg,
+        ubg=ubg,
+    )
+    v = soln['f'].full()[0, 0]
+    return v
+
+
+def update_initial_guess(x_prev, u_prev, sigma_prev):
+    # shift previous solutions by 1 step
+    u_guess = deepcopy(u_prev)
+    x_guess = deepcopy(x_prev)
+    sigma_guess = deepcopy(sigma_prev)
+    u_guess[:, :-1] = u_guess[:, 1:]
+    x_guess[:, :-1] = x_guess[:, 1:]
+    sigma_guess[:, :-1] = sigma_guess[:, 1:]
+    opt_vars_init = np.concatenate((u_guess.T.reshape(-1, 1),
+                                    x_guess.T.reshape(-1, 1),
+                                    sigma_guess.T.reshape(-1, 1)))
+    return opt_vars_init
+
+
+def _create_semi_definite_matrix(n):
+    # U = cs.SX.sym("U", cs.Sparsity.lower(n))
+    # u = cs.vertcat(*U.nonzeros())
+    # W_upper = cs.Function("Lower_tri_W", [u], [U])
+    # np = int(n * (n + 1) / 2)
+    # p = cs.MX.sym("p", np)
+    # W = W_upper(p)
+    # WW = W.T @ W
+
+    np = n
+    P = cs.MX.sym("P", n)
+    W = cs.diag(P)
+    WW = cs.sqrt(W.T @ W)
+    return WW, P, np
+
+
+def soft_update(source_params, target_params, tau):
+    """Synchronizes target parameter with exponential moving average."""
+    for key in source_params.keys():
+        target_params[key] = target_params[key] * (1.0 - tau) + source_params[key] * tau

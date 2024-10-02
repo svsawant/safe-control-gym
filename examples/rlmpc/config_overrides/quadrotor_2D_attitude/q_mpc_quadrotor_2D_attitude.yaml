@@ -1,20 +1,13 @@
 algo_config:
   mpc_config:
     horizon: 20
-    r_mpc:
-      - 0.1
-      - 0.1
-    q_mpc:
-      - 0.1
-      - 0.1
-      - 0.1
-      - 0.1
-      - 0.1
-      - 0.01
+    q_mpc: [10.1, 0.1, 10.1, 0.1, 0.1, 0.001]
+    r_mpc: [0.1, 0.1]
+    qt_mpc: [10.1, 0.1, 10.1, 0.1, 0.1, 0.001]
     # Prior info
     warmstart: True
-    lr: 0.0003
-    eps: 0.01
+    lr: 0.003
+    eps: 0.05
 
   prior_info:
     prior_prop: null
@@ -22,8 +15,8 @@ algo_config:
     prior_prop_rand_info: null
 
   # optim args
-  train_interval: 270
-  train_batch_size: 16
+  train_interval: 540
+  train_batch_size: 64
 
   # runner args
   max_env_steps: 5400
@@ -31,13 +24,13 @@ algo_config:
   rollout_batch_size: 1
   num_workers: 1
   max_buffer_size: 5400
-  eval_batch_size: 5
+  eval_batch_size: 1
 
   # misc
-  log_interval: 270
+  log_interval: 540
   save_interval: 5400
   num_checkpoints: 0
-  eval_interval: 270
+  eval_interval: 540
   eval_save_best: True
   tensorboard: False
 
