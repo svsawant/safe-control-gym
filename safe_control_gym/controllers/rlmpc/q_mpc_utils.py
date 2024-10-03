@@ -572,80 +572,94 @@ class QMPC:
     def update(self, batch):
         results = defaultdict(list)
 
-        # current q
-        q, grad_q = self.get_q_batch(
-            batch['obs'], batch['act'], batch['info'], self.param_dict, sensitivity_compute=True
+        # get values and sensitivities
+        q, grad_q, next_v, optimal = self.get_values_batch(
+            batch['obs'], batch['act'], batch['next_obs'], batch['info'], self.param_dict, self.target_param_dict
         )
-        # next v
-        next_v = self.get_next_v_batch(batch['next_obs'], batch['info'], self.target_param_dict)
         td = batch['rew'] + self.gamma * batch['mask'] * next_v[:, None] - q[:, None]
-        grads = {'l': (-td * grad_q).mean(axis=0)}
+        td = optimal[:, None]*td
+        grads = {'l': (td * grad_q).mean(axis=0)}
         self.param_dict = self.optimizer.update_params(self.param_dict, grads)
 
-        if self.update_step_count % 3 == 0:
+        if self.update_step_count % 10 == 0:
             soft_update(self.param_dict, self.target_param_dict, self.tau)
         self.update_step_count += 1
         results['td_error'] = td.mean()
         return results
 
-    def get_q_batch(self, obs_batch, act_batch, info_batch, param_dict, update_guess=False, sensitivity_compute=False):
+    def get_values_batch(self, obs_batch, act_batch, next_obs_batch, info_batch, param_dict, target_param_dict):
+        # q and grad_q
         solver_dict = self.qfn_dict
-        solver = solver_dict['solver']
-        lbg = solver_dict['lower_bound']
-        ubg = solver_dict['upper_bound']
-        theta_param = param_dict['l'][:, None]
+        solver1 = solver_dict['solver']
+        lbg1 = solver_dict['lower_bound']
+        ubg1 = solver_dict['upper_bound']
+        theta_param1 = param_dict['l'][:, None]
         dq = solver_dict['dlag_dtheta_fn']
-        opt_vars_fn = solver_dict['opt_vars_fn']
+        # next v 
+        solver_dict = self.solver_dict
+        solver2 = solver_dict['solver']
+        lbg2 = solver_dict['lower_bound']
+        ubg2 = solver_dict['upper_bound']
+        theta_param2 = target_param_dict['l'][:, None]
 
         eval_data_batch = []
-        for obs, act, info in zip(obs_batch, act_batch, info_batch):
+        for obs, act, next_obs, info in zip(obs_batch, act_batch, next_obs_batch, info_batch):
             traj_step, soln = info['traj_step'], info['soln']
+
+            # data for q solver
             goal_states = self.get_references(traj_step)
-            fixed_param = np.concatenate((obs[:self.model.nx, None], goal_states.T.reshape(-1, 1), act[:, None]))
+            fixed_param1 = np.concatenate((obs[:self.model.nx, None], goal_states.T.reshape(-1, 1), act[:, None]))
+            opt_vars_init1 = soln['x'].full()
+            temp = [solver1, opt_vars_init1, fixed_param1, theta_param1, lbg1, ubg1, dq]
 
-            # shift previous solutions by 1 step
-            opt_vars_init = soln['x'].full()
-            if update_guess:
-                x_prev, u_prev, sigma_prev = solver_dict['opt_vars_fn'](opt_vars_init)
-                x_prev, u_prev, sigma_prev = x_prev.full(), u_prev.full(), sigma_prev.full()
-                opt_vars_init = update_initial_guess(x_prev, u_prev, sigma_prev)
+            # data for v solver
+            goal_states = self.get_references(traj_step + 1)
+            fixed_param2 = np.concatenate((next_obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
+            opt_vars_init2 = soln['x'].full()
+            x_prev, u_prev, sigma_prev = solver_dict['opt_vars_fn'](opt_vars_init2)
+            x_prev, u_prev, sigma_prev = x_prev.full(), u_prev.full(), sigma_prev.full()
+            opt_vars_init2 = update_initial_guess(x_prev, u_prev, sigma_prev)
 
-            temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, opt_vars_fn, dq, sensitivity_compute]
+            temp += [solver2, opt_vars_init2, fixed_param2, theta_param2, lbg2, ubg2]
             eval_data_batch.append(temp)
-        soln_batch = self.multi_pool.map(_get_q, eval_data_batch)
 
-        q_batch = []
-        grad_q_batch = []
+        # batch compute
+        soln_batch = self.multi_pool.map(_get_values, eval_data_batch)
+
+        # collect solns
+        q_batch, grad_q_batch, next_v_batch, optimal_batch = [], [], [], []
         for soln in soln_batch:
-            q, grad_q = soln
+            q, grad_q, next_v, optimal = soln
             q_batch.append(q)
             grad_q_batch.append(grad_q)
-        q_batch, grad_q_batch = np.array(q_batch), np.array(grad_q_batch)
-        return q_batch, grad_q_batch
+            next_v_batch.append(next_v)
+            optimal_batch.append(optimal)
+        q_batch, grad_q_batch, next_v_batch, optimal_batch = np.array(q_batch), np.array(grad_q_batch), np.array(next_v_batch), np.array(optimal_batch)
+        return q_batch, grad_q_batch, next_v_batch, optimal_batch
 
-    def get_next_v_batch(self, next_obs_batch, info_batch, param_dict):
-        solver_dict = self.solver_dict
-        solver = solver_dict['solver']
-        lbg = solver_dict['lower_bound']
-        ubg = solver_dict['upper_bound']
-        theta_param = param_dict['l'][:, None]
+    # def get_next_v_batch(self, next_obs_batch, info_batch, param_dict):
+    #     solver_dict = self.solver_dict
+    #     solver = solver_dict['solver']
+    #     lbg = solver_dict['lower_bound']
+    #     ubg = solver_dict['upper_bound']
+    #     theta_param = param_dict['l'][:, None]
 
-        eval_data_batch = []
-        for next_obs, info in zip(next_obs_batch, info_batch):
-            traj_step, soln = info['traj_step'], info['soln']
-            goal_states = self.get_references(traj_step + 1)
-            fixed_param = np.concatenate((next_obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
+    #     eval_data_batch = []
+    #     for next_obs, info in zip(next_obs_batch, info_batch):
+    #         traj_step, soln = info['traj_step'], info['soln']
+    #         goal_states = self.get_references(traj_step + 1)
+    #         fixed_param = np.concatenate((next_obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
 
-            # shift previous solutions by 1 step
-            opt_vars_init = soln['x'].full()
-            x_prev, u_prev, sigma_prev = solver_dict['opt_vars_fn'](opt_vars_init)
-            x_prev, u_prev, sigma_prev = x_prev.full(), u_prev.full(), sigma_prev.full()
-            opt_vars_init = update_initial_guess(x_prev, u_prev, sigma_prev)
+    #         # shift previous solutions by 1 step
+    #         opt_vars_init = soln['x'].full()
+    #         x_prev, u_prev, sigma_prev = solver_dict['opt_vars_fn'](opt_vars_init)
+    #         x_prev, u_prev, sigma_prev = x_prev.full(), u_prev.full(), sigma_prev.full()
+    #         opt_vars_init = update_initial_guess(x_prev, u_prev, sigma_prev)
 
-            temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg]
-            eval_data_batch.append(temp)
-        next_v_batch = self.multi_pool.map(_get_v, eval_data_batch)
-        return np.array(next_v_batch)
+    #         temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg]
+    #         eval_data_batch.append(temp)
+    #     next_v_batch = self.multi_pool.map(_get_v, eval_data_batch)
+    #     return np.array(next_v_batch)
 
 
 class ReplayBuffer(object):
@@ -783,10 +797,9 @@ class ReplayBuffer(object):
 # -----------------------------------------------------------------------------------
 
 
-def _get_q(eval_data):
-    solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, opt_vars_fn, dq, sensitivity_compute = eval_data
-
-    # Solve the optimization problem.
+def _get_values(eval_data):
+    # Q soln
+    solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, dq = eval_data[:7]
     soln = solver(
         x0=opt_vars_init,
         p=np.concatenate((fixed_param, theta_param))[:, 0],
@@ -794,20 +807,17 @@ def _get_q(eval_data):
         ubg=ubg,
     )
     q = soln['f'].full()[0, 0]
+    optimal1 = solver.stats()['success']
 
     # Sensitivity computation
-    if sensitivity_compute:
+    if optimal1:
         opt_var, mult = soln['x'].full(), soln['lam_g'].full()
         grad_q = dq(opt_var, mult, fixed_param, theta_param).full()[0, :]
     else:
         grad_q = np.zeros((theta_param.shape[0]))
-    return q, grad_q
 
-
-def _get_v(eval_data):
-    solver, opt_vars_init, fixed_param, theta_param, lbg, ubg = eval_data
-
-    # Solve the optimization problem.
+    # Next V soln
+    solver, opt_vars_init, fixed_param, theta_param, lbg, ubg = eval_data[7:]
     soln = solver(
         x0=opt_vars_init,
         p=np.concatenate((fixed_param, theta_param))[:, 0],
@@ -815,7 +825,24 @@ def _get_v(eval_data):
         ubg=ubg,
     )
     v = soln['f'].full()[0, 0]
-    return v
+    optimal2 = solver.stats()['success']
+    optimal = optimal1 and optimal2
+    return q, grad_q, v, optimal
+
+
+# def _get_v(eval_data):
+#     solver, opt_vars_init, fixed_param, theta_param, lbg, ubg = eval_data
+
+#     # Solve the optimization problem.
+#     soln = solver(
+#         x0=opt_vars_init,
+#         p=np.concatenate((fixed_param, theta_param))[:, 0],
+#         lbg=lbg,
+#         ubg=ubg,
+#     )
+#     v = soln['f'].full()[0, 0]
+#     optimal = solver.stats()['successful']
+#     return v, optimal
 
 
 def update_initial_guess(x_prev, u_prev, sigma_prev):
@@ -852,3 +879,9 @@ def soft_update(source_params, target_params, tau):
     """Synchronizes target parameter with exponential moving average."""
     for key in source_params.keys():
         target_params[key] = target_params[key] * (1.0 - tau) + source_params[key] * tau
+
+
+def hard_update(source_params, target_params, tau):
+    """Synchronizes target parameter with exponential moving average."""
+    for key in source_params.keys():
+        target_params[key] = source_params[key].copy()

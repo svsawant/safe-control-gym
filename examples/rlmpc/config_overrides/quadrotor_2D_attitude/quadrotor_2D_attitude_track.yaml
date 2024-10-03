@@ -59,9 +59,8 @@ task_config:
   cost: quadratic
   obs_goal_horizon: 0
 
-  # RL Reward
-  rew_state_weight: [10.0, 0.1, 10.0, 0.1, 0.1, 0.001]
-  rew_act_weight: 0.1
+  rew_state_weight: [10.0, 0., 10.0, 0., 0., 0.]
+  rew_act_weight: [0., 0.]
   rew_exponential: True
 
 #  disturbances:

@@ -1,14 +1,14 @@
 algo_config:
   mpc_config:
     horizon: 20
-    q_mpc: [10.1, 0.1, 10.1, 0.1, 0.1, 0.001]
+    q_mpc: [2.1, 0.1, 2.1, 0.1, 0.1, 0.001]
     r_mpc: [0.1, 0.1]
     qt_mpc: [10.1, 0.1, 10.1, 0.1, 0.1, 0.001]
     # Prior info
     warmstart: True
-    lr: 0.003
+    lr: 0.0035
     eps: 0.05
-    n_worker: 8
+    n_worker: 32
 
   prior_info:
     prior_prop: null
@@ -17,7 +17,7 @@ algo_config:
 
   # optim args
   train_interval: 540
-  train_batch_size: 64
+  train_batch_size: 32
 
   # runner args
   max_env_steps: 5400

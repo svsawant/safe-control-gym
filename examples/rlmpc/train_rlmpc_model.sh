@@ -11,7 +11,7 @@ TASK='track'
 ALGO='q_mpc'
 #ALGO='td3_mpc'
 
-EXP_NAME='exp1'
+EXP_NAME='exp4'
 
 if [ "$SYS" == 'cartpole' ]; then
     SYS_NAME=$SYS
