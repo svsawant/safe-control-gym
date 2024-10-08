@@ -14,7 +14,7 @@ from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
 
 
-class QMPC:
+class Q_MPC_Agent:
     """An MPC-based Q function approximator"""
 
     def __init__(self,
@@ -577,8 +577,8 @@ class QMPC:
             batch['obs'], batch['act'], batch['next_obs'], batch['info'], self.param_dict, self.target_param_dict
         )
         td = batch['rew'] + self.gamma * batch['mask'] * next_v[:, None] - q[:, None]
-        td = optimal[:, None]*td
-        grads = {'l': (td * grad_q).mean(axis=0)}
+        td = optimal[:, None] * td
+        grads = {'l': (-td * grad_q).mean(axis=0)}
         self.param_dict = self.optimizer.update_params(self.param_dict, grads)
 
         if self.update_step_count % 10 == 0:
@@ -595,7 +595,7 @@ class QMPC:
         ubg1 = solver_dict['upper_bound']
         theta_param1 = param_dict['l'][:, None]
         dq = solver_dict['dlag_dtheta_fn']
-        # next v 
+        # next v
         solver_dict = self.solver_dict
         solver2 = solver_dict['solver']
         lbg2 = solver_dict['lower_bound']
@@ -636,30 +636,6 @@ class QMPC:
             optimal_batch.append(optimal)
         q_batch, grad_q_batch, next_v_batch, optimal_batch = np.array(q_batch), np.array(grad_q_batch), np.array(next_v_batch), np.array(optimal_batch)
         return q_batch, grad_q_batch, next_v_batch, optimal_batch
-
-    # def get_next_v_batch(self, next_obs_batch, info_batch, param_dict):
-    #     solver_dict = self.solver_dict
-    #     solver = solver_dict['solver']
-    #     lbg = solver_dict['lower_bound']
-    #     ubg = solver_dict['upper_bound']
-    #     theta_param = param_dict['l'][:, None]
-
-    #     eval_data_batch = []
-    #     for next_obs, info in zip(next_obs_batch, info_batch):
-    #         traj_step, soln = info['traj_step'], info['soln']
-    #         goal_states = self.get_references(traj_step + 1)
-    #         fixed_param = np.concatenate((next_obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
-
-    #         # shift previous solutions by 1 step
-    #         opt_vars_init = soln['x'].full()
-    #         x_prev, u_prev, sigma_prev = solver_dict['opt_vars_fn'](opt_vars_init)
-    #         x_prev, u_prev, sigma_prev = x_prev.full(), u_prev.full(), sigma_prev.full()
-    #         opt_vars_init = update_initial_guess(x_prev, u_prev, sigma_prev)
-
-    #         temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg]
-    #         eval_data_batch.append(temp)
-    #     next_v_batch = self.multi_pool.map(_get_v, eval_data_batch)
-    #     return np.array(next_v_batch)
 
 
 class ReplayBuffer(object):
@@ -828,21 +804,6 @@ def _get_values(eval_data):
     optimal2 = solver.stats()['success']
     optimal = optimal1 and optimal2
     return q, grad_q, v, optimal
-
-
-# def _get_v(eval_data):
-#     solver, opt_vars_init, fixed_param, theta_param, lbg, ubg = eval_data
-
-#     # Solve the optimization problem.
-#     soln = solver(
-#         x0=opt_vars_init,
-#         p=np.concatenate((fixed_param, theta_param))[:, 0],
-#         lbg=lbg,
-#         ubg=ubg,
-#     )
-#     v = soln['f'].full()[0, 0]
-#     optimal = solver.stats()['successful']
-#     return v, optimal
 
 
 def update_initial_guess(x_prev, u_prev, sigma_prev):

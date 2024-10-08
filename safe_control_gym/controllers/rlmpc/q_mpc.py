@@ -12,7 +12,7 @@ from safe_control_gym.controllers.base_controller import BaseController
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
-from safe_control_gym.controllers.rlmpc.q_mpc_utils import QMPC, ReplayBuffer
+from safe_control_gym.controllers.rlmpc.q_mpc_utils import Q_MPC_Agent, ReplayBuffer
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
 from safe_control_gym.envs.env_wrappers.record_episode_statistics import RecordEpisodeStatistics
@@ -61,7 +61,7 @@ class Q_MPC(BaseController):
 
         # Agent
         model = self.get_prior(self.env)
-        self.agent = QMPC(self.env, model, **mpc_config)
+        self.agent = Q_MPC_Agent(self.env, model, **mpc_config)
 
         # logging
         if self.training:

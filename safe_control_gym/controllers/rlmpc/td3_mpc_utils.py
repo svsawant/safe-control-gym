@@ -1,23 +1,24 @@
 from collections import defaultdict, deque
 from copy import deepcopy
+from multiprocessing import Pool
 
-import numpy as np
 import casadi as cs
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from gymnasium.spaces import Box
-from multiprocessing import Pool
 
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
+from safe_control_gym.controllers.rlmpc.rlmpc_utils import AdamOptimizer
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
 from safe_control_gym.math_and_models.neural_networks import MLP
 
 
-class TD3MPC:
+class TD3_MPC_Agent:
     """An MPC-based policy function approximator with TD3 critic"""
 
     def __init__(self,
@@ -81,8 +82,7 @@ class TD3MPC:
         self.update_step_count = 0
         self.update_freq = 3
         self.tau = tau
-        self.actor_lr = actor_lr
-        # self.actor_opt = torch.optim.Adam([self.actor.theta_param_], actor_lr)
+        self.actor_opt = AdamOptimizer(actor_lr)
         self.critic_opt = torch.optim.Adam(list(self.critic.q_net1.parameters())
                                            + list(self.critic.q_net2.parameters()), critic_lr)
 
@@ -107,8 +107,8 @@ class TD3MPC:
         with torch.no_grad():
             # Next action
             next_act, _ = self.actor.select_action_batch(next_obs, info)
-            noise = (0.5*torch.randn_like(next_act)).clamp(-0.2, 0.2)
-            next_act = (next_act+noise).clamp(self.action_space_low, self.action_space_high)
+            noise = (0.5 * torch.randn_like(next_act)).clamp(-0.2, 0.2)
+            next_act = (next_act + noise).clamp(self.action_space_low, self.action_space_high)
             # Target Q value for next state and next action
             next_q1_targ, next_q2_targ = self.critic_targ.forward(next_obs, next_act)
             next_q_targ = torch.min(next_q1_targ, next_q2_targ)
@@ -139,13 +139,12 @@ class TD3MPC:
             policy_loss = q1.mean()
             policy_loss.backward()
             grad_q = action_batch.grad.unsqueeze(1).numpy()
-            delj = np.matmul(grad_q, nabla_pi_batch).squeeze(1)
-            self.actor.solver_dict['theta_param_val'] += self.actor_lr * delj.mean(axis=0)
-            print(self.actor.solver_dict['theta_param_val'])
-            results['policy_loss'] = policy_loss.item()
+            grads = {'l': np.matmul(grad_q, nabla_pi_batch).squeeze(1).mean(axis=0)}
+            self.actor.param_dict = self.actor_opt.update_params(self.actor.param_dict, grads)
 
             # update target networks
             soft_update(self.critic, self.critic_targ, self.tau)
+            results['policy_loss'] = policy_loss.item()
 
         results['critic_loss'] = critic_loss.item()
         self.update_step_count += 1
@@ -169,6 +168,7 @@ class MLPQFunction(nn.Module):
     def forward(self, obs, act):
         return self.q_net1(torch.cat([obs, act], dim=-1)), self.q_net2(torch.cat([obs, act], dim=-1))
 
+
 class MPCPolicyFunction:
     def __init__(self,
                  env_fun,
@@ -181,6 +181,7 @@ class MPCPolicyFunction:
                  soft_constraints: bool = True,
                  constraint_tol: float = 1e-6,
                  additional_constraints: list = None,
+                 n_workers: int = 8,
                  ):
         self.env = env_fun
         self.model = model
@@ -191,13 +192,14 @@ class MPCPolicyFunction:
         self.target_q_mpc, self.target_r_mpc = q_mpc, r_mpc
         self.Q = get_cost_weight_matrix(self.q_mpc, self.model.nx)
         self.R = get_cost_weight_matrix(self.r_mpc, self.model.nu)
+        self.Qt = get_cost_weight_matrix(self.q_mpc, self.model.nx)
         self.update_step_count = 0
         self.soft_constraints = soft_constraints
         self.constraint_tol = constraint_tol
         self.warmstart = warmstart
 
         # Multi-processing
-        self.multi_pool = Pool(8)
+        self.multi_pool = Pool(n_workers)
 
         # Constraint list
         if additional_constraints is not None:
@@ -303,33 +305,34 @@ class MPCPolicyFunction:
         """Sets up nonlinear optimization problem."""
         nx, nu = self.model.nx, self.model.nu
         T = self.T
-        etau = 1e-5
+        etau = 1e-4
 
         # Define optimizer and variables.
         # States.
-        x_var = cs.MX.sym("x_var", nx, T + 1)
+        x_var = cs.MX.sym('x_var', nx, T + 1)
         # Inputs.
-        u_var = cs.MX.sym("u_var", nu, T)
+        u_var = cs.MX.sym('u_var', nu, T)
         # Add slack variables
-        state_slack = cs.MX.sym("sigma_var", nx, T + 1)
+        state_slack = cs.MX.sym('sigma_var', nx, T + 1)
         opt_vars = cs.vertcat(cs.reshape(u_var, -1, 1),
                               cs.reshape(x_var, -1, 1),
                               cs.reshape(state_slack, -1, 1))
-        opt_vars_fn = cs.Function("opt_vars_fun", [opt_vars], [x_var, u_var, state_slack])
+        opt_vars_fn = cs.Function('opt_vars_fun', [opt_vars], [x_var, u_var, state_slack])
 
         # Parameters
         # Fixed parameters
         # Initial state.
-        x_init = cs.MX.sym("x_init", nx, 1)
+        x_init = cs.MX.sym('x_init', nx, 1)
         # Reference (equilibrium point or trajectory, last step for terminal cost).
-        x_ref = cs.MX.sym("x_ref", nx, T + 1)
+        x_ref = cs.MX.sym('x_ref', nx, T + 1)
         fixed_param = cs.vertcat(x_init, cs.reshape(x_ref, -1, 1))
 
         # Learnable parameters
         Q, th_q, nq = _create_semi_definite_matrix(nx)
         R, th_r, nr = _create_semi_definite_matrix(nu)
+        Qt, th_qt, nqt = _create_semi_definite_matrix(nx)
         # theta_param = cs.MX.sym("theta_var", nq + nr)
-        theta_param = cs.vertcat(th_q, th_r)
+        theta_param = cs.vertcat(th_q, th_r, th_qt)
 
         # cost (cumulative)
         cost = 0
@@ -348,7 +351,7 @@ class MPCPolicyFunction:
                                             u=np.zeros((nu, 1)),
                                             Xr=x_ref[:, -1],
                                             Ur=np.zeros((nu, 1)),
-                                            Q=Q,
+                                            Q=Qt,
                                             R=R)['l']
         # Constraints
         g, hu, hx, hs = [], [], [], []
@@ -384,45 +387,45 @@ class MPCPolicyFunction:
 
         # Create solver (IPOPT solver in this version)
         opts_setting = {
-            "ipopt.max_iter": 50,
-            "ipopt.print_level": 5,
-            "print_time": 5,
-            "ipopt.mu_target": etau,
-            "ipopt.mu_init": etau,
-            "ipopt.acceptable_tol": 1e-4,
-            "ipopt.acceptable_obj_change_tol": 1e-4,
+            'ipopt.max_iter': 100,
+            'ipopt.print_level': 0,
+            'print_time': 0,
+            'ipopt.mu_target': etau,
+            'ipopt.mu_init': etau,
+            'ipopt.acceptable_tol': 1e-4,
+            'ipopt.acceptable_obj_change_tol': 1e-4,
         }
         vnlp_prob = {
-            "f": cost,
-            "x": opt_vars,
-            "p": cs.vertcat(fixed_param, theta_param),
-            "g": constraint_exp,
+            'f': cost,
+            'x': opt_vars,
+            'p': cs.vertcat(fixed_param, theta_param),
+            'g': constraint_exp,
         }
-        vsolver = cs.nlpsol("vsolver", "ipopt", vnlp_prob, opts_setting)
+        vsolver = cs.nlpsol('vsolver', 'ipopt', vnlp_prob, opts_setting)
 
         # Sensitivity
         # Multipliers
-        lamb = cs.MX.sym("lambda", G.shape[0])
-        mu_u = cs.MX.sym("muu", Hu.shape[0])
-        mu_x = cs.MX.sym("mux", Hx.shape[0])
-        mu_s = cs.MX.sym("mus", Hs.shape[0])
+        lamb = cs.MX.sym('lambda', G.shape[0])
+        mu_u = cs.MX.sym('muu', Hu.shape[0])
+        mu_x = cs.MX.sym('mux', Hx.shape[0])
+        mu_s = cs.MX.sym('mus', Hs.shape[0])
         mult = cs.vertcat(lamb, mu_u, mu_x, mu_s)
 
         # Build Lagrangian
         lagrangian = (
-                cost
-                + cs.transpose(lamb) @ G
-                + cs.transpose(mu_u) @ Hu
-                + cs.transpose(mu_x) @ Hx
-                + cs.transpose(mu_s) @ Hs
+            cost
+            + cs.transpose(lamb) @ G
+            + cs.transpose(mu_u) @ Hu
+            + cs.transpose(mu_x) @ Hx
+            + cs.transpose(mu_s) @ Hs
         )
-        lagrangian_fn = cs.Function("Lag", [opt_vars, mult, fixed_param, theta_param], [lagrangian])
+        lagrangian_fn = cs.Function('Lag', [opt_vars, mult, fixed_param, theta_param], [lagrangian])
 
         # Generate sensitivity of the Lagrangian
         dlag_fn = lagrangian_fn.factory(
-            "dlag_fn",
-            ["i0", "i1", "i2", "i3"],
-            ["jac:o0:i0", "jac:o0:i3"],
+            'dlag_fn',
+            ['i0', 'i1', 'i2', 'i3'],
+            ['jac:o0:i0', 'jac:o0:i3'],
         )
         dlag_dw, dlag_dtheta = dlag_fn(opt_vars, mult, fixed_param, theta_param)
         dlag_dw_fn = cs.Function('dlag_dw_fn', [opt_vars, mult, fixed_param, theta_param], [dlag_dw])
@@ -441,13 +444,13 @@ class MPCPolicyFunction:
         z = cs.vertcat(opt_vars, lamb, mu_u, mu_x, mu_s)
 
         # Generate sensitivity of the KKT matrix
-        Rfun = cs.Function("Rfun", [z, fixed_param, theta_param], [R_kkt])
-        dR_sensfunc = Rfun.factory("dR", ["i0", "i1", "i2"], ["jac:o0:i0", "jac:o0:i2"])
+        Rfun = cs.Function('Rfun', [z, fixed_param, theta_param], [R_kkt])
+        dR_sensfunc = Rfun.factory('dR', ['i0', 'i1', 'i2'], ['jac:o0:i0', 'jac:o0:i2'])
         [dRdz, dRdP] = dR_sensfunc(z, fixed_param, theta_param)
 
         # Generate sensitivity of the optimal solution
         dzdP = -cs.inv(dRdz) @ dRdP
-        dPi = cs.Function("dPi", [z, fixed_param, theta_param], [dzdP[: nu, :]])
+        dPi = cs.Function('dPi', [z, fixed_param, theta_param], [dzdP[: nu, :]])
 
         self.solver_dict = {
             'solver': vsolver,
@@ -491,7 +494,8 @@ class MPCPolicyFunction:
         # self.theta_param_ = torch.FloatTensor(np.concatenate((self.q_mpc, self.r_mpc)))
         # self.target_theta_param_ = torch.FloatTensor(np.concatenate((self.q_mpc, self.r_mpc)))
         # self.theta_param_.requires_grad_()
-        self.solver_dict['theta_param_val'] = np.concatenate((self.q_mpc, self.r_mpc)).copy()
+        # self.solver_dict['theta_param_val'] = np.concatenate((self.q_mpc, self.r_mpc, self.q_mpc)).copy()
+        self.param_dict = {'l': np.concatenate((self.q_mpc, self.r_mpc, self.q_mpc)).copy()}
         # self.solver_dict['target_theta_param_val'] = np.concatenate((self.q_mpc, self.r_mpc)).copy()
 
     def select_action(self, obs, info=None, mode='eval'):
@@ -514,7 +518,7 @@ class MPCPolicyFunction:
         goal_states = self.get_references(self.traj_step)
         fixed_param = np.concatenate((obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
         # Collect learnable parameters
-        theta_param = solver_dict['theta_param_val'][:, None]
+        theta_param = self.param_dict['l'][:, None]
         if self.mode == 'tracking':
             self.traj_step += 1
 
@@ -567,7 +571,7 @@ class MPCPolicyFunction:
         solver = solver_dict['solver']
         lbg = solver_dict['lower_bound']
         ubg = solver_dict['upper_bound']
-        theta_param = solver_dict['theta_param_val'][:, None]
+        theta_param = self.param_dict['l'][:, None]
         dpi = solver_dict['dpi_fn']
         opt_vars_fn = solver_dict['opt_vars_fn']
 
@@ -587,7 +591,6 @@ class MPCPolicyFunction:
             temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, opt_vars_fn, dpi, sensitivity_compute]
             eval_data_batch.append(temp)
         soln_batch = self.multi_pool.map(_select_action, eval_data_batch)
-        p()
 
         action_batch = []
         nabla_pi_batch = []
@@ -788,10 +791,11 @@ def _create_semi_definite_matrix(n):
     # WW = W.T @ W
 
     np = n
-    P = cs.MX.sym("P", n)
+    P = cs.MX.sym('P', n)
     W = cs.diag(P)
     WW = cs.sqrt(W.T @ W)
     return WW, P, np
+
 
 def soft_update(source, target, tau):
     """Synchronizes target networks with exponential moving average."""

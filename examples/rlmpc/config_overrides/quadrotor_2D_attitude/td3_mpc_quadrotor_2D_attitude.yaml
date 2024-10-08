@@ -1,21 +1,13 @@
 algo_config:
   ac_config:
-    horizon: 20
-    r_mpc:
-      - 0.1
-      - 0.1
-    q_mpc:
-      - 0.1
-      - 0.1
-      - 0.1
-      - 0.1
-      - 0.1
-      - 0.01
+    horizon: 10
+    q_mpc: [10., 0.1, 10., 0.1, 0.1, 0.01]
+    r_mpc: [0.1, 0.1]
     # Prior info
     warmstart: True
     eps: 0.05
-    actor_lr: 0.3
-    critic_lr: 0.03
+    actor_lr: 0.0035
+    critic_lr: 0.0035
 
   prior_info:
     prior_prop: null
@@ -41,4 +33,3 @@ algo_config:
   eval_interval: 540
   eval_save_best: True
   tensorboard: False
-

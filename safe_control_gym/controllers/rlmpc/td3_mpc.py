@@ -1,24 +1,23 @@
 """Q learning for Model Predictive Control."""
 
+import os
+import time
+from collections import defaultdict
 from copy import deepcopy
 
 import casadi as cs
 import numpy as np
-import os
-import time
-from collections import defaultdict
 
 from safe_control_gym.controllers.base_controller import BaseController
-from safe_control_gym.controllers.rlmpc.td3_mpc_utils import TD3MPC, ReplayBuffer
-from safe_control_gym.envs.env_wrappers.record_episode_statistics import RecordEpisodeStatistics
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
+from safe_control_gym.controllers.rlmpc.td3_mpc_utils import ReplayBuffer, TD3_MPC_Agent
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
+from safe_control_gym.envs.env_wrappers.record_episode_statistics import RecordEpisodeStatistics
 from safe_control_gym.math_and_models.normalization import (BaseNormalizer, MeanStdNormalizer,
                                                             RewardStdNormalizer)
-
 from safe_control_gym.utils.logging import ExperimentLogger
 from safe_control_gym.utils.utils import is_wrapped
 
@@ -63,7 +62,7 @@ class TD3_MPC(BaseController):
 
         # Agent
         model = self.get_prior(self.env)
-        self.agent = TD3MPC(self.env, self.env.observation_space, self.env.action_space, self.gamma, model, **ac_config)
+        self.agent = TD3_MPC_Agent(self.env, self.env.observation_space, self.env.action_space, self.gamma, model, **ac_config)
 
         # pre-/post-processing
         self.obs_normalizer = BaseNormalizer()
@@ -258,8 +257,7 @@ class TD3_MPC(BaseController):
             # Regardless of how long you wait between updates,
             # the ratio of env steps to gradient steps is locked to 1.
             # alternatively, can update once each step
-            #for j in range(self.train_interval):
-            for j in range(10):
+            for j in range(self.train_interval):
                 batch, batch_th = self.buffer.sample(self.train_batch_size, self.device)
                 res = self.agent.update(batch, batch_th)
                 for k, v in res.items():
@@ -304,7 +302,7 @@ class TD3_MPC(BaseController):
         while len(ep_returns) < n_episodes:
             action = self.select_action(obs=obs, info=info)
             obs, _, done, info = env.step(action)
-            mse.append(info["mse"])
+            mse.append(info['mse'])
             if render:
                 env.render()
                 frames.append(env.render('rgb_array'))
