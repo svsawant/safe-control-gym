@@ -16,6 +16,7 @@ from matplotlib import pyplot as plt
 
 from safe_control_gym.envs.constraints import create_constraint_list
 from safe_control_gym.envs.disturbances import create_disturbance_list
+from safe_control_gym.envs.gym_pybullet_drones.trajectory_utils import Waypoint, generate_trajectory, compute_trajectory_derivatives
 
 
 class Cost(str, Enum):
@@ -530,7 +531,9 @@ class BenchmarkEnv(gym.Env, ABC):
                              traj_plane='xy',
                              position_offset=np.array([0, 0]),
                              scaling=1.0,
-                             sample_time=0.01):
+                             sample_time=0.01,
+                             waypoint_list=None
+                             ):
         """Generates a 2D trajectory.
 
         Args:
@@ -549,14 +552,15 @@ class BenchmarkEnv(gym.Env, ABC):
         """
 
         # Get trajectory type.
-        valid_traj_type = ['circle', 'square', 'figure8']
+        valid_traj_type = ['circle', 'square', 'figure8', 'snap_figure8', 'snap_custom']
         if traj_type not in valid_traj_type:
-            raise ValueError('Trajectory type should be one of [circle, square, figure8].')
+            raise ValueError(
+                'Trajectory type should be one of [circle, square, figure8, snap_figure8, snap_custom].'
+            )
         traj_period = traj_length / num_cycles
         direction_list = ['x', 'y', 'z']
         # Get coordinates indexes.
-        if traj_plane[0] in direction_list and traj_plane[
-                1] in direction_list and traj_plane[0] != traj_plane[1]:
+        if traj_plane[0] in direction_list and traj_plane[1] in direction_list and traj_plane[0] != traj_plane[1]:
             coord_index_a = direction_list.index(traj_plane[0])
             coord_index_b = direction_list.index(traj_plane[1])
         else:
@@ -566,17 +570,51 @@ class BenchmarkEnv(gym.Env, ABC):
         pos_ref_traj = np.zeros((len(times), 3))
         vel_ref_traj = np.zeros((len(times), 3))
         speed_traj = np.zeros((len(times), 1))
-        # Compute trajectory points.
-        for t in enumerate(times):
-            pos_ref_traj[t[0]], vel_ref_traj[t[0]] = self._get_coordinates(t[1],
-                                                                           traj_type,
-                                                                           traj_period,
-                                                                           coord_index_a,
-                                                                           coord_index_b,
-                                                                           position_offset[0],
-                                                                           position_offset[1],
-                                                                           scaling)
-            speed_traj[t[0]] = np.linalg.norm(vel_ref_traj[t[0]])
+        # Initial trajectory for snap trajectory
+        if traj_type == 'snap_figure8':
+            waypoint_times = np.arange(0, traj_length + traj_length/50, traj_length/50)
+            waypoints = self._init_figure8(waypoint_times, traj_type, traj_period, coord_index_a,
+                                          coord_index_b, position_offset[0], position_offset[1], scaling)
+            polys = generate_trajectory(
+                waypoints,
+                degree=6,  # Polynomial degree
+                idx_minimized_orders=2,  # Minimize derivatives in these orders (>= 2)
+                num_continuous_orders=3,  # Constrain continuity of derivatives up to order (>= 3)
+                algorithm="closed-form"   # "closed-form" Or "constrained"
+            )
+            pva = compute_trajectory_derivatives(polys, times, 2)
+            pos_ref_traj = pva[0, :, :]
+            vel_ref_traj = pva[1, :, :]
+            speed_traj = np.linalg.norm(vel_ref_traj, axis=0)
+
+        elif traj_type == 'snap_custom':
+            if waypoint_list is None:
+                raise ValueError("No waypoints defined for trajectory type snap_custom")
+            waypoints = self._init_custom(waypoint_list)
+            polys = generate_trajectory(
+                waypoints,
+                degree=6,  # Polynomial degree
+                idx_minimized_orders=2,  # Minimize derivatives in these orders (>= 2)
+                num_continuous_orders=3,  # Constrain continuity of derivatives up to order (>= 3)
+                algorithm="constrained"   # "closed-form" Or "constrained"
+            )
+            pva = compute_trajectory_derivatives(polys, times, 2)
+            pos_ref_traj = pva[0, :, :]
+            vel_ref_traj = pva[1, :, :]
+            speed_traj = np.linalg.norm(vel_ref_traj, axis=0)
+
+        else:
+            # Compute trajectory points.
+            for t in enumerate(times):
+                pos_ref_traj[t[0]], vel_ref_traj[t[0]] = self._get_coordinates(t[1],
+                                                                               traj_type,
+                                                                               traj_period,
+                                                                               coord_index_a,
+                                                                               coord_index_b,
+                                                                               position_offset[0],
+                                                                               position_offset[1],
+                                                                               scaling)
+                speed_traj[t[0]] = np.linalg.norm(vel_ref_traj[t[0]])
         return pos_ref_traj, vel_ref_traj, speed_traj
 
     def _get_coordinates(self,
@@ -615,6 +653,9 @@ class BenchmarkEnv(gym.Env, ABC):
                 t, traj_period, scaling)
         elif traj_type == 'square':
             coords_a, coords_b, coords_a_dot, coords_b_dot = self._square(
+                t, traj_period, scaling)
+        elif traj_type == 'snap_figure8':
+            coords_a, coords_b, coords_a_dot, coords_b_dot = self._figure8(
                 t, traj_period, scaling)
         # Initialize position and velocity references.
         pos_ref = np.zeros((3,))
@@ -733,6 +774,48 @@ class BenchmarkEnv(gym.Env, ABC):
             coords_a_dot = traverse_speed
             coords_b_dot = 0.0
         return coords_a, coords_b, coords_a_dot, coords_b_dot
+
+    def _init_figure8(self,
+                      times,
+                      traj_type,
+                      traj_period,
+                      coord_index_a,
+                      coord_index_b,
+                      position_offset_a,
+                      position_offset_b,
+                      scaling
+                      ):
+        waypoint = []
+        for t in enumerate(times):
+            pos_waypoint, vel_waypoint = self._get_coordinates(t[1],
+                                                               traj_type,
+                                                               traj_period,
+                                                               coord_index_a,
+                                                               coord_index_b,
+                                                               position_offset_a,
+                                                               position_offset_b,
+                                                               scaling)
+            waypoint.append(
+                Waypoint(
+                    time=t[1],
+                    position=pos_waypoint,
+                    # velocity=vel_waypoint,
+                )
+            )
+        return waypoint
+
+    def _init_custom(self, waypoint_):
+        waypoint = []
+        for data in waypoint_:
+            t = data['time']
+            pos_waypoint = data['position']
+            waypoint.append(
+                Waypoint(
+                    time=t,
+                    position=pos_waypoint,
+                )
+            )
+        return waypoint
 
     def _plot_trajectory(self,
                          traj_type,
