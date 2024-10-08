@@ -16,7 +16,9 @@ from matplotlib import pyplot as plt
 
 from safe_control_gym.envs.constraints import create_constraint_list
 from safe_control_gym.envs.disturbances import create_disturbance_list
-from safe_control_gym.envs.gym_pybullet_drones.trajectory_utils import Waypoint, generate_trajectory, compute_trajectory_derivatives
+from safe_control_gym.envs.gym_pybullet_drones.trajectory_utils import (Waypoint,
+                                                                        compute_trajectory_derivatives,
+                                                                        generate_trajectory)
 
 
 class Cost(str, Enum):
@@ -572,15 +574,15 @@ class BenchmarkEnv(gym.Env, ABC):
         speed_traj = np.zeros((len(times), 1))
         # Initial trajectory for snap trajectory
         if traj_type == 'snap_figure8':
-            waypoint_times = np.arange(0, traj_length + traj_length/50, traj_length/50)
+            waypoint_times = np.arange(0, traj_length + traj_length / 50, traj_length / 50)
             waypoints = self._init_figure8(waypoint_times, traj_type, traj_period, coord_index_a,
-                                          coord_index_b, position_offset[0], position_offset[1], scaling)
+                                           coord_index_b, position_offset[0], position_offset[1], scaling)
             polys = generate_trajectory(
                 waypoints,
                 degree=6,  # Polynomial degree
                 idx_minimized_orders=2,  # Minimize derivatives in these orders (>= 2)
                 num_continuous_orders=3,  # Constrain continuity of derivatives up to order (>= 3)
-                algorithm="closed-form"   # "closed-form" Or "constrained"
+                algorithm='closed-form'   # "closed-form" Or "constrained"
             )
             pva = compute_trajectory_derivatives(polys, times, 2)
             pos_ref_traj = pva[0, :, :]
@@ -589,14 +591,14 @@ class BenchmarkEnv(gym.Env, ABC):
 
         elif traj_type == 'snap_custom':
             if waypoint_list is None:
-                raise ValueError("No waypoints defined for trajectory type snap_custom")
+                raise ValueError('No waypoints defined for trajectory type snap_custom')
             waypoints = self._init_custom(waypoint_list)
             polys = generate_trajectory(
                 waypoints,
                 degree=6,  # Polynomial degree
                 idx_minimized_orders=2,  # Minimize derivatives in these orders (>= 2)
                 num_continuous_orders=3,  # Constrain continuity of derivatives up to order (>= 3)
-                algorithm="constrained"   # "closed-form" Or "constrained"
+                algorithm='constrained'   # "closed-form" Or "constrained"
             )
             pva = compute_trajectory_derivatives(polys, times, 2)
             pos_ref_traj = pva[0, :, :]
