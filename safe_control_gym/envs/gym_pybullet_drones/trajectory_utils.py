@@ -23,9 +23,12 @@ OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 import warnings
 from typing import NamedTuple
 
+import casadi as cs
 import numpy as np
 import scipy.linalg as la
 from scipy import optimize
+
+# from torch.distributions.constraints import positive
 
 
 class Waypoint(dict):
@@ -405,3 +408,125 @@ def _nd_polyvals(coeffs, time, r):
     return time ** (n_seq - r) @ (
         np.prod(n_seq[None, :] - r_seq[:, None], axis=0)[..., None] * coeffs[n_seq, :]
     )
+
+
+class TrajectoryPlanner:
+    def __init__(self, waypoint_list, string_list, T=10, N=30):
+        self.waypoint_list = waypoint_list
+        self.string_list = string_list
+        self.T = T
+        self.N = N
+        self.dt = T / N
+        self.string_discrete_point = 10
+
+        length_w = len(waypoint_list)
+        self.start_loc = waypoint_list[0]['position']
+        self.end_loc = waypoint_list[length_w - 1]['position']
+        pos_init = np.array([]).reshape(0, 6)
+        for i in range(length_w - 1):
+            dt = waypoint_list[i + 1]['time'] - waypoint_list[i]['time']
+            pos_init = np.concatenate((pos_init,
+                                       np.linspace(waypoint_list[i]['position'] + [0., 0., 0.],
+                                                   waypoint_list[i + 1]['position'] + [0., 0., 0.],
+                                                   round(dt * N / T))), axis=0)
+        pos_init = np.concatenate((pos_init,
+                                   np.array(waypoint_list[-1]['position'] + [0., 0., 0.])[None, :]), axis=0)
+        self.dynamics_fn()
+        self.traj_optimizer()
+
+        x0 = np.concatenate((np.zeros((self.N * 3, 1)),
+                             pos_init.reshape(-1, 1),
+                             np.zeros(((self.N + 1) * len(self.string_list) * self.string_discrete_point, 1))), axis=0)
+        soln = self.traj_solver(x0=x0, p=[], lbg=self.lbg, ubg=self.ubg)
+        ref = soln['x'].full()
+        if not self.traj_solver.stats()['success']:
+            print('Trajectory planner failed')
+        # act_ref = ref[:self.N * 3, :].reshape(self.N, 3)
+        state_ref = ref[self.N * 3: self.N * 3 + 6 * (self.N + 1), :].reshape(self.N + 1, 6)
+        pos_ref = state_ref[:, :3].copy()
+        # vel_ref = state_ref[:, 3:].copy()
+
+        self.waypoints = []
+        for i in range(pos_ref.shape[0]):
+            self.waypoints.append(
+                Waypoint(
+                    time=i * self.dt,
+                    position=pos_ref[i, :],
+                    # velocity=vel_ref[i, :]
+                )
+            )
+
+    def dynamics_fn(self):
+        x = cs.MX.sym('x', 6)
+        u = cs.MX.sym('u', 3)
+
+        A = np.array([[1., 0., 0., self.dt, 0., 0.], [0., 1., 0., 0., self.dt, 0.], [0., 0., 1., 0., 0., self.dt],
+                      [0., 0., 0., 1., 0., 0.], [0., 0., 0., 0., 1., 0.], [0., 0., 0., 0., 0., 1.]])
+        B = np.array([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.],
+                      [self.dt, 0., 0.], [0., self.dt, 0.], [0., 0., self.dt]])
+
+        self.dyn = cs.Function('dynamics', [x, u], [A @ x + B @ u])
+
+    def _distance_to_line(self, start, end, point):
+        cross = cs.cross(start - end, start - point)
+        string = start - end
+        return cs.sqrt((cross.T @ cross) / (string.T @ string))
+
+    def _distance_to_point(self, point1, point2):
+        return (point1 - point2).T @ (point1 - point2)
+
+    def traj_optimizer(self):
+        X = cs.MX.sym('X', 6, self.N + 1)
+        U = cs.MX.sym('U', 3, self.N)
+        Sigma = cs.MX.sym('Sigma', len(self.string_list) * self.string_discrete_point, self.N + 1)
+        opt_vars = cs.vertcat(
+            cs.reshape(U, -1, 1),
+            cs.reshape(X, -1, 1),
+            cs.reshape(Sigma, -1, 1)
+        )
+        # acceleration limits
+        lb = np.array([-10.0, -10.0, -10.0])
+        ub = np.array([10.0, 10.0, 10.0])
+
+        cost = 0
+        g, h = [], []
+        g.append(X[:3, 0] - np.array(self.start_loc))
+        g.append(X[3:, 0])
+        g.append(X[:3, -1] - np.array(self.end_loc))
+        g.append(X[3:, -1])
+        for i in range(self.N):
+            cost += U[:, i].T @ U[:, i]
+            h.append(U[:, i] - ub)
+            h.append(lb - U[:, i])
+            x_next = self.dyn(X[:, i], U[:, i])
+            g.append(x_next - X[:, i + 1])
+
+            for j, string in enumerate(self.string_list):
+                for k, point in enumerate(np.linspace(string['start'], string['end'], self.string_discrete_point)):
+                    d = self._distance_to_point(point, X[:3, i])
+                    h.append(0.5 - d - Sigma[j * k, i])
+                    h.append(-Sigma[j * k, i])
+            cost += 1e2 * Sigma[:, i].T @ Sigma[:, i]
+
+        G = cs.vertcat(*g)
+        H = cs.vertcat(*h)
+        G_con = cs.vertcat(*g, *h)
+        self.lbg = cs.vertcat(*([0] * G.shape[0] + [-np.inf] * H.shape[0]))
+        self.ubg = cs.vertcat(*([0] * G.shape[0] + [0] * H.shape[0]))
+
+        opts_setting = {
+            'ipopt.max_iter': 1000,
+            'ipopt.print_level': 0,
+            'print_time': 0,
+            'ipopt.mu_target': 1e-4,
+            'ipopt.mu_init': 1e-2,
+            'ipopt.acceptable_tol': 1e-4,
+            'ipopt.acceptable_obj_change_tol': 1e-4,
+        }
+        nlp_prob = {
+            'f': cost,
+            'x': opt_vars,
+            'p': [],
+            'g': G_con,
+        }
+        self.traj_solver = cs.nlpsol('traj_solver', 'ipopt', nlp_prob, opts_setting)

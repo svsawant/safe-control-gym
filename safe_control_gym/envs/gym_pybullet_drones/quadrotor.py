@@ -310,6 +310,7 @@ class Quadrotor(BaseAviary):
                 VEL_REF = np.array(
                     [traj_data['obs'][0][:, 1], 0 * traj_data['obs'][0][:, 1], traj_data['obs'][0][:, 3]]).T
             else:
+                strings = self.TASK_INFO['strings'] if 'strings' in self.TASK_INFO else None
                 waypoints = self.TASK_INFO['waypoints'] if 'waypoints' in self.TASK_INFO else None
                 POS_REF, VEL_REF, _ = self._generate_trajectory(traj_type=self.TASK_INFO['trajectory_type'],
                                                                 traj_length=self.EPISODE_LEN_SEC,
@@ -319,7 +320,8 @@ class Quadrotor(BaseAviary):
                                                                     'trajectory_position_offset'],
                                                                 scaling=self.TASK_INFO['trajectory_scale'],
                                                                 sample_time=self.CTRL_TIMESTEP,
-                                                                waypoint_list=waypoints
+                                                                string_list=strings,
+                                                                waypoint_list=waypoints,
                                                                 )
                 # Each of the 3 returned values is of shape (Ctrl timesteps, 3)
             if self.QUAD_TYPE == QuadType.ONE_D:

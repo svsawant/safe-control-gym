@@ -16,7 +16,7 @@ from matplotlib import pyplot as plt
 
 from safe_control_gym.envs.constraints import create_constraint_list
 from safe_control_gym.envs.disturbances import create_disturbance_list
-from safe_control_gym.envs.gym_pybullet_drones.trajectory_utils import (Waypoint,
+from safe_control_gym.envs.gym_pybullet_drones.trajectory_utils import (TrajectoryPlanner, Waypoint,
                                                                         compute_trajectory_derivatives,
                                                                         generate_trajectory)
 
@@ -534,8 +534,8 @@ class BenchmarkEnv(gym.Env, ABC):
                              position_offset=np.array([0, 0]),
                              scaling=1.0,
                              sample_time=0.01,
-                             waypoint_list=None
-                             ):
+                             string_list=None,
+                             waypoint_list=None):
         """Generates a 2D trajectory.
 
         Args:
@@ -582,7 +582,7 @@ class BenchmarkEnv(gym.Env, ABC):
                 degree=6,  # Polynomial degree
                 idx_minimized_orders=2,  # Minimize derivatives in these orders (>= 2)
                 num_continuous_orders=3,  # Constrain continuity of derivatives up to order (>= 3)
-                algorithm='closed-form'   # "closed-form" Or "constrained"
+                algorithm='closed-form'  # "closed-form" Or "constrained"
             )
             pva = compute_trajectory_derivatives(polys, times, 2)
             pos_ref_traj = pva[0, :, :]
@@ -590,9 +590,13 @@ class BenchmarkEnv(gym.Env, ABC):
             speed_traj = np.linalg.norm(vel_ref_traj, axis=0)
 
         elif traj_type == 'snap_custom':
-            if waypoint_list is None:
+            if waypoint_list is None and string_list is None:
                 raise ValueError('No waypoints defined for trajectory type snap_custom')
-            waypoints = self._init_custom(waypoint_list)
+            if string_list is not None:
+                traj = TrajectoryPlanner(waypoint_list, string_list, T=traj_length)
+                waypoints = traj.waypoints.copy()
+            else:
+                waypoints = self._init_custom(waypoint_list)
             polys = generate_trajectory(
                 waypoints,
                 degree=6,  # Polynomial degree
@@ -617,6 +621,10 @@ class BenchmarkEnv(gym.Env, ABC):
                                                                                position_offset[1],
                                                                                scaling)
                 speed_traj[t[0]] = np.linalg.norm(vel_ref_traj[t[0]])
+        # with np.printoptions(threshold=np.inf):
+        #     print(pos_ref_traj)
+        #     print(vel_ref_traj)
+        #     print(speed_traj)
         return pos_ref_traj, vel_ref_traj, speed_traj
 
     def _get_coordinates(self,
