@@ -634,7 +634,8 @@ class Q_MPC_Agent:
             grad_q_batch.append(grad_q)
             next_v_batch.append(next_v)
             optimal_batch.append(optimal)
-        q_batch, grad_q_batch, next_v_batch, optimal_batch = np.array(q_batch), np.array(grad_q_batch), np.array(next_v_batch), np.array(optimal_batch)
+        q_batch, grad_q_batch, next_v_batch, optimal_batch = (np.array(q_batch), np.array(grad_q_batch),
+                                                              np.array(next_v_batch), np.array(optimal_batch))
         return q_batch, grad_q_batch, next_v_batch, optimal_batch
 
 

@@ -12,7 +12,7 @@ from gymnasium.spaces import Box
 from safe_control_gym.controllers.mpc.mpc_utils import (compute_discrete_lqr_gain_from_cont_linear_system,
                                                         compute_state_rmse, get_cost_weight_matrix,
                                                         reset_constraints, rk_discrete)
-from safe_control_gym.controllers.rlmpc.rlmpc_utils import AdamOptimizer
+from safe_control_gym.controllers.rlmpc.rlmpc_utils import AdamOptimizer, euler_discrete
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import GENERAL_CONSTRAINTS, create_constraint_list
 from safe_control_gym.math_and_models.neural_networks import MLP
@@ -41,6 +41,7 @@ class TD3_MPC_Agent:
                  tau=0.005,
                  activation='relu',
                  device=None,
+                 n_workers=8,
                  ):
         """Creates task and controller.
 
@@ -72,7 +73,7 @@ class TD3_MPC_Agent:
                                        soft_constraints,
                                        constraint_tol,
                                        additional_constraints,
-                                       )
+                                       n_workers)
 
         # Critic setup
         self.critic = MLPQFunction(obs_space, act_space, hidden_dims=[hidden_dim] * 2, activation=self.activation)
@@ -106,7 +107,7 @@ class TD3_MPC_Agent:
 
         with torch.no_grad():
             # Next action
-            next_act, _ = self.actor.select_action_batch(next_obs, info)
+            next_act, _, optimal = self.actor.select_action_batch(next_obs, info)
             noise = (0.5 * torch.randn_like(next_act)).clamp(-0.2, 0.2)
             next_act = (next_act + noise).clamp(self.action_space_low, self.action_space_high)
             # Target Q value for next state and next action
@@ -115,9 +116,9 @@ class TD3_MPC_Agent:
             # q value regression target
             q_targ = rew + self.gamma * mask * next_q_targ
 
-        q1_loss = (q1 - q_targ).pow(2).mean()
-        q2_loss = (q2 - q_targ).pow(2).mean()
-        critic_loss = q1_loss + q2_loss
+        q1_loss = (q1 - q_targ).pow(2)
+        q2_loss = (q2 - q_targ).pow(2)
+        critic_loss = (optimal[:, None] * (q1_loss + q2_loss)).mean()
         return critic_loss
 
     def update(self, batch, batch_th):
@@ -132,11 +133,12 @@ class TD3_MPC_Agent:
 
         if self.update_step_count % self.update_freq == 0:
             # actor update
-            action_batch, nabla_pi_batch = self.actor.select_action_batch(batch['obs'], batch['info'],
-                                                                          sensitivity_compute=True)
+            action_batch, nabla_pi_batch, optimal_batch = self.actor.select_action_batch(batch['obs'],
+                                                                                         batch['info'],
+                                                                                         sensitivity_compute=True)
             action_batch.requires_grad_()
             q1, _ = self.critic.forward(batch_th['obs'], action_batch)
-            policy_loss = q1.mean()
+            policy_loss = -q1.mean()
             policy_loss.backward()
             grad_q = action_batch.grad.unsqueeze(1).numpy()
             grads = {'l': np.matmul(grad_q, nabla_pi_batch).squeeze(1).mean(axis=0)}
@@ -278,10 +280,14 @@ class MPCPolicyFunction:
 
     def set_dynamics_func(self):
         """Updates symbolic dynamics with actual control frequency."""
-        self.dynamics_func = rk_discrete(self.model.fc_func,
-                                         self.model.nx,
-                                         self.model.nu,
-                                         self.dt)
+        # self.dynamics_func = rk_discrete(self.model.fc_func,
+        #                                  self.model.nx,
+        #                                  self.model.nu,
+        #                                  self.dt)
+        self.dynamics_func = euler_discrete(self.model.fc_func,
+                                            self.model.nx,
+                                            self.model.nu,
+                                            self.dt)
 
     def compute_initial_guess(self, init_state, goal_states, x_lin, u_lin):
         """Use LQR to get an initial guess of the """
@@ -594,12 +600,15 @@ class MPCPolicyFunction:
 
         action_batch = []
         nabla_pi_batch = []
+        optimal_batch = []
         for soln in soln_batch:
-            action, nabla_pi = soln
+            action, nabla_pi, optimal = soln
             action_batch.append(action)
             nabla_pi_batch.append(nabla_pi)
+            optimal_batch.append(optimal)
         action_batch = torch.FloatTensor(np.array(action_batch))
-        return action_batch, nabla_pi_batch
+        optimal_batch = torch.FloatTensor(np.array(optimal_batch))
+        return action_batch, nabla_pi_batch, optimal_batch
 
 
 class ReplayBuffer(object):
@@ -764,6 +773,7 @@ def _select_action(eval_data):
         ubg=ubg,
     )
     opt_vars = soln['x'].full()
+    optimal = solver.stats()['success']
     _, u_val, _ = opt_vars_fn(opt_vars)
     u_val = u_val.full()
     if u_val.ndim > 1:
@@ -772,13 +782,13 @@ def _select_action(eval_data):
         action = np.array([u_val[0]])
 
     # Sensitivity computation
-    if sensitivity_compute:
+    if sensitivity_compute and optimal:
         mult = soln['lam_g'].full()
         z = np.concatenate((opt_vars, mult), axis=0)
         nabla_pi = dpi(z, fixed_param, theta_param).full()
     else:
         nabla_pi = np.zeros((u_val.shape[0], theta_param.shape[0]))
-    return action, nabla_pi
+    return action, nabla_pi, optimal
 
 
 def _create_semi_definite_matrix(n):
