@@ -16,7 +16,6 @@ import time
 
 import numpy as np
 import torch
-from torch import nn
 
 from safe_control_gym.controllers.base_controller import BaseController
 from safe_control_gym.controllers.dppo.dppo_utils import DPPOAgent, DPPOBuffer, compute_returns_and_advantages
@@ -27,6 +26,8 @@ from safe_control_gym.math_and_models.normalization import (BaseNormalizer, Mean
                                                             RewardStdNormalizer)
 from safe_control_gym.utils.logging import ExperimentLogger
 from safe_control_gym.utils.utils import get_random_state, is_wrapped, set_random_state
+
+# from torch import nn
 
 
 class DPPO(BaseController):
@@ -65,7 +66,8 @@ class DPPO(BaseController):
                                critic_lr=self.critic_lr,
                                opt_epochs=self.opt_epochs,
                                mini_batch_size=self.mini_batch_size,
-                               activation=self.activation)
+                               activation=self.activation,
+                               device=self.device)
         self.agent.to(self.device)
         # Pre-/post-processing.
         self.obs_normalizer = BaseNormalizer()
@@ -167,9 +169,9 @@ class DPPO(BaseController):
             interval_save = np.zeros_like(step_interval, dtype=bool)
         while self.total_steps < self.max_env_steps:
             results = self.train_step()
+
             # Checkpoint.
-            if (self.total_steps >= self.max_env_steps
-                    or (self.save_interval and self.total_steps % self.save_interval == 0)):
+            if (self.total_steps >= self.max_env_steps or (self.save_interval and self.total_steps % self.save_interval == 0)):
                 # Latest/final checkpoint.
                 self.save(self.checkpoint_path)
                 self.logger.info(f'Checkpoint | {self.checkpoint_path}')
@@ -182,6 +184,7 @@ class DPPO(BaseController):
                     path = os.path.join(self.output_dir, 'checkpoints', f'model_{self.total_steps}.pt')
                     self.save(path)
                     interval_save[interval_id] = True
+
             # Evaluation.
             if self.eval_interval and self.total_steps % self.eval_interval == 0:
                 eval_results = self.run(env=self.eval_env, n_episodes=self.eval_batch_size)
@@ -197,6 +200,7 @@ class DPPO(BaseController):
                 if self.eval_save_best and eval_best_score < eval_score:
                     self.eval_best_score = eval_score
                     self.save(os.path.join(self.output_dir, 'model_best.pt'))
+
             # Logging.
             if self.log_interval and self.total_steps % self.log_interval == 0:
                 self.log_step(results)
@@ -242,8 +246,9 @@ class DPPO(BaseController):
                     terminal_obs = inf['terminal_observation']
                     terminal_obs_tensor = torch.FloatTensor(terminal_obs).unsqueeze(0).to(self.device)
                     terminal_val = self.agent.ac.critic(terminal_obs_tensor).squeeze().detach().cpu().numpy()
-                    terminal_v_quant = self.agent.ac.critic.v_net.last_quantiles.detach().cpu().numpy()
+                    terminal_val_quant = self.agent.ac.critic.v_net.last_quantiles.detach().cpu().numpy()
                     terminal_v[idx] = terminal_val
+                    terminal_v_quant[idx] = terminal_val_quant
             rollouts.push({'obs': obs, 'act': act, 'rew': rew, 'mask': mask,
                            'v': v, 'v_quant': v_quant, 'logp': logp,
                            'terminal_v': terminal_v, 'terminal_v_quant': terminal_v_quant})
@@ -292,13 +297,13 @@ class DPPO(BaseController):
 
         obs, info = env.reset()
         obs = self.obs_normalizer(obs)
-        ep_returns, ep_lengths, eval_return = [], [], 0.0
+        ep_returns, ep_lengths = [], []
         frames = []
         mse, ep_rmse_mean, ep_rmse_std = [], [], []
         while len(ep_returns) < n_episodes:
             action = self.select_action(obs=obs, info=info)
             obs, _, done, info = env.step(action)
-            mse.append(info["mse"])
+            mse.append(info['mse'])
             if render:
                 env.render()
                 frames.append(env.render('rgb_array'))

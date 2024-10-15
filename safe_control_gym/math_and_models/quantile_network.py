@@ -1,7 +1,8 @@
+from typing import Callable, Tuple, Union
+
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
-from typing import Callable, Tuple, Union
 
 from safe_control_gym.math_and_models.neural_networks import MLP
 
@@ -22,11 +23,11 @@ def reshape_measure_parameters(
     if not params:
         return qn._tau.to(qn.device), *params
 
-    assert len([*set([torch.is_tensor(p) for p in params])]) == 1, "All parameters must be either tensors or scalars."
+    assert len([*set([torch.is_tensor(p) for p in params])]) == 1, 'All parameters must be either tensors or scalars.'
 
     if torch.is_tensor(params[0]):
-        assert all([p.dim() == 1 for p in params]), "All parameters must have dimensionality 1."
-        assert len([*set([p.shape[0] for p in params])]) == 1, "All parameters must have the same size."
+        assert all([p.dim() == 1 for p in params]), 'All parameters must have dimensionality 1.'
+        assert len([*set([p.shape[0] for p in params])]) == 1, 'All parameters must have the same size.'
 
         reshaped_params = [p.reshape(-1, 1).to(qn.device) for p in params]
         tau = qn._tau.expand(params[0].shape[0], -1).to(qn.device)
@@ -174,10 +175,10 @@ def squeeze_preserve_batch(tensor):
 
 
 class QuantileNetwork(MLP):
-    measure_cvar = "cvar"
-    measure_neutral = "neutral"
-    measure_percentile = "percentile"
-    measure_wang = "wang"
+    measure_cvar = 'cvar'
+    measure_neutral = 'neutral'
+    measure_percentile = 'percentile'
+    measure_wang = 'wang'
 
     measures = {
         measure_cvar: risk_measure_cvar,
@@ -191,12 +192,13 @@ class QuantileNetwork(MLP):
             input_size,
             output_size,
             hidden_dims=[256, 256, 256],
-            act="relu",
+            act='relu',
             init_fade=False,
             init_gain=0.5,
             measure=None,
             measure_kwargs={},
             quantile_count=200,
+            device=None,
             **kwargs,
     ):
         assert quantile_count > 0
@@ -208,6 +210,7 @@ class QuantileNetwork(MLP):
             act=act,
             **kwargs,
         )
+        self.device = device
 
         self._quantile_count = quantile_count
         self._tau = torch.arange(self._quantile_count + 1) / self._quantile_count
@@ -273,11 +276,11 @@ class QuantileNetwork(MLP):
             A torch.Tensor of shape (1,) containing the loss.
         """
         assert (
-                predictions.dim() == 2 or predictions.dim() == 3
-        ), f"Predictions must be 2D or 3D. Got {predictions.dim()}."
+            predictions.dim() == 2 or predictions.dim() == 3
+        ), f'Predictions must be 2D or 3D. Got {predictions.dim()}.'
         assert (
-                predictions.shape == targets.shape
-        ), f"The shapes of predictions and targets must match. Got {predictions.shape} and {targets.shape}."
+            predictions.shape == targets.shape
+        ), f'The shapes of predictions and targets must match. Got {predictions.shape} and {targets.shape}.'
 
         pre_dims = [-1] if predictions.dim() == 3 else []
 
@@ -285,7 +288,7 @@ class QuantileNetwork(MLP):
         target_mat = targets.transpose(-2, -1).unsqueeze(-1).expand(*pre_dims, -1, -1, self._quantile_count)
         delta = target_mat - prediction_mat
 
-        tau_hat = self._tau_hat.expand(predictions.shape[-2], -1)  # .to(self.device)
+        tau_hat = self._tau_hat.expand(predictions.shape[-2], -1).to(self.device)
         loss = (torch.where(delta < 0, (tau_hat - 1), tau_hat) * delta).abs().mean()
 
         return loss

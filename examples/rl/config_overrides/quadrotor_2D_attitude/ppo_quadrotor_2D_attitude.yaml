@@ -1,29 +1,33 @@
 algo_config:
   # model args
   hidden_dim: 128
-  activation: "relu"
+  activation: "leaky_relu"
 
   # loss args
   gamma: 0.98
-  use_gae: True
-  entropy_coef: 0.01
+  use_gae: True   # or False
+  gae_lambda: 0.92
+  use_clipped_value: False  # or True
+  clip_param: 0.1
+  target_kl: 1.0e-5
+  entropy_coef: 0.005
 
   # optim args
-  opt_epochs: 10
-  mini_batch_size: 128
-  actor_lr: 0.001
-  critic_lr: 0.001
+  opt_epochs: 20
+  mini_batch_size: 256
+  actor_lr: 0.0005
+  critic_lr: 0.0005
 
   # runner args
-  max_env_steps: 480000
-  rollout_batch_size: 4
-  rollout_steps: 540
+  max_env_steps: 660000
+  rollout_batch_size: 5
+  rollout_steps: 660
   eval_batch_size: 10
 
   # misc
-  log_interval: 10800
-  save_interval: 540000
+  log_interval: 6600
+  save_interval: 660000
   num_checkpoints: 0
-  eval_interval: 10800
+  eval_interval: 6600
   eval_save_best: True
   tensorboard: False

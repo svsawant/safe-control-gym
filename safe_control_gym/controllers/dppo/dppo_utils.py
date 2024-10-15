@@ -2,8 +2,8 @@
 
 from collections import defaultdict
 from copy import deepcopy
-from importlib.metadata import distribution
-from typing import Dict, List, Tuple, Type, Union
+# from importlib.metadata import distribution
+from typing import Dict, Tuple, Type, Union  # List,
 
 import numpy as np
 import torch
@@ -21,11 +21,11 @@ class DPPOAgent:
     critic_network: Type[nn.Module] = QuantileNetwork
     _alg_features = dict(recurrent=True)
 
-    value_loss_energy = "sample_energy"
-    value_loss_l1 = "quantile_l1"
-    value_loss_huber = "quantile_huber"
+    value_loss_energy = 'sample_energy'
+    value_loss_l1 = 'quantile_l1'
+    value_loss_huber = 'quantile_huber'
 
-    network_qrdqn = "qrdqn"
+    network_qrdqn = 'qrdqn'
 
     networks = {network_qrdqn: QuantileNetwork}
 
@@ -57,6 +57,7 @@ class DPPOAgent:
                  value_measure: str = None,
                  value_measure_adaptation: Union[Tuple, None] = None,
                  value_measure_kwargs: Dict = {},
+                 device=None,
                  **kwargs
                  ):
         # Parameters.
@@ -76,12 +77,14 @@ class DPPOAgent:
         self.value_lambda = value_lambda
         self.value_loss_name = value_loss
         self.value_loss_kwargs = value_loss_kwargs
+        self.device = device
 
         # Model.
         self.ac = MLPActorCritic(obs_space,
                                  act_space,
                                  hidden_dims=[hidden_dim] * 2,
-                                 activation=self.activation)
+                                 activation=self.activation,
+                                 device=self.device)
 
         # Value loss
         value_loss_func = self.values_losses[self._critic_network_name][self.value_loss_name]
@@ -141,9 +144,9 @@ class DPPOAgent:
                            batch
                            ):
         '''Returns value loss(es) given batch of data.'''
-        obs, ret, v_old = batch['obs'], batch['ret'], batch['v']
+        obs, _, _ = batch['obs'], batch['ret'], batch['v']
         v_cur_quant = self.ac.critic.forward(obs, distribution=True).squeeze()
-        value_loss = self.value_loss(v_cur_quant, batch["value_target_quants"])
+        value_loss = self.value_loss(v_cur_quant, batch['value_target_quants'])
 
         # if self.use_clipped_value:
         #     v_old_clipped = v_old + (v_cur - v_old).clamp(-self.clip_param, self.clip_param)
@@ -229,10 +232,11 @@ class MLPCritic(nn.Module):
     def __init__(self,
                  obs_dim,
                  hidden_dims,
-                 activation
+                 activation,
+                 device
                  ):
         super().__init__()
-        self.v_net = QuantileNetwork(obs_dim, 1, hidden_dims, activation)
+        self.v_net = QuantileNetwork(obs_dim, 1, hidden_dims, activation, device=device)
 
     def forward(self, obs, distribution: bool = False):
         # temp = self.v_net(obs).unsqueeze(0)
@@ -251,7 +255,8 @@ class MLPActorCritic(nn.Module):
                  obs_space,
                  act_space,
                  hidden_dims=(64, 64),
-                 activation='tanh'
+                 activation='tanh',
+                 device=None
                  ):
         super().__init__()
         obs_dim = obs_space.shape[0]
@@ -264,7 +269,7 @@ class MLPActorCritic(nn.Module):
         # Policy.
         self.actor = MLPActor(obs_dim, act_dim, hidden_dims, activation, discrete)
         # Value function.
-        self.critic = MLPCritic(obs_dim, hidden_dims, activation)
+        self.critic = MLPCritic(obs_dim, hidden_dims, activation, device)
 
     def step(self,
              obs
