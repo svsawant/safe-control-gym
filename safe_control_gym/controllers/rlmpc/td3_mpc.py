@@ -62,7 +62,9 @@ class TD3_MPC(BaseController):
 
         # Agent
         model = self.get_prior(self.env)
-        self.agent = TD3_MPC_Agent(self.env, self.env.observation_space, self.env.action_space, self.gamma, model, **ac_config)
+        self.agent = TD3_MPC_Agent(
+            self.env, self.env.observation_space, self.env.action_space, self.gamma, model, **ac_config
+        )
 
         # pre-/post-processing
         self.obs_normalizer = BaseNormalizer()
@@ -257,11 +259,12 @@ class TD3_MPC(BaseController):
             # Regardless of how long you wait between updates,
             # the ratio of env steps to gradient steps is locked to 1.
             # alternatively, can update once each step
-            for j in range(self.train_interval):
+            for j in range(15):
                 batch, batch_th = self.buffer.sample(self.train_batch_size, self.device)
                 res = self.agent.update(batch, batch_th)
                 for k, v in res.items():
                     results[k].append(v)
+            print(self.agent.actor.param_dict)
         results = {k: sum(v) / len(v) for k, v in results.items()}
         results.update({'step': self.total_steps, 'elapsed_time': time.time() - start})
         return results
@@ -298,7 +301,7 @@ class TD3_MPC(BaseController):
         self.agent.reset()
         ep_returns, ep_lengths, eval_return = [], [], 0.0
         frames = []
-        mse, ep_rmse_mean, ep_rmse_std = [], [], []
+        mse, ep_rmse = [], []
         while len(ep_returns) < n_episodes:
             action = self.select_action(obs=obs, info=info)
             obs, _, done, info = env.step(action)
@@ -310,8 +313,7 @@ class TD3_MPC(BaseController):
                 print(f'obs {obs} | act {action}')
             if done:
                 assert 'episode' in info
-                ep_rmse_mean.append((np.array(mse) ** 0.5).mean())
-                ep_rmse_std.append((np.array(mse) ** 0.5).std())
+                ep_rmse.append(np.array(mse).mean()**0.5)
                 mse = []
                 ep_returns.append(info['episode']['r'])
                 ep_lengths.append(info['episode']['l'])
@@ -321,8 +323,8 @@ class TD3_MPC(BaseController):
         ep_lengths = np.asarray(ep_lengths)
         ep_returns = np.asarray(ep_returns)
         eval_results = {'ep_returns': ep_returns, 'ep_lengths': ep_lengths,
-                        'rmse': np.array(ep_rmse_mean).mean(),
-                        'rmse_std': np.array(ep_rmse_std).mean()}
+                        'rmse': np.array(ep_rmse).mean(),
+                        'rmse_std': np.array(ep_rmse).std()}
         if len(frames) > 0:
             eval_results['frames'] = frames
         # Other episodic stats from evaluation env.

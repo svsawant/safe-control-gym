@@ -56,8 +56,8 @@ task_config:
     Iyy: 1.4e-05
 
   episode_len_sec: 9
-  cost: quadratic
-  obs_goal_horizon: 0
+  cost: rl_reward
+  obs_goal_horizon: 1
 
   rew_state_weight: [10.0, 0., 10.0, 0., 0., 0.]
   rew_act_weight: [0., 0.]

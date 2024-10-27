@@ -8,8 +8,9 @@ SYS='quadrotor_2D_attitude'
 #TASK='stab'
 TASK='track'
 
-ALGO='q_mpc'
-#ALGO='td3_mpc'
+#ALGO='q_mpc'
+ALGO='td3_mpc'
+#ALGO='ppo_mpc'
 
 EXP_NAME='exp4'
 

@@ -544,13 +544,22 @@ class Quadrotor(BaseAviary):
         '''
         m = prior_prop.get('M', self.MASS)
         Iyy = prior_prop.get('Iyy', self.J[1, 1])
-
         g, length = self.GRAVITY_ACC, self.L
         dt = self.CTRL_TIMESTEP
+        # Additional model priors
+        # identified parameters for the 2D attitude interface
+        # NOTE: these parameters are not set in the prior_prop dict
+        # since they are specific to the 2D attitude model
+        beta = prior_prop.get('beta', [18.112984649321753, 3.6800, 0.0])
+        alpha = prior_prop.get('alpha_1', [140.8, 13.4, 124.8])
+        pitch_bias = prior_prop.get('pitch_bias', 0.0)
+        lr_param = cs.MX.sym('learnable_param', 0)
+
         # Define states.
         z = cs.MX.sym('z')
         z_dot = cs.MX.sym('z_dot')
         u_eq = m * g
+        X_dot, parameterized_X_dot, Y = None, None, None
         if self.QUAD_TYPE == QuadType.ONE_D:
             nx, nu = 2, 1
             # Define states.
@@ -592,24 +601,34 @@ class Quadrotor(BaseAviary):
             theta_dot = cs.MX.sym('theta_dot')
             X = cs.vertcat(x, x_dot, z, z_dot, theta, theta_dot)
             # Define input collective thrust and theta.
-            T = cs.MX.sym('T_c')  # normlized thrust [N]
+            T = cs.MX.sym('T_c')  # normalized thrust [N]
             P = cs.MX.sym('P_c')  # desired pitch angle [rad]
             U = cs.vertcat(T, P)
             # The thrust in PWM is converted from the normalized thrust.
-            # With the formulat F_desired = b_F * T + a_F
+            # With F_desired = b_F * T + a_F
 
             # Define dynamics equations.
             # TODO: create a parameter for the new quad model
             X_dot = cs.vertcat(x_dot,
-                               (18.112984649321753 * T + 3.7613154938448576) * cs.sin(theta),
+                               (beta[0] * T + beta[1]) * cs.sin(theta + pitch_bias) + beta[2],
                                z_dot,
-                               (18.112984649321753 * T + 3.7613154938448576) * cs.cos(theta) - g,
+                               (beta[0] * T + beta[1]) * cs.cos(theta + pitch_bias) - g,
                                theta_dot,
-                               # 60 * (60 * (P - theta) - theta_dot)
-                               -143.9 * theta - 13.02 * theta_dot + 122.5 * P
-                               )
+                               -alpha[0] * (theta + pitch_bias) - alpha[1] * theta_dot + alpha[2] * P)
+
             # Define observation.
             Y = cs.vertcat(x, x_dot, z, z_dot, theta, theta_dot)
+
+            # Define parameterized dynamics equations
+            lr_param = cs.MX.sym('learnable_param', 7)
+            parameterized_X_dot = cs.vertcat(
+                x_dot,
+                (lr_param[0] * T + lr_param[1]) * cs.sin(theta + lr_param[6]) + lr_param[2],
+                z_dot,
+                (lr_param[0] * T + lr_param[1]) * cs.cos(theta + lr_param[6]) - g,
+                theta_dot,
+                -lr_param[3] * (theta + lr_param[6]) - lr_param[4] * theta_dot + lr_param[5] * P
+            )
         elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE_5S:
             nx, nu = 5, 2
             # Define states.
@@ -618,11 +637,11 @@ class Quadrotor(BaseAviary):
             theta = cs.MX.sym('theta')  # pitch angle [rad]
             X = cs.vertcat(x, x_dot, z, z_dot, theta)
             # Define input collective thrust and theta.
-            T = cs.MX.sym('T_c')  # normlized thrust [N]
+            T = cs.MX.sym('T_c')  # normalized thrust [N]
             P = cs.MX.sym('P_c')  # desired pitch angle [rad]
             U = cs.vertcat(T, P)
             # The thrust in PWM is converted from the normalized thrust.
-            # With the formulat F_desired = b_F * T + a_F
+            # With F_desired = b_F * T + a_F
 
             # Define dynamics equations.
             # TODO: create a parameter for the new quad model
@@ -686,20 +705,28 @@ class Quadrotor(BaseAviary):
             X_dot = cs.vertcat(pos_dot[0], pos_ddot[0], pos_dot[1], pos_ddot[1], pos_dot[2], pos_ddot[2], ang_dot, rate_dot)
 
             Y = cs.vertcat(x, x_dot, y, y_dot, z, z_dot, phi, theta, psi, p_body, q_body, r_body)
+
         # Set the equilibrium values for linearizations.
         X_EQ = np.zeros(self.state_dim)
         if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
             U_EQ = np.array([u_eq, 0])
         else:
             U_EQ = np.ones(self.action_dim) * u_eq / self.action_dim
+
         # Define cost (quadratic form).
         Q = cs.MX.sym('Q', nx, nx)
         R = cs.MX.sym('R', nu, nu)
         Xr = cs.MX.sym('Xr', nx, 1)
         Ur = cs.MX.sym('Ur', nu, 1)
         cost_func = 0.5 * (X - Xr).T @ Q @ (X - Xr) + 0.5 * (U - Ur).T @ R @ (U - Ur)
+
         # Define dynamics and cost dictionaries.
-        dynamics = {'dyn_eqn': X_dot, 'obs_eqn': Y, 'vars': {'X': X, 'U': U}}
+        dynamics = {
+            'dyn_eqn': X_dot,
+            'param_dyn_eqn': parameterized_X_dot,
+            'obs_eqn': Y,
+            'vars': {'X': X, 'U': U, 'P': lr_param}
+        }
         cost = {
             'cost_func': cost_func,
             'vars': {
@@ -711,6 +738,7 @@ class Quadrotor(BaseAviary):
                 'R': R
             }
         }
+
         # Additional params to cache
         params = {
             # prior inertial properties

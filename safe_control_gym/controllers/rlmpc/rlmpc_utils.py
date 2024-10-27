@@ -2,7 +2,7 @@ import casadi as cs
 import numpy as np
 
 
-def euler_discrete(f, n, m, dt):
+def euler_discrete(f, n, m, k, dt):
     '''Euler discretization for the function.
 
     Args:
@@ -16,14 +16,14 @@ def euler_discrete(f, n, m, dt):
     '''
     X = cs.SX.sym('X', n)
     U = cs.SX.sym('U', m)
-    x_next = X + dt * f(X, U)
-    eu_dyn = cs.Function('eu_f', [X, U], [x_next], ['x0', 'p'], ['xf'])
+    P = cs.SX.sym('P', k)
+    x_next = X + dt * f(X, U, P)
+    eu_dyn = cs.Function('eu_f', [X, U, P], [x_next], ['x0', 'u', 'p'], ['xf'])
 
     return eu_dyn
 
+
 # Adam Optimizer (use the class from the previous response)
-
-
 class AdamOptimizer:
     def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
         """
@@ -98,5 +98,4 @@ class AdamOptimizer:
             v_corrected = self.v[key] / (1 - self.beta2 ** self.t)
 
             updated_params[key] = params[key] - self.learning_rate * m_corrected / (np.sqrt(v_corrected) + self.epsilon)
-
         return updated_params

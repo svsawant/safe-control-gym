@@ -30,6 +30,7 @@ class TD3_MPC_Agent:
                  horizon: int = 5,
                  q_mpc: list = [2],
                  r_mpc: list = [1],
+                 model_param: list = [],
                  warmstart: bool = True,
                  soft_constraints: bool = True,
                  constraint_tol: float = 1e-6,
@@ -69,7 +70,8 @@ class TD3_MPC_Agent:
         self.device = device
 
         # Actor setup
-        self.actor = MPCPolicyFunction(env_fun, gamma, model, horizon, q_mpc, r_mpc, warmstart,
+        self.actor = MPCPolicyFunction(env_fun, gamma, model, horizon, q_mpc, r_mpc, model_param,
+                                       warmstart,
                                        soft_constraints,
                                        constraint_tol,
                                        additional_constraints,
@@ -107,7 +109,7 @@ class TD3_MPC_Agent:
 
         with torch.no_grad():
             # Next action
-            next_act, _, optimal = self.actor.select_action_batch(next_obs, info)
+            next_act, _, _, optimal = self.actor.select_action_batch(next_obs, info)
             noise = (0.5 * torch.randn_like(next_act)).clamp(-0.2, 0.2)
             next_act = (next_act + noise).clamp(self.action_space_low, self.action_space_high)
             # Target Q value for next state and next action
@@ -133,15 +135,18 @@ class TD3_MPC_Agent:
 
         if self.update_step_count % self.update_freq == 0:
             # actor update
-            action_batch, nabla_pi_batch, optimal_batch = self.actor.select_action_batch(batch['obs'],
-                                                                                         batch['info'],
-                                                                                         sensitivity_compute=True)
+            action_batch, nabla_pi_cost_batch, nabla_pi_model_batch, optimal_batch = self.actor.select_action_batch(
+                batch['obs'],
+                batch['info'],
+                sensitivity_compute=True
+            )
             action_batch.requires_grad_()
             q1, _ = self.critic.forward(batch_th['obs'], action_batch)
             policy_loss = -q1.mean()
             policy_loss.backward()
             grad_q = action_batch.grad.unsqueeze(1).numpy()
-            grads = {'l': np.matmul(grad_q, nabla_pi_batch).squeeze(1).mean(axis=0)}
+            grads = {'l': np.matmul(grad_q, nabla_pi_cost_batch).squeeze(1).mean(axis=0),
+                     'f': np.matmul(grad_q, nabla_pi_model_batch).squeeze(1).mean(axis=0)}
             self.actor.param_dict = self.actor_opt.update_params(self.actor.param_dict, grads)
 
             # update target networks
@@ -179,6 +184,7 @@ class MPCPolicyFunction:
                  horizon: int = 5,
                  q_mpc: list = [2],
                  r_mpc: list = [1],
+                 model_param: list = [],
                  warmstart: bool = True,
                  soft_constraints: bool = True,
                  constraint_tol: float = 1e-6,
@@ -195,6 +201,7 @@ class MPCPolicyFunction:
         self.Q = get_cost_weight_matrix(self.q_mpc, self.model.nx)
         self.R = get_cost_weight_matrix(self.r_mpc, self.model.nu)
         self.Qt = get_cost_weight_matrix(self.q_mpc, self.model.nx)
+        self.model_param = np.array(model_param)
         self.update_step_count = 0
         self.soft_constraints = soft_constraints
         self.constraint_tol = constraint_tol
@@ -231,7 +238,7 @@ class MPCPolicyFunction:
         self.dynamics_func = None
         self.set_dynamics_func()
         self.setup_optimizer()
-        self._init_theta_val()
+        self._init_param_val()
         self.temp = 0
 
     def reset(self):
@@ -284,32 +291,15 @@ class MPCPolicyFunction:
         #                                  self.model.nx,
         #                                  self.model.nu,
         #                                  self.dt)
-        self.dynamics_func = euler_discrete(self.model.fc_func,
+        self.dynamics_func = euler_discrete(self.model.param_fc_func,
                                             self.model.nx,
                                             self.model.nu,
+                                            self.model.npl,
                                             self.dt)
-
-    def compute_initial_guess(self, init_state, goal_states, x_lin, u_lin):
-        """Use LQR to get an initial guess of the """
-        dfdxdfdu = self.model.df_func(x=x_lin, u=u_lin)
-        dfdx = dfdxdfdu['dfdx'].toarray()
-        dfdu = dfdxdfdu['dfdu'].toarray()
-        lqr_gain, _, _ = compute_discrete_lqr_gain_from_cont_linear_system(dfdx, dfdu, self.Q, self.R, self.dt)
-
-        x_guess = np.zeros((self.model.nx, self.T + 1))
-        u_guess = np.zeros((self.model.nu, self.T))
-        x_guess[:, 0] = init_state
-
-        for i in range(self.T):
-            u = lqr_gain @ (x_guess[:, i] - goal_states[:, i]) + u_lin
-            u_guess[:, i] = u
-            x_guess[:, i + 1, None] = self.dynamics_func(x0=x_guess[:, i], p=u)['xf'].toarray()
-
-        return x_guess, u_guess
 
     def setup_optimizer(self):
         """Sets up nonlinear optimization problem."""
-        nx, nu = self.model.nx, self.model.nu
+        nx, nu, npl = self.model.nx, self.model.nu, self.model.npl
         T = self.T
         etau = 1e-4
 
@@ -334,11 +324,14 @@ class MPCPolicyFunction:
         fixed_param = cs.vertcat(x_init, cs.reshape(x_ref, -1, 1))
 
         # Learnable parameters
+        # Cost
         Q, th_q, nq = _create_semi_definite_matrix(nx)
         R, th_r, nr = _create_semi_definite_matrix(nu)
         Qt, th_qt, nqt = _create_semi_definite_matrix(nx)
         # theta_param = cs.MX.sym("theta_var", nq + nr)
-        theta_param = cs.vertcat(th_q, th_r, th_qt)
+        cost_param = cs.vertcat(th_q, th_r, th_qt)
+        # Model
+        model_param = cs.MX.sym('f_param', npl)
 
         # cost (cumulative)
         cost = 0
@@ -365,7 +358,7 @@ class MPCPolicyFunction:
         g.append(x_var[:, 0] - x_init)
         for i in range(self.T):
             # Dynamics constraints.
-            next_state = self.dynamics_func(x0=x_var[:, i], p=u_var[:, i])['xf']
+            next_state = self.dynamics_func(x0=x_var[:, i], u=u_var[:, i], p=model_param)['xf']
             g.append(x_var[:, i + 1] - next_state)
             for sc_i, state_constraint in enumerate(self.state_constraints_sym):
                 cost += w @ state_slack[:, i]
@@ -393,7 +386,7 @@ class MPCPolicyFunction:
 
         # Create solver (IPOPT solver in this version)
         opts_setting = {
-            'ipopt.max_iter': 100,
+            'ipopt.max_iter': 200,
             'ipopt.print_level': 0,
             'print_time': 0,
             'ipopt.mu_target': etau,
@@ -404,7 +397,7 @@ class MPCPolicyFunction:
         vnlp_prob = {
             'f': cost,
             'x': opt_vars,
-            'p': cs.vertcat(fixed_param, theta_param),
+            'p': cs.vertcat(fixed_param, cost_param, model_param),
             'g': constraint_exp,
         }
         vsolver = cs.nlpsol('vsolver', 'ipopt', vnlp_prob, opts_setting)
@@ -425,17 +418,7 @@ class MPCPolicyFunction:
             + cs.transpose(mu_x) @ Hx
             + cs.transpose(mu_s) @ Hs
         )
-        lagrangian_fn = cs.Function('Lag', [opt_vars, mult, fixed_param, theta_param], [lagrangian])
-
-        # Generate sensitivity of the Lagrangian
-        dlag_fn = lagrangian_fn.factory(
-            'dlag_fn',
-            ['i0', 'i1', 'i2', 'i3'],
-            ['jac:o0:i0', 'jac:o0:i3'],
-        )
-        dlag_dw, dlag_dtheta = dlag_fn(opt_vars, mult, fixed_param, theta_param)
-        dlag_dw_fn = cs.Function('dlag_dw_fn', [opt_vars, mult, fixed_param, theta_param], [dlag_dw])
-        dlag_dtheta_fn = cs.Function('dlag_dtheta_fn', [opt_vars, mult, fixed_param, theta_param], [dlag_dtheta])
+        dlag_dw = cs.jacobian(lagrangian, opt_vars)
 
         # Build KKT matrix
         R_kkt = cs.vertcat(
@@ -450,13 +433,15 @@ class MPCPolicyFunction:
         z = cs.vertcat(opt_vars, lamb, mu_u, mu_x, mu_s)
 
         # Generate sensitivity of the KKT matrix
-        Rfun = cs.Function('Rfun', [z, fixed_param, theta_param], [R_kkt])
-        dR_sensfunc = Rfun.factory('dR', ['i0', 'i1', 'i2'], ['jac:o0:i0', 'jac:o0:i2'])
-        [dRdz, dRdP] = dR_sensfunc(z, fixed_param, theta_param)
+        Rfun = cs.Function('Rfun', [z, fixed_param, cost_param, model_param], [R_kkt])
+        dR_sensfunc = Rfun.factory('dR', ['i0', 'i1', 'i2', 'i3'], ['jac:o0:i0', 'jac:o0:i2', 'jac:o0:i3'])
+        [dRdz, dRdP_cost, dRdP_model] = dR_sensfunc(z, fixed_param, cost_param, model_param)
 
         # Generate sensitivity of the optimal solution
-        dzdP = -cs.inv(dRdz) @ dRdP
-        dPi = cs.Function('dPi', [z, fixed_param, theta_param], [dzdP[: nu, :]])
+        dzdP_cost = -cs.inv(dRdz) @ dRdP_cost
+        dPi_cost = cs.Function('dPi', [z, fixed_param, cost_param, model_param], [dzdP_cost[: nu, :]])
+        dzdP_model = -cs.inv(dRdz) @ dRdP_model
+        dPi_model = cs.Function('dPi', [z, fixed_param, cost_param, model_param], [dzdP_model[: nu, :]])
 
         self.solver_dict = {
             'solver': vsolver,
@@ -467,13 +452,12 @@ class MPCPolicyFunction:
             'opt_vars_fn': opt_vars_fn,
             'x_init': x_init,
             'x_ref': x_ref,
-            'theta_param': theta_param,
+            'cost_param': cost_param,
             'cost': cost,
             'lower_bound': lbg,
             'upper_bound': ubg,
-            'dlag_dw_fn': dlag_dw_fn,
-            'dlag_dtheta_fn': dlag_dtheta_fn,
-            'dpi_fn': dPi
+            'dpi_cost_fn': dPi_cost,
+            'dpi_model_fn': dPi_model
         }
 
     def get_references(self, traj_step=None):
@@ -496,12 +480,13 @@ class MPCPolicyFunction:
             raise Exception('Reference for this mode is not implemented.')
         return goal_states  # (nx, T+1).
 
-    def _init_theta_val(self):
+    def _init_param_val(self):
         # self.theta_param_ = torch.FloatTensor(np.concatenate((self.q_mpc, self.r_mpc)))
         # self.target_theta_param_ = torch.FloatTensor(np.concatenate((self.q_mpc, self.r_mpc)))
         # self.theta_param_.requires_grad_()
         # self.solver_dict['theta_param_val'] = np.concatenate((self.q_mpc, self.r_mpc, self.q_mpc)).copy()
-        self.param_dict = {'l': np.concatenate((self.q_mpc, self.r_mpc, self.q_mpc)).copy()}
+        self.param_dict = {'l': np.concatenate((self.q_mpc, self.r_mpc, self.q_mpc)).copy(),
+                           'f': self.model_param.copy()}
         # self.solver_dict['target_theta_param_val'] = np.concatenate((self.q_mpc, self.r_mpc)).copy()
 
     def select_action(self, obs, info=None, mode='eval'):
@@ -524,16 +509,12 @@ class MPCPolicyFunction:
         goal_states = self.get_references(self.traj_step)
         fixed_param = np.concatenate((obs[:self.model.nx, None], goal_states.T.reshape(-1, 1)))
         # Collect learnable parameters
-        theta_param = self.param_dict['l'][:, None]
+        cost_param = self.param_dict['l'][:, None]
+        model_param = self.param_dict['f'][:, None]
         if self.mode == 'tracking':
             self.traj_step += 1
 
         opt_vars_init = np.zeros((solver_dict['opt_vars'].shape[0], solver_dict['opt_vars'].shape[1]))
-        # if self.warmstart and self.x_prev is None and self.u_prev is None:
-        #    x_guess, u_guess = self.compute_initial_guess(obs, goal_states, self.X_EQ, self.U_EQ)
-        #    opti.set_initial(x_var, x_guess)
-        #    opti.set_initial(u_var, u_guess) # Initial guess for optimization problem.
-        # elif self.warmstart and self.x_prev is not None and self.u_prev is not None:
         if self.warmstart and self.x_prev is not None and self.u_prev is not None:
             # shift previous solutions by 1 step
             opt_vars_init = update_initial_guess(self.x_prev, self.u_prev, self.sigma_prev)
@@ -541,7 +522,7 @@ class MPCPolicyFunction:
         # Solve the optimization problem.
         soln = solver(
             x0=opt_vars_init,
-            p=np.concatenate((fixed_param, theta_param))[:, 0],
+            p=np.concatenate((fixed_param, cost_param, model_param))[:, 0],
             lbg=solver_dict['lower_bound'],
             ubg=solver_dict['upper_bound'],
         )
@@ -567,7 +548,8 @@ class MPCPolicyFunction:
             'success': solver.stats()['success'],
             'soln': deepcopy(soln),
             'fixed_param': deepcopy(fixed_param),
-            'theta_param': deepcopy(theta_param),
+            'cost_param': deepcopy(cost_param),
+            'model_param': deepcopy(model_param),
             'traj_step': deepcopy(self.traj_step) - 1
         }
         return action, info, results_dict
@@ -577,8 +559,10 @@ class MPCPolicyFunction:
         solver = solver_dict['solver']
         lbg = solver_dict['lower_bound']
         ubg = solver_dict['upper_bound']
-        theta_param = self.param_dict['l'][:, None]
-        dpi = solver_dict['dpi_fn']
+        cost_param = self.param_dict['l'][:, None]
+        model_param = self.param_dict['f'][:, None]
+        dpi_cost = solver_dict['dpi_cost_fn']
+        dpi_model = solver_dict['dpi_model_fn']
         opt_vars_fn = solver_dict['opt_vars_fn']
 
         eval_data_batch = []
@@ -594,21 +578,26 @@ class MPCPolicyFunction:
                 x_prev, u_prev, sigma_prev = x_prev.full(), u_prev.full(), sigma_prev.full()
                 opt_vars_init = update_initial_guess(x_prev, u_prev, sigma_prev)
 
-            temp = [solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, opt_vars_fn, dpi, sensitivity_compute]
+            temp = [solver, opt_vars_init, fixed_param, cost_param, model_param,
+                    lbg, ubg, opt_vars_fn, dpi_cost, dpi_model, sensitivity_compute]
             eval_data_batch.append(temp)
         soln_batch = self.multi_pool.map(_select_action, eval_data_batch)
 
         action_batch = []
-        nabla_pi_batch = []
+        nabla_pi_cost_batch = []
+        nabla_pi_model_batch = []
         optimal_batch = []
         for soln in soln_batch:
-            action, nabla_pi, optimal = soln
+            action, nabla_pi_cost, nabla_pi_model, optimal = soln
             action_batch.append(action)
-            nabla_pi_batch.append(nabla_pi)
+            nabla_pi_cost_batch.append(nabla_pi_cost)
+            nabla_pi_model_batch.append(nabla_pi_model)
             optimal_batch.append(optimal)
         action_batch = torch.FloatTensor(np.array(action_batch))
+        # nabla_pi_cost_batch = torch.FloatTensor(np.array(nabla_pi_cost_batch))
+        # nabla_pi_model_batch = torch.FloatTensor(np.array(nabla_pi_model_batch))
         optimal_batch = torch.FloatTensor(np.array(optimal_batch))
-        return action_batch, nabla_pi_batch, optimal_batch
+        return action_batch, nabla_pi_cost_batch, nabla_pi_model_batch, optimal_batch
 
 
 class ReplayBuffer(object):
@@ -763,12 +752,13 @@ def update_initial_guess(x_prev, u_prev, sigma_prev):
 
 
 def _select_action(eval_data):
-    solver, opt_vars_init, fixed_param, theta_param, lbg, ubg, opt_vars_fn, dpi, sensitivity_compute = eval_data
+    (solver, opt_vars_init, fixed_param, cost_param, model_param,
+     lbg, ubg, opt_vars_fn, dpi_cost, dpi_model, sensitivity_compute) = eval_data
 
     # Solve the optimization problem.
     soln = solver(
         x0=opt_vars_init,
-        p=np.concatenate((fixed_param, theta_param))[:, 0],
+        p=np.concatenate((fixed_param, cost_param, model_param))[:, 0],
         lbg=lbg,
         ubg=ubg,
     )
@@ -785,10 +775,12 @@ def _select_action(eval_data):
     if sensitivity_compute and optimal:
         mult = soln['lam_g'].full()
         z = np.concatenate((opt_vars, mult), axis=0)
-        nabla_pi = dpi(z, fixed_param, theta_param).full()
+        nabla_pi_cost = dpi_cost(z, fixed_param, cost_param, model_param).full()
+        nabla_pi_model = dpi_model(z, fixed_param, cost_param, model_param).full()
     else:
-        nabla_pi = np.zeros((u_val.shape[0], theta_param.shape[0]))
-    return action, nabla_pi, optimal
+        nabla_pi_cost = np.zeros((u_val.shape[0], cost_param.shape[0]))
+        nabla_pi_model = np.zeros((u_val.shape[0], model_param.shape[0]))
+    return action, nabla_pi_cost, nabla_pi_model, optimal
 
 
 def _create_semi_definite_matrix(n):

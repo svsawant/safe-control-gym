@@ -3,17 +3,18 @@ algo_config:
     horizon: 10
     q_mpc: [10., 0.1, 10., 0.1, 0.1, 0.01]
     r_mpc: [0.1, 0.1]
-    # Prior info
+    model_param: [12.1432, 1.8118, 0.0, 72.08, 7.5755, 39.8653, 0.0]
     warmstart: True
     eps: 0.05
     actor_lr: 0.0035
     critic_lr: 0.0035
     n_workers: 8
 
-  prior_info:
-    prior_prop: null
-    randomize_prior_prop: False
-    prior_prop_rand_info: null
+#  prior_info:
+#    randomize_prior_prop: False
+#    prior_prop_rand_info: null
+#    prior_prop:
+#      model_param: [12.1432, 1.8118, 0, 72.08, 7.5755, 39.8653, 0.0]
 
   # optim args
   train_interval: 540

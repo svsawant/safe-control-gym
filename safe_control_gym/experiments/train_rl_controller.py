@@ -27,7 +27,6 @@ def train():
 
     set_seed_from_config(config)
     set_device_from_config(config)
-    print(config)
 
     # Define function to create task/env.
     env_func = partial(make,
