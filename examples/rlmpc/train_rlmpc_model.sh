@@ -9,8 +9,8 @@ SYS='quadrotor_2D_attitude'
 TASK='track'
 
 #ALGO='q_mpc'
-ALGO='td3_mpc'
-#ALGO='ppo_mpc'
+#ALGO='td3_mpc'
+ALGO='ppo_mpc'
 
 EXP_NAME='exp4'
 
@@ -29,7 +29,7 @@ do
         --overrides \
             ./config_overrides/${SYS}/${ALGO}_${SYS}.yaml \
             ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
-        --output_dir ./Results/${SYS}_${ALGO}_data/"${EXP_NAME}"/"${SEED}"/ \
+        --output_dir ./Results/${SYS}_${ALGO}_data/${EXP_NAME}/${SEED}_17/ \
         --seed "${SEED}" \
         --kv_overrides \
             task_config.randomized_init=True

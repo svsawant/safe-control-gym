@@ -78,6 +78,10 @@ register(idx='td3_mpc',
          entry_point='safe_control_gym.controllers.rlmpc.td3_mpc:TD3_MPC',
          config_entry_point='safe_control_gym.controllers.rlmpc:td3_mpc.yaml')
 
+register(idx='ppo_mpc',
+         entry_point='safe_control_gym.controllers.rlmpc.ppo_mpc:PPO_MPC',
+         config_entry_point='safe_control_gym.controllers.rlmpc:ppo_mpc.yaml')
+
 register(idx='dppo',
          entry_point='safe_control_gym.controllers.dppo.dppo:DPPO',
          config_entry_point='safe_control_gym.controllers.dppo:dppo.yaml')

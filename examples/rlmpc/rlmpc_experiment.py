@@ -13,7 +13,7 @@ from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 
 
-def run(plot=True, training=False, n_episodes=1, n_steps=None, curr_path='.'):
+def run(plot=True, training=False, n_episodes=5, n_steps=None, curr_path='.'):
     '''Main function to run RL-MPC experiments.
 
     Args:

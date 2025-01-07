@@ -620,14 +620,16 @@ class Quadrotor(BaseAviary):
             Y = cs.vertcat(x, x_dot, z, z_dot, theta, theta_dot)
 
             # Define parameterized dynamics equations
-            lr_param = cs.MX.sym('learnable_param', 7)
+            # mp = [12.1432, 1.8118, 1.0, 72.08, 7.5755, 39.8653, 1.0]
+            mp = [18.1130, 3.6800, -0.0080, 140.8, 13.4, 124.8, 0.0]
+            lr_param = cs.MX.sym('learnable_param', 6)
             parameterized_X_dot = cs.vertcat(
                 x_dot,
-                (lr_param[0] * T + lr_param[1]) * cs.sin(theta + lr_param[6]) + lr_param[2],
+                (lr_param[0] * mp[0] * T + lr_param[1] * mp[1]) * cs.sin(theta) + lr_param[2] * mp[2],
                 z_dot,
-                (lr_param[0] * T + lr_param[1]) * cs.cos(theta + lr_param[6]) - g,
+                (lr_param[0] * mp[0] * T + lr_param[1] * mp[1]) * cs.cos(theta) - g,
                 theta_dot,
-                -lr_param[3] * (theta + lr_param[6]) - lr_param[4] * theta_dot + lr_param[5] * P
+                -lr_param[3] * mp[3] * theta - lr_param[4] * mp[4] * theta_dot + lr_param[5] * mp[5] * P
             )
         elif self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE_5S:
             nx, nu = 5, 2
@@ -944,7 +946,7 @@ class Quadrotor(BaseAviary):
                                               self.physical_action_bounds[0],
                                               self.physical_action_bounds[1])[0]
         if self.PHYSICS == Physics.DYN_SI:
-            return None
+            return self.current_noisy_physical_action
 
         if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE or self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE_5S:
             collective_thrust, pitch = self.current_clipped_action

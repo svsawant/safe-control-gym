@@ -22,6 +22,7 @@ def train():
     fac = ConfigFactory()
     config = fac.merge()
     config.algo_config['training'] = True
+    print(config)
 
     shutil.rmtree(config.output_dir, ignore_errors=True)
 
