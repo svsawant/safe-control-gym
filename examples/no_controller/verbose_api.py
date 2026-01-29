@@ -1,9 +1,9 @@
-'''A simple script to demonstrate safe-control-gym API.
+"""A simple script to demonstrate safe-control-gym API.
 
 Example:
     $ python3 verbose_api.py --task cartpole --overrides verbose_api.yaml
     $ python3 verbose_api.py --task quadrotor --overrides verbose_api.yaml
-'''
+"""
 
 import inspect
 import time
@@ -15,7 +15,7 @@ from safe_control_gym.utils.registration import make
 
 
 def run():
-    '''The main function running the API example.'''
+    """The main function running the API example."""
 
     # Set iterations and episode counter.
     num_episodes = 1
@@ -27,50 +27,70 @@ def run():
     # Create an environment
     CONFIG_FACTORY = ConfigFactory()
     config = CONFIG_FACTORY.merge()
-    if config.task == 'cartpole':
+    if config.task == "cartpole":
         env = make(config.task, **config.cartpole_config)
-    elif config.task == 'quadrotor':
+    elif config.task == "quadrotor":
         env = make(config.task, **config.quadrotor_config)
 
     # Reset the environment, obtain and print the initial observations.
     initial_obs, initial_info = env.reset()
-    print('\n\n')
+    print("\n\n")
 
     # Dynamics info
-    print_str_with_style('PyBullet dynamics info:', 7)
-    if config.task == 'cartpole':
-        print('\t' + str(p.getDynamicsInfo(bodyUniqueId=env.CARTPOLE_ID, linkIndex=-1, physicsClientId=env.PYB_CLIENT)))
-    elif config.task == 'quadrotor':
-        print('\t' + str(p.getDynamicsInfo(bodyUniqueId=env.DRONE_ID, linkIndex=-1, physicsClientId=env.PYB_CLIENT)))
-    print('\n\n')
-    print_str_with_style('Initial reset.\n', 7)
-    print_str_with_style('Open AI gym API:', 2)
-    print_str_with_style('\tInitial observation: ' + str(initial_obs), 2)
+    print_str_with_style("PyBullet dynamics info:", 7)
+    if config.task == "cartpole":
+        print(
+            "\t"
+            + str(
+                p.getDynamicsInfo(
+                    bodyUniqueId=env.CARTPOLE_ID,
+                    linkIndex=-1,
+                    physicsClientId=env.PYB_CLIENT,
+                )
+            )
+        )
+    elif config.task == "quadrotor":
+        print(
+            "\t"
+            + str(
+                p.getDynamicsInfo(
+                    bodyUniqueId=env.DRONE_ID,
+                    linkIndex=-1,
+                    physicsClientId=env.PYB_CLIENT,
+                )
+            )
+        )
+    print("\n\n")
+    print_str_with_style("Initial reset.\n", 7)
+    print_str_with_style("Open AI gym API:", 2)
+    print_str_with_style("\tInitial observation: " + str(initial_obs), 2)
 
-    print_str_with_style('safe-control-gym API:', 0)
-    print_str_with_style('\tA priori symbolic model:', 0)
-    out = '\t\tState: ' + str(initial_info['symbolic_model'].x_sym).strip('vertcat')
+    print_str_with_style("safe-control-gym API:", 0)
+    print_str_with_style("\tA priori symbolic model:", 0)
+    out = "\t\tState: " + str(initial_info["symbolic_model"].x_sym).strip("vertcat")
     print_str_with_style(out, 0)
-    out = '\t\tInput: ' + str(initial_info['symbolic_model'].u_sym).strip('vertcat')
+    out = "\t\tInput: " + str(initial_info["symbolic_model"].u_sym).strip("vertcat")
     print_str_with_style(out, 0)
-    out = '\t\tDynamics: ' + str(initial_info['symbolic_model'].x_dot).strip('vertcat')
+    out = "\t\tDynamics: " + str(initial_info["symbolic_model"].x_dot).strip("vertcat")
     print_str_with_style(out, 0)
-    out = '\t\tCost: ' + str(initial_info['symbolic_model'].cost_func).replace('vertcat', '').replace(', (', ',\n\t\t\t(').replace(', @', ',\n\t\t\t@')
+    out = "\t\tCost: " + str(initial_info["symbolic_model"].cost_func).replace(
+        "vertcat", ""
+    ).replace(", (", ",\n\t\t\t(").replace(", @", ",\n\t\t\t@")
     print_str_with_style(out, 0)
-    print_str_with_style('\tConstraints:', 0)
-    for fun in initial_info['symbolic_constraints']:
-        out = '\t' + str(inspect.getsource(fun)).strip('\n')
+    print_str_with_style("\tConstraints:", 0)
+    for fun in initial_info["symbolic_constraints"]:
+        out = "\t" + str(inspect.getsource(fun)).strip("\n")
         print_str_with_style(out, 0)
-    print_str_with_style('\tA priori parameters:', 0)
-    out = '\t\t' + str(initial_info['physical_parameters'])
+    print_str_with_style("\tA priori parameters:", 0)
+    out = "\t\t" + str(initial_info["physical_parameters"])
     print_str_with_style(out, 0)
-    print_str_with_style('\tX reference:', 0)
-    out = '\t\t' + str(initial_info['x_reference'])
+    print_str_with_style("\tX reference:", 0)
+    out = "\t\t" + str(initial_info["x_reference"])
     print_str_with_style(out, 0)
-    print_str_with_style('\tU reference:', 0)
-    out = '\t\t' + str(initial_info['u_reference'])
+    print_str_with_style("\tU reference:", 0)
+    out = "\t\t" + str(initial_info["u_reference"])
     print_str_with_style(out, 0)
-    print('\n\n')
+    print("\n\n")
 
     # Run an experiment.
     for i in range(ITERATIONS):
@@ -79,63 +99,76 @@ def run():
         # Step the environment and print all returned information.
         obs, reward, done, info = env.step(action)
 
-        print_str_with_style(str(i) + '-th step.', 7)
-        out = '\tApplied action: ' + str(action) + '\n'
+        print_str_with_style(str(i) + "-th step.", 7)
+        out = "\tApplied action: " + str(action) + "\n"
         print(out)
 
-        print_str_with_style('Open AI gym API:', 2)
-        out = '\tObservation: ' + str(obs)
+        print_str_with_style("Open AI gym API:", 2)
+        out = "\tObservation: " + str(obs)
         print_str_with_style(out, 2)
-        out = '\tReward: ' + str(reward)
+        out = "\tReward: " + str(reward)
         print_str_with_style(out, 2)
-        out = '\tDone: ' + str(done)
+        out = "\tDone: " + str(done)
         print_str_with_style(out, 2)
 
-        print_str_with_style('safe-control-gym API:', 0)
-        out = '\tConstraints evaluations: ' + str(info['constraint_values'])
+        print_str_with_style("safe-control-gym API:", 0)
+        out = "\tConstraints evaluations: " + str(info["constraint_values"])
         print_str_with_style(out, 0)
-        out = '\tConstraints violation: ' + str(bool(info['constraint_violation']))
+        out = "\tConstraints violation: " + str(bool(info["constraint_violation"]))
         print_str_with_style(out, 0)
 
-        print('\n\n')
+        print("\n\n")
         # If an episode is complete, reset the environment.
         if done:
             num_episodes += 1
             new_initial_obs, new_initial_info = env.reset()
-            print_str_with_style(str(num_episodes) + '-th reset.', 7)
-            print_str_with_style('Reset obs' + str(new_initial_obs), 2)
-            print_str_with_style('Reset info' + str(new_initial_info), 0)
-            print('\n\n------------------------------------------------------------------------------')
-            print('------------------------------------------------------------------------------\n\n')
+            print_str_with_style(str(num_episodes) + "-th reset.", 7)
+            print_str_with_style("Reset obs" + str(new_initial_obs), 2)
+            print_str_with_style("Reset info" + str(new_initial_info), 0)
+            print(
+                "\n\n------------------------------------------------------------------------------"
+            )
+            print(
+                "------------------------------------------------------------------------------\n\n"
+            )
 
     # Close the environment and print timing statistics.
     env.close()
     elapsed_sec = time.time() - START
-    out = str('\n{:d} iterations (@{:d}Hz) and {:d} episodes in {:.2f} seconds, i.e. {:.2f} steps/sec for a {:.2f}x speedup.\n\n'
-              .format(ITERATIONS, env.CTRL_FREQ, num_episodes, elapsed_sec, ITERATIONS / elapsed_sec, (ITERATIONS * env.CTRL_TIMESTEP) / elapsed_sec))
+    out = str(
+        "\n{:d} iterations (@{:d}Hz) and {:d} episodes in {:.2f} seconds, i.e. {:.2f} steps/sec for a {:.2f}x speedup.\n\n".format(
+            ITERATIONS,
+            env.CTRL_FREQ,
+            num_episodes,
+            elapsed_sec,
+            ITERATIONS / elapsed_sec,
+            (ITERATIONS * env.CTRL_TIMESTEP) / elapsed_sec,
+        )
+    )
     print_str_with_style(out, 7)
 
 
 class bcolors:
-    '''Support for color output.'''
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    """Support for color output."""
+
+    HEADER = "\033[95m"
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
 
 
-def print_str_with_style(string: str = '', style: int = 0):
-    '''Function to convert to string and print in color.
+def print_str_with_style(string: str = "", style: int = 0):
+    """Function to convert to string and print in color.
 
     Args:
         string (str): The string to print.
         style (int): The style representing a color in bcolors.
-    '''
+    """
     string = str(string)
     if style == 0:
         print(bcolors.HEADER + string + bcolors.ENDC)
@@ -154,8 +187,8 @@ def print_str_with_style(string: str = '', style: int = 0):
     elif style == 7:
         print(bcolors.UNDERLINE + string + bcolors.ENDC)
     else:
-        raise ValueError('[ERROR] unknown style!')
+        raise ValueError("[ERROR] unknown style!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run()
