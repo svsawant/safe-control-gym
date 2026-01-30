@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # SYS='cartpole'
-SYS='quadrotor_2D'
+# SYS='quadrotor_2D'
+SYS='quadrotor_2D_exp'
 # SYS='quadrotor_3D'
 
 # TASK='stab'
@@ -9,9 +10,8 @@ TASK='track'
 
 ALGO='ppo'
 # ALGO='sac'
-# ALGO='safe_explorer_ppo'
 
-EXP_NAME='quad_results3'
+EXP_NAME='quad_results'
 
 if [ "$SYS" == 'cartpole' ]; then
     SYS_NAME=$SYS
@@ -30,8 +30,9 @@ do
             ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
         --output_dir ./Results/${EXP_NAME}/ \
         --seed ${SEED} \
+        --tag ${SYS}_${ALGO}_data \
         --kv_overrides \
-            task_config.init_state=None \
-            task_config.randomized_init=True 
+            task_config.randomized_init=False 
             # algo_config.pretrained=./models/${ALGO}/${ALGO}_pretrain_${SYS}_${TASK}.pt
+        # --pretrain_path /home/savvyfox/Projects/scg/examples/rl/models/${ALGO}/ 
 done

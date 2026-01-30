@@ -47,9 +47,14 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path="."):
     )
 
     # Load state_dict from trained.
-    ctrl.load(
-        f"{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt"
-    )
+    if "pretrain_path" in config.keys():
+        # ctrl.load(config.pretrain_path + "model_latest.pt")
+        ctrl.load(config.pretrain_path + "model_best.pt")
+    else:
+        ctrl.load(f"{curr_path}/models/{config.algo}/model_best.pt")
+        ctrl.load(
+            f"{curr_path}/models/{config.algo}/{config.algo}_model_{system}_{task}.pt"
+        )
 
     # Remove temporary files and directories
     shutil.rmtree(f"{curr_path}/temp", ignore_errors=True)
@@ -65,7 +70,7 @@ def run(gui=False, plot=True, n_episodes=1, n_steps=None, curr_path="."):
             graph1_2 = 3
             graph3_1 = 0
             graph3_2 = 1
-        elif system == "quadrotor_2D":
+        elif system in ["quadrotor_2D", "quadrotor_4D"]:
             graph1_1 = 4
             graph1_2 = 5
             graph3_1 = 0
