@@ -13,6 +13,7 @@ from safe_control_gym.utils.registration import make
 from safe_control_gym.utils.utils import (
     mkdirs,
     set_device_from_config,
+    set_dir_from_config,
     set_seed_from_config,
 )
 
@@ -27,8 +28,8 @@ def train():
     config = fac.merge()
     config.algo_config["training"] = True
 
-    shutil.rmtree(config.output_dir, ignore_errors=True)
-
+    # shutil.rmtree(config.output_dir, ignore_errors=True)
+    set_dir_from_config(config)
     set_seed_from_config(config)
     set_device_from_config(config)
 
@@ -48,6 +49,11 @@ def train():
         **config.algo_config
     )
     ctrl.reset()
+
+    # Pretrained model load.
+    if "pretrain_path" in config.keys():
+        # ctrl.load(config.pretrain_path + "model_latest.pt")
+        ctrl.load(config.pretrain_path + "model_best.pt")
 
     # Training.
     ctrl.learn()

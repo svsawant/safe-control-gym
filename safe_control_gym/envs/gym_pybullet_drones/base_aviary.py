@@ -17,8 +17,10 @@ from enum import Enum
 import numpy as np
 import pybullet as p
 import pybullet_data
+import casadi as cs
 
 from safe_control_gym.envs.benchmark_env import BenchmarkEnv
+from safe_control_gym.math_and_models.transformations import get_angularvelocity_rpy
 
 egl = pkgutil.get_loader("eglRenderer")
 
@@ -38,7 +40,7 @@ class Physics(str, Enum):
     PYB_DRAG = "pyb_drag"  # PyBullet physics update with drag.
     PYB_DW = "pyb_dw"  # PyBullet physics update with downwash.
     PYB_GND_DRAG_DW = "pyb_gnd_drag_dw"  # PyBullet physics update with ground effect, drag, and downwash.
-    SYS_ID_2D = "sys_id_2d"  # System identification 2D physics update.
+    DYN_SI_2D = "dyn_si_2d"  # System identification 2D physics update.
 
 
 class ImageType(int, Enum):
@@ -209,6 +211,10 @@ class BaseAviary(BenchmarkEnv):
         self.INIT_XYZ = np.array([0, 0, self.COLLISION_H / 2 - self.COLLISION_Z_OFFSET])
         self.INIT_RPY = np.zeros((3))
 
+        # Setup dynamics expression if needed
+        if physics == Physics.DYN_SI_2D:
+            self.setup_dynamics_si_2d_expression()
+
     def close(self):
         """Terminates the environment."""
         if self.RECORD and self.GUI:
@@ -240,6 +246,7 @@ class BaseAviary(BenchmarkEnv):
         self.rpy = np.zeros(3)
         self.vel = np.zeros(3)
         self.ang_v = np.zeros(3)
+        self.rpy_rates = np.zeros(3)
         if self.PHYSICS == Physics.DYN:
             self.rpy_rates = np.zeros(3)
         # Set PyBullet's parameters.
@@ -276,7 +283,10 @@ class BaseAviary(BenchmarkEnv):
                                          `_preprocess_action()` in each subclass.
             disturbance_force (ndarray, optional): Disturbance force, applied to all drones.
         """
-        clipped_action = np.reshape(clipped_action, 4)
+        # Reshape the action if needed.
+        if self.PHYSICS not in [Physics.DYN_SI_2D]:
+            clipped_action = np.reshape(clipped_action, 4)
+
         # Repeat for as many as the aggregate physics steps.
         for _ in range(self.PYB_STEPS_PER_CTRL):
             # Update and store the drones kinematic info for certain
@@ -308,6 +318,8 @@ class BaseAviary(BenchmarkEnv):
                 self._ground_effect(clipped_action)
                 self._drag(clipped_action)
                 self._downwash()
+            elif self.PHYSICS == Physics.DYN_SI_2D:
+                self._dynamics_si_2d(clipped_action)
             # Apply disturbance
             if disturbance_force is not None:
                 pos = self._get_drone_state_vector()[:3]
@@ -320,10 +332,13 @@ class BaseAviary(BenchmarkEnv):
                     physicsClientId=self.PYB_CLIENT,
                 )
             # PyBullet computes the new state, unless Physics.DYN.
-            if self.PHYSICS != Physics.DYN:
+            if self.PHYSICS not in [Physics.DYN, Physics.DYN_SI_2D]:
                 p.stepSimulation(physicsClientId=self.PYB_CLIENT)
             # Save the last applied action (e.g. to compute drag).
             self.last_clipped_action = clipped_action
+        if self.PHYSICS in [Physics.DYN_SI_2D]:
+            # set the state of the drone after stepping with the analytical model
+            self._set_pybullet_information()
         # Update and store the drones kinematic information.
         self._update_and_store_kinematic_information()
 
@@ -369,6 +384,23 @@ class BaseAviary(BenchmarkEnv):
                     self.ang_v[0], self.ang_v[1], self.ang_v[2]
                 ),
             )
+
+    def _set_pybullet_information(self):
+        """Set pybullet state information from external simulation"""
+        # Set PyBullet's state.
+        p.resetBasePositionAndOrientation(
+            self.DRONE_ID,
+            self.pos,
+            p.getQuaternionFromEuler(self.rpy),
+            physicsClientId=self.PYB_CLIENT,
+        )
+        # Note: the base's velocity only stored and not used #
+        p.resetBaseVelocity(
+            self.DRONE_ID,
+            self.vel,
+            self.ang_v,  # ang_vel not computed by DYN
+            physicsClientId=self.PYB_CLIENT,
+        )
 
     def _update_and_store_kinematic_information(self):
         """Updates and stores the drones kinematic information.
@@ -426,12 +458,11 @@ class BaseAviary(BenchmarkEnv):
                 self.rpy,
                 self.vel,
                 self.ang_v,
+                self.rpy_rates,
                 self.last_clipped_action,
             ]
         )
-        return state.reshape(
-            20,
-        )
+        return state.copy()
 
     def _physics(self, rpm):
         """Base PyBullet physics implementation.
@@ -605,6 +636,89 @@ class BaseAviary(BenchmarkEnv):
         )
         # Store the roll, pitch, yaw rates for the next step #
         self.rpy_rates = rpy_rates
+
+    def _dynamics_si_2d(self, action, disturbance_force=None):
+        """Explicit dynamics implementation from the identified model.
+           NOTE: The dynamcis update is independent of the pybullet simulation.
+
+        Args:
+            action (ndarray): (2)-shaped array of ints containing the desired collective thrust and pitch.
+            nth_drone (int): The ordinal number/position of the desired drone in list self.DRONE_IDS.
+            disturbance_force (ndarray): (3)-shaped array of floats containing the disturbance force.
+                                         with the format [f_x, 0, f_z].
+        """
+        # Current state.
+        pos = self.pos
+        rpy = self.rpy
+        vel = self.vel
+        rpy_rates = self.rpy_rates
+
+        # Compute forces and torques.
+        # Update state with discrete time dynamics.
+        state = np.hstack([pos[0], vel[0], pos[2], vel[2], rpy[1], rpy_rates[1]])
+
+        # update state
+        if disturbance_force is not None:
+            d = np.array([disturbance_force[0], disturbance_force[2]])
+        else:
+            d = np.array([0, 0])
+        # perform RK4 integration
+        k1 = self.X_dot_fun(state, action, d).full()[:, 0]
+        k2 = self.X_dot_fun(state + 0.5 * self.PYB_TIMESTEP * k1, action, d).full()[
+            :, 0
+        ]
+        k3 = self.X_dot_fun(state + 0.5 * self.PYB_TIMESTEP * k2, action, d).full()[
+            :, 0
+        ]
+        k4 = self.X_dot_fun(state + self.PYB_TIMESTEP * k3, action, d).full()[:, 0]
+        next_state = state + (self.PYB_TIMESTEP / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+        # Updated information
+        pos = np.array([next_state[0], 0, next_state[2]])
+        rpy = np.array([0, next_state[4], 0])
+        vel = np.array([next_state[1], 0, next_state[3]])
+        rpy_rates = np.array([0, next_state[5], 0])
+
+        self.pos = pos.copy()
+        self.rpy = rpy.copy()
+        self.vel = vel.copy()
+        self.rpy_rates = rpy_rates.copy()
+        self.ang_v = get_angularvelocity_rpy(self.rpy, self.rpy_rates)
+
+    def setup_dynamics_si_2d_expression(self, prop_values={}):
+        # Casadi states
+        z = cs.MX.sym("z")
+        x = cs.MX.sym("x")
+        z_dot = cs.MX.sym("z_dot")
+        x_dot = cs.MX.sym("x_dot")
+        theta = cs.MX.sym("theta")  # Pitch
+        theta_dot = cs.MX.sym("theta_dot")  # Pitch
+        X = cs.vertcat(x, x_dot, z, z_dot, theta, theta_dot)
+        g = self.GRAVITY_ACC
+        d = cs.MX.sym("d", 2, 1)  # disturbance force
+
+        # SysID parameters
+        beta_1 = prop_values.get("beta_1", 17.7903)
+        beta_2 = prop_values.get("beta_2", 4.2209)
+        beta_3 = prop_values.get("beta_3", 0.0)
+        alpha_1 = prop_values.get("alpha_1", -149.740766)
+        alpha_2 = prop_values.get("alpha_2", -16.755920)
+        alpha_3 = prop_values.get("alpha_3", 129.041538)
+        pitch_bias = prop_values.get("pitch_bias", 0.0)
+
+        # Define inputs.
+        T = cs.MX.sym("T")  # normlized thrust [N]
+        P = cs.MX.sym("P")  # desired pitch angle [rad]
+        U = cs.vertcat(T, P)
+        X_dot = cs.vertcat(
+            x_dot,
+            (beta_1 * T + beta_2) * cs.sin(theta) + d[0] / self.MASS,
+            z_dot,
+            (beta_1 * T + beta_2) * cs.cos(theta) - g + d[1] / self.MASS,
+            theta_dot,
+            alpha_1 * theta + alpha_2 * theta_dot + alpha_3 * P,
+        )
+        self.X_dot_fun = cs.Function("X_dot", [X, U, d], [X_dot])
 
     def _show_drone_local_axes(self):
         """Draws the local frame of the drone in PyBullet's GUI."""
