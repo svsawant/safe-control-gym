@@ -26,5 +26,5 @@ python3 ./rl_experiment.py \
         ./config_overrides/${SYS}/${ALGO}_${SYS}.yaml \
     --kv_overrides \
         algo_config.training=False \
-        task_config.randomized_init=False \
+        task_config.randomized_init=True \
     --pretrain_path /home/savvyfox/Projects/scg/examples/rl/models/${ALGO}/

@@ -1,4 +1,4 @@
-"""SAC Utils."""
+"""TD3 Utils."""
 
 from collections import defaultdict
 from copy import deepcopy
@@ -6,10 +6,8 @@ from copy import deepcopy
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from gymnasium.spaces import Box
 
-from safe_control_gym.math_and_models.distributions import Categorical, Normal
 from safe_control_gym.math_and_models.neural_networks import MLP
 
 # -----------------------------------------------------------------------------------
@@ -17,8 +15,8 @@ from safe_control_gym.math_and_models.neural_networks import MLP
 # -----------------------------------------------------------------------------------
 
 
-class SACAgent:
-    """A SAC class that encapsulates model, optimizer and update functions."""
+class TD3Agent:
+    """A TD3 class that encapsulates model, optimizer and update functions."""
 
     def __init__(
         self,
@@ -27,24 +25,27 @@ class SACAgent:
         hidden_dim=256,
         gamma=0.99,
         tau=0.005,
-        init_temperature=0.2,
-        use_entropy_tuning=False,
-        target_entropy=None,
         actor_lr=0.001,
         critic_lr=0.001,
-        entropy_lr=0.001,
         activation="relu",
+        device=None,
+        update_freq=3,
         **kwargs,
     ):
         # params
         self.obs_space = obs_space
         self.act_space = act_space
+        low, high = act_space.low, act_space.high
+        self.action_space_low = torch.FloatTensor(low).to(device)
+        self.action_space_high = torch.FloatTensor(high).to(device)
 
         self.gamma = gamma
         self.tau = tau
-        self.use_entropy_tuning = use_entropy_tuning
-
         self.activation = activation
+        self.device = device
+        # TD3 typical defaults (scaled later by action range)
+        self.policy_noise = kwargs.get("policy_noise", 0.2)
+        self.noise_clip = kwargs.get("noise_clip", 0.5)
 
         # model
         self.ac = MLPActorCritic(
@@ -53,7 +54,6 @@ class SACAgent:
             hidden_dims=[hidden_dim] * 2,
             activation=self.activation,
         )
-        self.log_alpha = torch.tensor(np.log(init_temperature))
 
         # target networks
         self.ac_targ = deepcopy(self.ac)
@@ -65,77 +65,49 @@ class SACAgent:
         self.critic_opt = torch.optim.Adam(
             list(self.ac.q1.parameters()) + list(self.ac.q2.parameters()), critic_lr
         )
-        if self.use_entropy_tuning:
-            self.log_alpha.requires_grad = True
-            self.alpha_opt = torch.optim.Adam([self.log_alpha], entropy_lr)
-            if target_entropy is None:
-                # Use heuristic value from SAC paper
-                self.target_entropy = -np.prod(act_space.shape).item()
-            else:
-                self.target_entropy = target_entropy
-        else:
-            self.alpha_opt = None
-
-    @property
-    def alpha(self):
-        """Entropy-tuning parameter/temperature"""
-        return self.log_alpha.exp()
+        self.update_count = 0
+        self.update_freq = update_freq
 
     def to(self, device):
         """Puts agent to device."""
         self.ac.to(device)
         self.ac_targ.to(device)
-        # self.log_alpha = self.log_alpha.to(device)
-        self.log_alpha.data = self.log_alpha.data.to(device)
+        self.action_space_low = self.action_space_low.to(device)
+        self.action_space_high = self.action_space_high.to(device)
 
     def train(self):
         """Sets training mode."""
         self.ac.train()
-        if self.use_entropy_tuning:
-            self.log_alpha.requires_grad_(True)
 
     def eval(self):
         """Sets evaluation mode."""
         self.ac.eval()
-        if self.use_entropy_tuning:
-            self.log_alpha.requires_grad_(False)
 
     def state_dict(self):
         """Snapshots agent state."""
         return {
             "ac": self.ac.state_dict(),
-            "log_alpha": self.log_alpha,
             "ac_targ": self.ac_targ.state_dict(),
             "actor_opt": self.actor_opt.state_dict(),
             "critic_opt": self.critic_opt.state_dict(),
-            "alpha_opt": self.alpha_opt.state_dict(),
         }
 
     def load_state_dict(self, state_dict):
         """Restores agent state."""
         self.ac.load_state_dict(state_dict["ac"])
-        # self.log_alpha = state_dict["log_alpha"]
-        self.log_alpha.data.copy_(state_dict["log_alpha"].to(self.log_alpha.device))
         self.ac_targ.load_state_dict(state_dict["ac_targ"])
         self.actor_opt.load_state_dict(state_dict["actor_opt"])
         self.critic_opt.load_state_dict(state_dict["critic_opt"])
-        self.alpha_opt.load_state_dict(state_dict["alpha_opt"])
 
     def compute_policy_loss(self, batch):
         """Returns policy loss(es) given batch of data."""
         obs = batch["obs"]
-        act, logp = self.ac.actor(obs, deterministic=False, with_logprob=True)
+        act = self.ac.actor(obs)
         q1 = self.ac.q1(obs, act)
         q2 = self.ac.q2(obs, act)
         q = torch.min(q1, q2)
-        policy_loss = (self.alpha.detach() * logp - q).mean()
-
-        entropy_loss = torch.zeros(1)
-        if self.use_entropy_tuning:
-            entropy_loss = -(
-                self.log_alpha * (logp + self.target_entropy).detach()
-            ).mean()
-        return policy_loss, entropy_loss
+        policy_loss = -q.mean()
+        return policy_loss
 
     def compute_q_loss(self, batch):
         """Returns q-value loss(es) given batch of data."""
@@ -150,21 +122,28 @@ class SACAgent:
         q2 = self.ac.q2(obs, act)
 
         with torch.no_grad():
-            next_act, next_logp = self.ac.actor(
-                next_obs, deterministic=False, with_logprob=True
+            next_act = self.ac_targ.actor(next_obs)
+            act_scale = 0.5 * (self.action_space_high - self.action_space_low)
+            # (common: use half-range as "limit"; here we use range to scale per-dim)
+            noise = torch.randn_like(next_act) * (self.policy_noise * act_scale)
+            noise = noise.clamp(
+                -self.noise_clip * act_scale, self.noise_clip * act_scale
+            )
+            next_act = (next_act + noise).clamp(
+                self.action_space_low, self.action_space_high
             )
             next_q1_targ = self.ac_targ.q1(next_obs, next_act)
             next_q2_targ = self.ac_targ.q2(next_obs, next_act)
             next_q_targ = torch.min(next_q1_targ, next_q2_targ)
             # q value regression target
-            q_targ = rew + self.gamma * mask * (next_q_targ - self.alpha * next_logp)
+            q_targ = rew + self.gamma * mask * next_q_targ
 
         q1_loss = (q1 - q_targ).pow(2).mean()
         q2_loss = (q2 - q_targ).pow(2).mean()
         critic_loss = q1_loss + q2_loss
         return critic_loss
 
-    def update(self, batch):
+    def update(self, batch, device=None):
         """Updates model parameters based on current training batch."""
         results = defaultdict(list)
 
@@ -173,24 +152,20 @@ class SACAgent:
         self.critic_opt.zero_grad()
         critic_loss.backward()
         self.critic_opt.step()
+        results["critic_loss"] = critic_loss.item()
 
         # actor update
-        policy_loss, entropy_loss = self.compute_policy_loss(batch)
-        self.actor_opt.zero_grad()
-        policy_loss.backward()
-        self.actor_opt.step()
-
-        if self.use_entropy_tuning:
-            self.alpha_opt.zero_grad()
-            entropy_loss.backward()
-            self.alpha_opt.step()
+        if self.update_count % self.update_freq == 0:
+            policy_loss = self.compute_policy_loss(batch)
+            self.actor_opt.zero_grad()
+            policy_loss.backward()
+            self.actor_opt.step()
+            results["policy_loss"] = policy_loss.item()
 
         # update target networks
         soft_update(self.ac, self.ac_targ, self.tau)
 
-        results["policy_loss"] = policy_loss.item()
-        results["critic_loss"] = critic_loss.item()
-        results["entropy_loss"] = entropy_loss.item()
+        self.update_count += 1
         return results
 
 
@@ -205,39 +180,14 @@ class MLPActor(nn.Module):
         self, obs_dim, act_dim, hidden_dims, activation, postprocess_fn=lambda x: x
     ):
         super().__init__()
-        self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
+        self.net = MLP(obs_dim, act_dim, hidden_dims, activation)
         self.postprocess_fn = postprocess_fn
 
-        self.mu_layer = nn.Linear(hidden_dims[-1], act_dim)
-        self.log_std_layer = nn.Linear(hidden_dims[-1], act_dim)
-
-        self.dist_fn = lambda mu, log_std: Normal(mu, log_std.exp())
-        self.log_std_min = -20
-        self.log_std_max = 2
-
-    def forward(self, obs, deterministic=False, with_logprob=True):
-        net_out = self.net(obs)
-        mu = self.mu_layer(net_out)
-        log_std = self.log_std_layer(net_out)
-        log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
-        dist = self.dist_fn(mu, log_std)
-
-        if deterministic:
-            action = dist.mode()
-        else:
-            action = dist.rsample()
-
-        if with_logprob:
-            logp = dist.log_prob(action)
-            logp -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(
-                axis=1, keepdim=True
-            )
-        else:
-            logp = None
-
+    def forward(self, obs):
+        action = self.net(obs)
         action = torch.tanh(action)
         action = self.postprocess_fn(action)
-        return action, logp
+        return action
 
 
 class MLPQFunction(nn.Module):
@@ -254,25 +204,34 @@ class MLPActorCritic(nn.Module):
     """Model for the actor-critic agent.
 
     Attributes:
-        actor (MLPActor|MLPActorDiscrete): policy network.
+        actor (MLPActor): policy network.
         q1, q2 (MLPQFunction): q-value networks.
     """
 
-    def __init__(self, obs_space, act_space, hidden_dims=(64, 64), activation="relu"):
+    def __init__(
+        self,
+        obs_space,
+        act_space,
+        hidden_dims=(64, 64),
+        activation="relu",
+    ):
         super().__init__()
 
         obs_dim = obs_space.shape[0]
-        assert isinstance(act_space, Box), "Only continuous action space is supported."
-        act_dim = act_space.shape[0]
+        if isinstance(act_space, Box):
+            act_dim = act_space.shape[0]
+            discrete = False
+        else:
+            raise NotImplementedError
 
         # policy
         low, high = act_space.low, act_space.high
-        low = torch.FloatTensor(low)
-        high = torch.FloatTensor(high)
+        self.register_buffer("low", torch.as_tensor(low, dtype=torch.float32))
+        self.register_buffer("high", torch.as_tensor(high, dtype=torch.float32))
 
         def unscale_fn(x):  # Rescale action from [-1, 1] to [low, high]
-            return low.to(x.device) + (
-                0.5 * (x + 1.0) * (high.to(x.device) - low.to(x.device))
+            return self.low.to(x.device) + (
+                0.5 * (x + 1.0) * (self.high.to(x.device) - self.low.to(x.device))
             )
 
         self.actor = MLPActor(
@@ -283,9 +242,20 @@ class MLPActorCritic(nn.Module):
         self.q1 = MLPQFunction(obs_dim, act_dim, hidden_dims, activation)
         self.q2 = MLPQFunction(obs_dim, act_dim, hidden_dims, activation)
 
-    def act(self, obs, deterministic=False):
-        a, _ = self.actor(obs, deterministic, False)
-        return a.cpu().numpy().astype(np.float32)
+    def act(self, obs, expl_noise=0.1, deterministic=False):
+        """
+        Select action for environment interaction with exploration noise.
+        obs: torch tensor, shape (obs_dim,) or (1, obs_dim)
+        """
+        action = self.actor(obs)
+
+        if not deterministic:
+            if expl_noise > 0.0:
+                act_scale = 0.5 * (self.high - self.low)
+                noise = torch.randn_like(action) * (expl_noise * act_scale)
+                action = action + noise
+            action = action.clamp(self.low, self.high)
+        return action.cpu().numpy()
 
 
 # -----------------------------------------------------------------------------------
@@ -293,13 +263,13 @@ class MLPActorCritic(nn.Module):
 # -----------------------------------------------------------------------------------
 
 
-class SACBuffer(object):
+class TD3Buffer(object):
     """Storage for replay buffer during training.
 
     Attributes:
         max_size (int): maximum size of the replay buffer.
         batch_size (int): number of samples (steps) per batch.
-        scheme (dict): describs shape & other info of data to be stored.
+        scheme (dict): describes shape & other info of data to be stored.
         keys (list): names of all data from scheme.
     """
 
@@ -309,8 +279,10 @@ class SACBuffer(object):
         self.batch_size = batch_size
 
         obs_dim = obs_space.shape
-        assert isinstance(act_space, Box), "Only continuous action space is supported."
-        act_dim = act_space.shape[0]
+        if isinstance(act_space, Box):
+            act_dim = act_space.shape[0]
+        else:
+            act_dim = act_space.n
 
         N = max_size
         self.scheme = {
@@ -330,7 +302,7 @@ class SACBuffer(object):
             vshape = info["vshape"]
             dtype = info.get("dtype", np.float32)
             init = info.get("init", np.zeros)
-            self.__dict__[k] = init(vshape).astype(dtype)
+            self.__dict__[k] = init(vshape, dtype=dtype)
 
         self.pos = 0
         self.buffer_size = 0

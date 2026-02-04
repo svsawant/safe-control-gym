@@ -1,6 +1,7 @@
 # Project-specific temporary files
 results/
 temp-data/
+Results/
 
 # acados
 c_generated_code/

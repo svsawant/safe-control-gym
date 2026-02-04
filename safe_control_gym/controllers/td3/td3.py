@@ -1,34 +1,27 @@
-"""Proximal Policy Optimization (PPO)
+"""Twin-Delayed DDPG (TD3)
 
-Based on:
-    * https://github.com/openai/spinningup/blob/master/spinup/algos/pytorch/ppo/ppo.py
-    * (hyperparameters) https://github.com/DLR-RM/rl-baselines3-zoo/blob/master/hyperparams/ppo.yml
-
-Additional references:
-    * Proximal Policy Optimization Algorithms - https://arxiv.org/pdf/1707.06347.pdf
-    * Implementation Matters in Deep Policy Gradients: A Case Study on PPO and TRPO - https://arxiv.org/pdf/2005.12729.pdf
-    * pytorch-a2c-ppo-acktr-gail - https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail
-    * openai spinning up - ppo - https://github.com/openai/spinningup/tree/master/spinup/algos/pytorch/ppo
-    * stable baselines3 - ppo - https://github.com/DLR-RM/stable-baselines3/tree/master/stable_baselines3/ppo
+References papers & code:
+    * [Addressing Function Approximation Error in Actor-Critic Methods](https://arxiv.org/abs/1802.09477)
 """
 
 import os
 import time
+from collections import defaultdict
 
 import numpy as np
 import torch
 
 from safe_control_gym.controllers.base_controller import BaseController
-from safe_control_gym.controllers.ppo.ppo_utils import (
-    PPOAgent,
-    PPOBuffer,
-    compute_returns_and_advantages,
-)
+from safe_control_gym.controllers.td3.td3_utils import TD3Agent, TD3Buffer
 from safe_control_gym.envs.env_wrappers.record_episode_statistics import (
     RecordEpisodeStatistics,
     VecRecordEpisodeStatistics,
 )
 from safe_control_gym.envs.env_wrappers.vectorized_env import make_vec_envs
+from safe_control_gym.envs.env_wrappers.vectorized_env.vec_env_utils import (
+    _flatten_obs,
+    _unflatten_obs,
+)
 from safe_control_gym.math_and_models.normalization import (
     BaseNormalizer,
     MeanStdNormalizer,
@@ -38,8 +31,8 @@ from safe_control_gym.utils.logging import ExperimentLogger
 from safe_control_gym.utils.utils import get_random_state, is_wrapped, set_random_state
 
 
-class PPO(BaseController):
-    """Proximal policy optimization."""
+class TD3(BaseController):
+    """Twin-delayed DDPG"""
 
     def __init__(
         self,
@@ -55,9 +48,9 @@ class PPO(BaseController):
             env_func, training, checkpoint_path, output_dir, use_gpu, seed, **kwargs
         )
 
-        # Task.
+        # task
         if self.training:
-            # Training and testing.
+            # training (+ evaluation)
             self.env = make_vec_envs(
                 env_func, None, self.rollout_batch_size, self.num_workers, seed
             )
@@ -65,42 +58,44 @@ class PPO(BaseController):
             self.eval_env = env_func(seed=seed * 111)
             self.eval_env = RecordEpisodeStatistics(self.eval_env, self.deque_size)
         else:
-            # Testing only.
+            # testing only
             self.env = env_func()
             self.env = RecordEpisodeStatistics(self.env)
-        # Agent.
-        self.agent = PPOAgent(
+        self.expl_noise = kwargs.get("expl_noise", 0.1)
+
+        # agent
+        self.agent = TD3Agent(
             self.env.observation_space,
             self.env.action_space,
             hidden_dim=self.hidden_dim,
-            use_clipped_value=self.use_clipped_value,
-            clip_param=self.clip_param,
-            target_kl=self.target_kl,
-            entropy_coef=self.entropy_coef,
+            gamma=self.gamma,
+            tau=self.tau,
             actor_lr=self.actor_lr,
             critic_lr=self.critic_lr,
-            opt_epochs=self.opt_epochs,
-            mini_batch_size=self.mini_batch_size,
             activation=self.activation,
+            device=self.device,
         )
         self.agent.to(self.device)
-        # Pre-/post-processing.
+
+        # pre-/post-processing
         self.obs_normalizer = BaseNormalizer()
         if self.norm_obs:
             self.obs_normalizer = MeanStdNormalizer(
                 shape=self.env.observation_space.shape, clip=self.clip_obs, epsilon=1e-8
             )
+
         self.reward_normalizer = BaseNormalizer()
         if self.norm_reward:
             self.reward_normalizer = RewardStdNormalizer(
                 gamma=self.gamma, clip=self.clip_reward, epsilon=1e-8
             )
-        # Logging.
+
+        # logging
         if self.training:
             log_file_out = True
             use_tensorboard = self.tensorboard
         else:
-            # Disable logging to file and tfboard for evaluation.
+            # disable logging to texts and tfboard for testing
             log_file_out = False
             use_tensorboard = False
         self.logger = ExperimentLogger(
@@ -108,7 +103,7 @@ class PPO(BaseController):
         )
 
     def reset(self):
-        """Do initializations for training or evaluation."""
+        """Prepares for training or testing."""
         if self.training:
             # set up stats tracking
             self.env.add_tracker("constraint_violation", 0)
@@ -119,8 +114,14 @@ class PPO(BaseController):
             self.total_steps = 0
             obs, _ = self.env.reset()
             self.obs = self.obs_normalizer(obs)
+            self.buffer = TD3Buffer(
+                self.env.observation_space,
+                self.env.action_space,
+                self.max_buffer_size,
+                self.train_batch_size,
+            )
         else:
-            # Add episodic stats to be tracked.
+            # set up stats tracking
             self.env.add_tracker("constraint_violation", 0, mode="queue")
             self.env.add_tracker("constraint_values", 0, mode="queue")
             self.env.add_tracker("mse", 0, mode="queue")
@@ -132,10 +133,11 @@ class PPO(BaseController):
             self.eval_env.close()
         self.logger.close()
 
-    def save(self, path):
+    def save(self, path, save_buffer=False):
         """Saves model params and experiment state to checkpoint path."""
         path_dir = os.path.dirname(path)
         os.makedirs(path_dir, exist_ok=True)
+
         state_dict = {
             "agent": self.agent.state_dict(),
             "obs_normalizer": self.obs_normalizer.state_dict(),
@@ -148,59 +150,55 @@ class PPO(BaseController):
                 "random_state": get_random_state(),
                 "env_random_state": self.env.get_env_random_state(),
             }
+            # latest checkpoint shoud enable save_buffer (for experiment restore),
+            # but intermediate checkpoint shoud not, to save storage (buffer is large)
+            if save_buffer:
+                exp_state["buffer"] = self.buffer.state_dict()
             state_dict.update(exp_state)
         torch.save(state_dict, path)
 
     def load(self, path):
         """Restores model and experiment given checkpoint path."""
-        state = torch.load(
-            path, weights_only=False
-        )  # Safe since we're loading our own models
-        # Restore policy.
+        state = torch.load(path, weights_only=False)
+
+        # restore params
         self.agent.load_state_dict(state["agent"])
         self.obs_normalizer.load_state_dict(state["obs_normalizer"])
         self.reward_normalizer.load_state_dict(state["reward_normalizer"])
-        # Restore experiment state.
+
+        # restore experiment state
         if self.training:
             self.total_steps = state["total_steps"]
             self.obs = state["obs"]
             set_random_state(state["random_state"])
             self.env.set_env_random_state(state["env_random_state"])
+            if "buffer" in state:
+                self.buffer.load_state_dict(state["buffer"])
             self.logger.load(self.total_steps)
 
     def learn(self, env=None, **kwargs):
-        """Performs learning (pre-training, training, fine-tuning, etc)."""
-
-        if self.num_checkpoints > 0:
-            step_interval = np.linspace(0, self.max_env_steps, self.num_checkpoints)
-            interval_save = np.zeros_like(step_interval, dtype=bool)
+        """Performs learning (pre-training, training, fine-tuning, etc.)."""
         while self.total_steps < self.max_env_steps:
             results = self.train_step()
-            # Checkpoint.
+
+            # checkpoint
             if self.total_steps >= self.max_env_steps or (
                 self.save_interval and self.total_steps % self.save_interval == 0
             ):
-                # Latest/final checkpoint.
-                self.save(self.checkpoint_path)
+                # latest/final checkpoint
+                self.save(self.checkpoint_path, save_buffer=False)
                 self.logger.info(f"Checkpoint | {self.checkpoint_path}")
+            if (
+                self.num_checkpoints
+                and self.total_steps % (self.max_env_steps // self.num_checkpoints) == 0
+            ):
+                # intermediate checkpoint
                 path = os.path.join(
-                    self.output_dir,
-                    "checkpoints",
-                    "model_{}.pt".format(self.total_steps),
+                    self.output_dir, "checkpoints", f"model_{self.total_steps}.pt"
                 )
-                self.save(path)
-            if self.num_checkpoints > 0:
-                interval_id = np.argmin(
-                    np.abs(np.array(step_interval) - self.total_steps)
-                )
-                if interval_save[interval_id] is False:
-                    # Intermediate checkpoint.
-                    path = os.path.join(
-                        self.output_dir, "checkpoints", f"model_{self.total_steps}.pt"
-                    )
-                    self.save(path)
-                    interval_save[interval_id] = True
-            # Evaluation.
+                self.save(path, save_buffer=True)
+
+            # eval
             if self.eval_interval and self.total_steps % self.eval_interval == 0:
                 eval_results = self.run(
                     env=self.eval_env, n_episodes=self.eval_batch_size
@@ -214,13 +212,17 @@ class PPO(BaseController):
                         eval_results["ep_returns"].std(),
                     )
                 )
-                # Save best model.
+                # save best model
                 eval_score = eval_results["ep_returns"].mean()
                 eval_best_score = getattr(self, "eval_best_score", -np.inf)
                 if self.eval_save_best and eval_best_score < eval_score:
                     self.eval_best_score = eval_score
-                    self.save(os.path.join(self.output_dir, "model_best.pt"))
-            # Logging.
+                    self.save(
+                        os.path.join(self.output_dir, "model_best.pt"),
+                        save_buffer=False,
+                    )
+
+            # logging
             if self.log_interval and self.total_steps % self.log_interval == 0:
                 self.log_step(results)
 
@@ -235,19 +237,92 @@ class PPO(BaseController):
             action (ndarray): The action chosen by the controller.
         """
 
-        with torch.inference_mode():
+        with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
-            action = self.agent.ac.act(obs)
+            action = self.agent.ac.act(obs, deterministic=True)
 
         return action
 
-    def run(
-        self,
-        env=None,
-        render=False,
-        n_episodes=10,
-        verbose=False,
-    ):
+    def train_step(self, **kwargs):
+        """Performs a training step."""
+        self.agent.train()
+        self.obs_normalizer.unset_read_only()
+        obs = self.obs
+        start = time.time()
+
+        if self.total_steps < self.warm_up_steps:
+            action = np.stack(
+                [self.env.action_space.sample() for _ in range(self.rollout_batch_size)]
+            )
+        else:
+            with torch.no_grad():
+                action = self.agent.ac.act(
+                    torch.FloatTensor(obs).to(self.device),
+                    expl_noise=self.expl_noise,
+                    deterministic=False,
+                )
+        next_obs, rew, done, info = self.env.step(action)
+
+        next_obs = self.obs_normalizer(next_obs)
+        rew = self.reward_normalizer(rew, done)
+        mask = 1 - np.asarray(done)
+
+        # time truncation is not true termination
+        terminal_idx, terminal_obs = [], []
+        for idx, inf in enumerate(info["n"]):
+            if "terminal_info" not in inf:
+                continue
+            inff = inf["terminal_info"]
+            if "TimeLimit.truncated" in inff and inff["TimeLimit.truncated"]:
+                terminal_idx.append(idx)
+                terminal_obs.append(inf["terminal_observation"])
+        if len(terminal_obs) > 0:
+            terminal_obs = _unflatten_obs(
+                self.obs_normalizer(_flatten_obs(terminal_obs))
+            )
+
+        # collect the true next states and masks (accounting for time truncation)
+        true_next_obs = _unflatten_obs(next_obs)
+        true_mask = mask.copy()
+        for idx, term_ob in zip(terminal_idx, terminal_obs):
+            true_next_obs[idx] = term_ob
+            true_mask[idx] = 1.0
+        true_next_obs = _flatten_obs(true_next_obs)
+
+        self.buffer.push(
+            {
+                "obs": obs,
+                "act": action,
+                "rew": rew,
+                "next_obs": true_next_obs,
+                "mask": true_mask,
+            }
+        )
+        obs = next_obs
+
+        self.obs = obs
+        self.total_steps += self.rollout_batch_size
+
+        # learn
+        results = defaultdict(list)
+        if (
+            self.total_steps > self.warm_up_steps
+            and not self.total_steps % self.train_interval
+        ):
+            # Regardless of how long you wait between updates,
+            # the ratio of env steps to gradient steps is locked to 1.
+            # alternatively, can update once each step
+            for _ in range(self.train_interval):
+                batch = self.buffer.sample(self.train_batch_size, self.device)
+                res = self.agent.update(batch)
+                for k, v in res.items():
+                    results[k].append(v)
+
+        results = {k: sum(v) / len(v) for k, v in results.items()}
+        results.update({"step": self.total_steps, "elapsed_time": time.time() - start})
+        return results
+
+    def run(self, env=None, render=False, n_episodes=10, verbose=False, **kwargs):
         """Runs evaluation with current policy."""
         self.agent.eval()
         self.obs_normalizer.set_read_only()
@@ -278,9 +353,9 @@ class PPO(BaseController):
                 ep_returns.append(info["episode"]["r"])
                 ep_lengths.append(info["episode"]["l"])
                 ep_rmse.append(np.sqrt(info["episode"]["mse"] / info["episode"]["l"]))
-                obs, _ = env.reset()
+                obs, info = env.reset()
             obs = self.obs_normalizer(obs)
-        # Collect evaluation results.
+        # collect evaluation results
         eval_results = {
             "ep_returns": np.asarray(ep_returns),
             "ep_lengths": np.asarray(ep_lengths),
@@ -294,84 +369,6 @@ class PPO(BaseController):
             eval_results.update(queued_stats)
         return eval_results
 
-    def train_step(self):
-        """Performs a training/fine-tuning step."""
-        self.agent.train()
-        self.obs_normalizer.unset_read_only()
-        rollouts = PPOBuffer(
-            self.env.observation_space,
-            self.env.action_space,
-            self.rollout_steps,
-            self.rollout_batch_size,
-        )
-        obs = self.obs
-        start = time.time()
-        for _ in range(self.rollout_steps):
-            with torch.inference_mode():
-                act, v, logp = self.agent.ac.step(
-                    torch.FloatTensor(obs).to(self.device)
-                )
-            next_obs, rew, done, info = self.env.step(act)
-            next_obs = self.obs_normalizer(next_obs)
-            rew = self.reward_normalizer(rew, done)
-            mask = 1 - done.astype(float)
-            # Time truncation is not the same as true termination.
-            terminal_v = np.zeros_like(v)
-            for idx, inf in enumerate(info["n"]):
-                if "terminal_info" not in inf:
-                    continue
-                inff = inf["terminal_info"]
-                if "TimeLimit.truncated" in inff and inff["TimeLimit.truncated"]:
-                    terminal_obs = inf["terminal_observation"]
-                    terminal_obs_tensor = (
-                        torch.FloatTensor(terminal_obs).unsqueeze(0).to(self.device)
-                    )
-                    terminal_val = (
-                        self.agent.ac.critic(terminal_obs_tensor)
-                        .squeeze()
-                        .detach()
-                        .cpu()
-                        .numpy()
-                    )
-                    terminal_v[idx] = terminal_val
-            rollouts.push(
-                {
-                    "obs": obs,
-                    "act": act,
-                    "rew": rew,
-                    "mask": mask,
-                    "v": v,
-                    "logp": logp,
-                    "terminal_v": terminal_v,
-                }
-            )
-            obs = next_obs
-        self.obs = obs
-        self.total_steps += self.rollout_batch_size * self.rollout_steps
-        # Learn from rollout batch.
-        last_val = (
-            self.agent.ac.critic(torch.FloatTensor(obs).to(self.device))
-            .detach()
-            .cpu()
-            .numpy()
-        )
-        ret, adv = compute_returns_and_advantages(
-            rollouts.rew,
-            rollouts.v,
-            rollouts.mask,
-            rollouts.terminal_v,
-            last_val,
-            gamma=self.gamma,
-            use_gae=self.use_gae,
-            gae_lambda=self.gae_lambda,
-        )
-        rollouts.ret = ret
-        # Prevent divide-by-0 for repetitive tasks.
-        rollouts.adv = (adv - adv.mean()) / (adv.std() + 1e-6)
-        results = self.agent.update(rollouts, self.device)
-        results.update({"step": self.total_steps, "elapsed_time": time.time() - start})
-        return results
-
     def log_step(self, results):
         """Does logging after a training step."""
         step = results["step"]
@@ -379,22 +376,24 @@ class PPO(BaseController):
         self.logger.add_scalars(
             {
                 "step": step,
-                "step_time": results["elapsed_time"],
+                "time": results["elapsed_time"],
                 "progress": step / self.max_env_steps,
             },
             step,
             prefix="time",
+            write=False,
+            write_tb=False,
         )
-        # Learning stats.
-        self.logger.add_scalars(
-            {
-                k: results[k]
-                for k in ["policy_loss", "value_loss", "entropy_loss", "approx_kl"]
-            },
-            step,
-            prefix="loss",
-        )
-        # Performance stats.
+
+        # learning stats
+        if "policy_loss" in results:
+            self.logger.add_scalars(
+                {k: results[k] for k in ["policy_loss", "critic_loss"]},
+                step,
+                prefix="loss",
+            )
+
+        # performance stats
         ep_lengths = np.asarray(self.env.length_queue)
         ep_returns = np.asarray(self.env.return_queue)
         ep_constraint_violation = np.asarray(
@@ -404,17 +403,20 @@ class PPO(BaseController):
             {
                 "ep_length": ep_lengths.mean(),
                 "ep_return": ep_returns.mean(),
+                "ep_return_std": ep_returns.std(),
                 "ep_reward": (ep_returns / ep_lengths).mean(),
                 "ep_constraint_violation": ep_constraint_violation.mean(),
             },
             step,
             prefix="stat",
         )
-        # Total constraint violation during learning.
+
+        # total constraint violation during learning
         total_violations = self.env.accumulated_stats["constraint_violation"]
         self.logger.add_scalars(
             {"constraint_violation": total_violations}, step, prefix="stat"
         )
+
         if "eval" in results:
             eval_ep_lengths = results["eval"]["ep_lengths"]
             eval_ep_returns = results["eval"]["ep_returns"]
@@ -424,6 +426,7 @@ class PPO(BaseController):
                 {
                     "ep_length": eval_ep_lengths.mean(),
                     "ep_return": eval_ep_returns.mean(),
+                    "ep_return_std": eval_ep_returns.std(),
                     "ep_reward": (eval_ep_returns / eval_ep_lengths).mean(),
                     "constraint_violation": eval_constraint_violation.mean(),
                     "rmse": np.array(eval_ep_rmse).mean(),
@@ -432,5 +435,6 @@ class PPO(BaseController):
                 step,
                 prefix="stat_eval",
             )
-        # Print summary table
+
+        # print summary table
         self.logger.dump_scalars()

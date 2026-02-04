@@ -8,8 +8,9 @@ SYS='quadrotor_2D_exp'
 # TASK='stab'
 TASK='track'
 
-ALGO='ppo'
-# ALGO='sac'
+# ALGO='ppo'
+ALGO='sac'
+# ALGO='td3'
 
 EXP_NAME='quad_results'
 
@@ -29,10 +30,10 @@ do
             ./config_overrides/${SYS}/${ALGO}_${SYS}.yaml \
             ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
         --output_dir ./Results/${EXP_NAME}/ \
-        --seed ${SEED} \
         --tag ${SYS}_${ALGO}_data \
-        --kv_overrides \
-            task_config.randomized_init=False 
-            # algo_config.pretrained=./models/${ALGO}/${ALGO}_pretrain_${SYS}_${TASK}.pt
+        --seed ${SEED} \
+        --use_gpu
+        # --kv_overrides \
+            # task_config.randomized_init=True 
         # --pretrain_path /home/savvyfox/Projects/scg/examples/rl/models/${ALGO}/ 
 done

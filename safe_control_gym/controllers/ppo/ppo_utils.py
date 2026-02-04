@@ -152,16 +152,12 @@ class PPOAgent:
 class MLPActor(nn.Module):
     """Actor MLP model."""
 
-    def __init__(self, obs_dim, act_dim, hidden_dims, activation, discrete=False):
+    def __init__(self, obs_dim, act_dim, hidden_dims, activation):
         super().__init__()
         self.pi_net = MLP(obs_dim, act_dim, hidden_dims, activation)
         # Construct output action distribution.
-        self.discrete = discrete
-        if discrete:
-            self.dist_fn = lambda x: Categorical(logits=x)
-        else:
-            self.logstd = nn.Parameter(-0.5 * torch.ones(act_dim))
-            self.dist_fn = lambda x: Normal(x, self.logstd.exp())
+        self.logstd = nn.Parameter(-0.5 * torch.ones(act_dim))
+        self.dist_fn = lambda x: Normal(x, self.logstd.exp())
 
     def forward(self, obs, act=None):
         dist = self.dist_fn(self.pi_net(obs))
@@ -193,14 +189,10 @@ class MLPActorCritic(nn.Module):
     def __init__(self, obs_space, act_space, hidden_dims=(64, 64), activation="tanh"):
         super().__init__()
         obs_dim = obs_space.shape[0]
-        if isinstance(act_space, Box):
-            act_dim = act_space.shape[0]
-            discrete = False
-        else:
-            act_dim = act_space.n
-            discrete = True
+        assert isinstance(act_space, Box), "Only continuous action space is supported."
+        act_dim = act_space.shape[0]
         # Policy.
-        self.actor = MLPActor(obs_dim, act_dim, hidden_dims, activation, discrete)
+        self.actor = MLPActor(obs_dim, act_dim, hidden_dims, activation)
         # Value function.
         self.critic = MLPCritic(obs_dim, hidden_dims, activation)
 
@@ -233,10 +225,8 @@ class PPOBuffer(object):
         self.batch_size = batch_size
         T, N = max_length, batch_size
         obs_dim = obs_space.shape
-        if isinstance(act_space, Box):
-            act_dim = act_space.shape[0]
-        else:
-            act_dim = act_space.n
+        assert isinstance(act_space, Box), "Only continuous action space is supported."
+        act_dim = act_space.shape[0]
         self.scheme = {
             "obs": {"vshape": (T, N, *obs_dim)},
             "act": {"vshape": (T, N, act_dim)},

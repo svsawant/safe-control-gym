@@ -170,7 +170,7 @@ class Quadrotor(BaseAviary):
         super().__init__(init_state=init_state, inertial_prop=inertial_prop, **kwargs)
 
         # Store initial state info.
-        self.INIT_STATE_RAND_INFO = deepcopy(self.BASE_INIT_STATE_RAND_INFO)
+        # self.INIT_STATE_RAND_INFO = deepcopy(self.BASE_INIT_STATE_RAND_INFO)
         self.INIT_STATE_LABELS = {
             QuadType.ONE_D: ["init_x", "init_x_dot"],
             QuadType.TWO_D: [
@@ -218,7 +218,6 @@ class Quadrotor(BaseAviary):
                 raise ValueError(
                     "[ERROR] in Quadrotor.__init__(), init_state incorrect format."
                 )
-
         # Remove randomization info of initial state components inconsistent with quad type.
         for init_name in list(self.INIT_STATE_RAND_INFO.keys()):
             if init_name not in self.INIT_STATE_LABELS[self.QUAD_TYPE]:
