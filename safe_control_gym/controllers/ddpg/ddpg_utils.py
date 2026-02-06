@@ -7,10 +7,26 @@ import torch.nn as nn
 
 from safe_control_gym.controllers.sac.sac_utils import SACBuffer, soft_update
 from safe_control_gym.math_and_models.neural_networks import MLP
+from safe_control_gym.math_and_models.random_processes import (
+    GaussianProcess,
+    OrnsteinUhlenbeckProcess,
+)
+from safe_control_gym.math_and_models.schedule import ConstantSchedule, LinearSchedule
+
 
 # -----------------------------------------------------------------------------------
 #                   Agent
 # -----------------------------------------------------------------------------------
+
+
+NOISE_PROCESSES = {
+    "OrnsteinUhlenbeckProcess": OrnsteinUhlenbeckProcess,
+    "GaussianProcess": GaussianProcess,
+}
+SCHEDULES = {
+    "ConstantSchedule": ConstantSchedule,
+    "LinearSchedule": LinearSchedule,
+}
 
 
 class DDPGAgent:
@@ -98,7 +114,7 @@ class DDPGAgent:
         q = self.ac.q(obs, act)
 
         with torch.no_grad():
-            next_act = self.ac.actor(next_obs)
+            next_act = self.ac_targ.actor(next_obs)
             next_q_targ = self.ac_targ.q(next_obs, next_act)
             # q value regression target
             q_targ = rew + self.gamma * mask * next_q_targ
@@ -110,17 +126,17 @@ class DDPGAgent:
         """Updates model parameters based on current training batch."""
         results = defaultdict(list)
 
-        # actor update
-        policy_loss = self.compute_policy_loss(batch)
-        self.actor_opt.zero_grad()
-        policy_loss.backward()
-        self.actor_opt.step()
-
         # critic update
         critic_loss = self.compute_q_loss(batch)
         self.critic_opt.zero_grad()
         critic_loss.backward()
         self.critic_opt.step()
+
+        # actor update
+        policy_loss = self.compute_policy_loss(batch)
+        self.actor_opt.zero_grad()
+        policy_loss.backward()
+        self.actor_opt.step()
 
         # update target networks
         soft_update(self.ac, self.ac_targ, self.tau)
@@ -238,7 +254,7 @@ def make_action_noise_process(noise_config, act_space):
 
     std_func = std_config.pop("func")
     std_args = std_config.pop("args")
-    std = eval(std_func)(std_args, **std_config)
+    std = SCHEDULES[std_func](std_args, **std_config)
 
-    process = eval(process_func)(size=(act_space.shape[0],), std=std)
+    process = NOISE_PROCESSES[process_func](size=(act_space.shape[0],), std=std)
     return process

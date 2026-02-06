@@ -9,8 +9,9 @@ SYS='quadrotor_2D_exp'
 TASK='track'
 
 # ALGO='ppo'
-ALGO='sac'
+# ALGO='sac'
 # ALGO='td3'
+ALGO='ddpg'
 
 EXP_NAME='quad_results'
 
