@@ -142,9 +142,9 @@ class BaseExperiment:
 
         if n_episodes is not None:
             while trajs < n_episodes:
-                time_start = time()
+                time_start = time.time()
                 action = self._select_action(obs=obs, info=agent_info)
-                inference_time_data.append(time() - time_start)
+                inference_time_data.append(time.time() - time_start)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
                     steps += 1

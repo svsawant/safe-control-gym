@@ -303,6 +303,10 @@ class SAC_MPC(BaseController):
             action, soln_info = self.agent.ac.step(
                 torch.FloatTensor(obs).to(self.device), info=self.agent_info
             )
+        if self.total_steps < self.warm_up_steps:
+            action = np.stack(
+                [self.env.action_space.sample() for _ in range(self.rollout_batch_size)]
+            )
         next_obs, rew, done, info = self.venv.step(action)
         next_obs = self.obs_normalizer(next_obs)
         rew = self.reward_normalizer(rew, done)

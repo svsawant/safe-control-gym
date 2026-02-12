@@ -69,14 +69,6 @@ class SAC_MPC_Agent:
         )
         self.log_alpha = torch.tensor(np.log(init_temperature))
 
-        if self.use_entropy_tuning:
-            self.log_alpha.requires_grad = True
-            if target_entropy is None:
-                # Use heuristic value from SAC paper
-                self.target_entropy = -np.prod(act_space.shape).item()
-            else:
-                self.target_entropy = target_entropy
-
         # target networks
         self.ac_targ = deepcopy(self.ac)
         for p in self.ac_targ.parameters():
@@ -87,7 +79,16 @@ class SAC_MPC_Agent:
         self.critic_opt = torch.optim.Adam(
             list(self.ac.q1.parameters()) + list(self.ac.q2.parameters()), critic_lr
         )
-        self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=entropy_lr)
+        if self.use_entropy_tuning:
+            self.log_alpha.requires_grad = True
+            self.alpha_opt = torch.optim.Adam([self.log_alpha], entropy_lr)
+            if target_entropy is None:
+                # Use heuristic value from SAC paper
+                self.target_entropy = -np.prod(act_space.shape).item()
+            else:
+                self.target_entropy = target_entropy
+        else:
+            self.alpha_opt = None
         self.update_freq = update_freq
         self.count = 0
 
@@ -100,7 +101,7 @@ class SAC_MPC_Agent:
         """Puts agent to device."""
         self.ac.to(device)
         self.ac_targ.to(device)
-        self.log_alpha.to(device)
+        self.log_alpha = self.log_alpha.to(device)
 
     def train(self):
         """Sets training mode."""
@@ -128,7 +129,7 @@ class SAC_MPC_Agent:
     def load_state_dict(self, state_dict, strict=True):
         """Restores agent state."""
         self.ac.load_state_dict(state_dict["ac"], strict=strict)
-        self.log_alpha = state_dict["log_alpha"]
+        self.log_alpha = self.log_alpha.to(next(self.ac.parameters()).device)
         self.ac_targ.load_state_dict(state_dict["ac_targ"], strict=strict)
         self.actor_opt.load_state_dict(state_dict["actor_opt"])
         self.critic_opt.load_state_dict(state_dict["critic_opt"])
@@ -194,6 +195,13 @@ class SAC_MPC_Agent:
         """Updates model parameters based on current training batch."""
         results = defaultdict(list)
 
+        # critic update
+        critic_loss = self.compute_q_loss(batch, batch_th)
+        self.critic_opt.zero_grad()
+        critic_loss.backward()
+        self.critic_opt.step()
+        results["critic_loss"] = critic_loss.item()
+
         # actor update
         if self.count % self.update_freq == 0:
             (
@@ -231,15 +239,7 @@ class SAC_MPC_Agent:
             results["theta_loss"] = theta_loss.item()
             # results['exploration_std'] = self.ac.actor.logstd.exp().mean().item()
 
-        # critic update
-        critic_loss = self.compute_q_loss(batch, batch_th)
-        self.critic_opt.zero_grad()
-        critic_loss.backward()
-        self.critic_opt.step()
-        results["critic_loss"] = critic_loss.item()
-
-        # update target networks
-        if self.count % self.update_freq == 0:
+            # update target networks
             soft_update(self.ac, self.ac_targ, self.tau)
         self.count += 1
         return results
@@ -376,7 +376,7 @@ class MPCActor(nn.Module):
             (action_space.high + action_space.low) / 2.0, dtype=torch.float32
         ).flatten()
 
-    def forward(self, obs, deterministic=False, with_logprob=True, actor_info=None):
+    def forward(self, obs, deterministic=False, actor_info=None):
         theta = self.get_theta_param(obs)
         traj_param = self.get_references(actor_info)
         if obs.ndim > 1:
