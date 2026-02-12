@@ -9,11 +9,11 @@ SYS='quadrotor_2D_exp'
 TASK='track'
 
 # ALGO='ppo'
-# ALGO='sac'
+ALGO='sac'
 # ALGO='td3'
-ALGO='ddpg'
+# ALGO='ddpg'
 
-EXP_NAME='quad_results'
+EXP_NAME='quad_results4'
 
 if [ "$SYS" == 'cartpole' ]; then
     SYS_NAME=$SYS
@@ -22,7 +22,7 @@ else
 fi
 
 # Train the unsafe controller/agent.
-for SEED in {0..0}
+for SEED in {0..4}
 do
     python3 ../../safe_control_gym/experiments/train_rl_controller.py \
         --algo ${ALGO} \
@@ -33,8 +33,10 @@ do
         --output_dir ./Results/${EXP_NAME}/ \
         --tag ${SYS}_${ALGO}_data \
         --seed ${SEED} \
-        --use_gpu
+        --use_gpu 
         # --kv_overrides \
+            # algo_config.opt_epochs=10
+            # algo_config.random_process.std.args=0.2
             # task_config.randomized_init=True 
         # --pretrain_path /home/savvyfox/Projects/scg/examples/rl/models/${ALGO}/ 
 done

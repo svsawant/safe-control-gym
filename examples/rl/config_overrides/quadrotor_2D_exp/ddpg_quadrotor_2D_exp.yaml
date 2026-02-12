@@ -8,9 +8,9 @@ algo_config:
     func: OrnsteinUhlenbeckProcess
     std:
       func: LinearSchedule
-      args: 0.5
-      end: 0.02
-      duration: 660000
+      args: 0.2
+      end: 0.001
+      steps: 660000
 
   # optim args
   gamma: 0.95

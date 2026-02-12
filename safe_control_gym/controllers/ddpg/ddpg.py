@@ -287,7 +287,7 @@ class DDPG(BaseController):
 
         obs, info = env.reset()
         obs = self.obs_normalizer(obs)
-        ep_returns, ep_lengths = [], []
+        ep_returns, ep_lengths, ep_rmse = [], [], []
         frames = []
 
         while len(ep_returns) < n_episodes:
@@ -304,13 +304,18 @@ class DDPG(BaseController):
                 assert "episode" in info
                 ep_returns.append(info["episode"]["r"])
                 ep_lengths.append(info["episode"]["l"])
+                ep_rmse.append(np.sqrt(info["episode"]["mse"] / info["episode"]["l"]))
                 obs, info = env.reset()
             obs = self.obs_normalizer(obs)
 
         # collect evaluation results
         ep_lengths = np.asarray(ep_lengths)
         ep_returns = np.asarray(ep_returns)
-        eval_results = {"ep_returns": ep_returns, "ep_lengths": ep_lengths}
+        eval_results = {
+            "ep_returns": ep_returns,
+            "ep_lengths": ep_lengths,
+            "ep_rmse": np.asarray(ep_rmse),
+        }
         if len(frames) > 0:
             eval_results["frames"] = frames
         # Other episodic stats from evaluation env.
@@ -375,8 +380,6 @@ class DDPG(BaseController):
                 "obs": obs,
                 "act": act,
                 "rew": rew,
-                # 'next_obs': next_obs,
-                # 'mask': mask,
                 "next_obs": true_next_obs,
                 "mask": true_mask,
             }
@@ -454,14 +457,16 @@ class DDPG(BaseController):
             eval_ep_lengths = results["eval"]["ep_lengths"]
             eval_ep_returns = results["eval"]["ep_returns"]
             eval_constraint_violation = results["eval"]["constraint_violation"]
-            eval_mse = results["eval"]["mse"]
+            eval_ep_rmse = results["eval"]["ep_rmse"]
             self.logger.add_scalars(
                 {
                     "ep_length": eval_ep_lengths.mean(),
                     "ep_return": eval_ep_returns.mean(),
+                    "ep_return_std": eval_ep_returns.std(),
                     "ep_reward": (eval_ep_returns / eval_ep_lengths).mean(),
                     "constraint_violation": eval_constraint_violation.mean(),
-                    "mse": eval_mse.mean(),
+                    "rmse": np.array(eval_ep_rmse).mean(),
+                    "rmse_std": np.array(eval_ep_rmse).std(),
                 },
                 step,
                 prefix="stat_eval",

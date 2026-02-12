@@ -187,6 +187,8 @@ class BaseExperiment:
 
         trajs_data = self.env.data
         trajs_data["controller_data"] = munchify(dict(ctrl_data))
+        trajs_data["x_goal"] = self.env.X_GOAL
+        trajs_data["u_goal"] = self.env.U_GOAL
         if self.safety_filter is not None:
             trajs_data["safety_filter_data"] = munchify(dict(sf_data))
         return munchify(trajs_data)

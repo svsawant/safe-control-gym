@@ -64,6 +64,27 @@ def run(gui=False, plot=True, n_episodes=10, n_steps=None, curr_path="."):
     results, metrics = experiment.run_evaluation(n_episodes=n_episodes, n_steps=n_steps)
     ctrl.close()
 
+    ### Housekeeping
+    data_storage_path = "."
+    if "pretrain_path" in config.keys():
+        data_storage_path = config.pretrain_path
+    if config.experiment_type == "performance":
+        temp = data_storage_path + "/perf_metric.npy"
+        np.save(temp, metrics, allow_pickle=True)
+    elif config.experiment_type == "trajectory_data":
+        temp = (
+            data_storage_path + f"/traj_data_{config.task_config.episode_len_sec}.npy"
+        )
+        data = {
+            "n_rollouts": n_episodes,
+            "obs": np.array(results["obs"]),
+            "x_goal": np.array(results["x_goal"]),
+            "u_goal": np.array(results["u_goal"]),
+            "timestamp": np.array(results["timestamp"]),
+        }
+        np.save(temp, data, allow_pickle=True)
+    print(metrics)
+
     if plot is True:
         if system == Environment.CARTPOLE:
             graph1_1 = 2

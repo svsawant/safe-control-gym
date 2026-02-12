@@ -255,6 +255,13 @@ class Quadrotor(BaseAviary):
                 "[ERROR] in Quadrotor.__init__(), inertial_prop incorrect format."
             )
 
+        # Set goal
+        self.set_goal()
+
+        # Set prior/symbolic info.
+        self._setup_symbolic(inertial_prop)
+
+    def set_goal(self):
         # Create X_GOAL and U_GOAL references for the assigned task.
         self.U_GOAL = (
             np.ones(self.action_dim) * self.MASS * self.GRAVITY_ACC / self.action_dim
@@ -275,6 +282,8 @@ class Quadrotor(BaseAviary):
                         0.0,
                     ]
                 )  # x = {x, x_dot, z, z_dot, theta, theta_dot}.
+                if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
+                    self.U_GOAL = np.array([self.MASS * self.GRAVITY_ACC, 0.0])
             elif self.QUAD_TYPE == QuadType.THREE_D:
                 self.X_GOAL = np.hstack(
                     [
@@ -317,6 +326,8 @@ class Quadrotor(BaseAviary):
                         np.zeros(VEL_REF.shape[0]),
                     ]
                 ).transpose()
+                if self.QUAD_TYPE == QuadType.TWO_D_ATTITUDE:
+                    self.U_GOAL = np.array([self.MASS * self.GRAVITY_ACC, 0.0])
             elif self.QUAD_TYPE == QuadType.THREE_D:
                 # Additional transformation of the originally planar trajectory.
                 POS_REF_TRANS, VEL_REF_TRANS = transform_trajectory(
@@ -343,9 +354,6 @@ class Quadrotor(BaseAviary):
                         np.zeros(VEL_REF_TRANS.shape[0]),
                     ]
                 ).transpose()
-
-        # Set prior/symbolic info.
-        self._setup_symbolic(inertial_prop)
 
     def reset(self, seed=None):
         """(Re-)initializes the environment to start an episode.
