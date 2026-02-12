@@ -137,10 +137,14 @@ class BaseExperiment:
         obs, info = self._evaluation_reset(ctrl_data=None, sf_data=None, seed=seed)
         ctrl_data = defaultdict(list)
         sf_data = defaultdict(list)
+        inference_time_data = []
+        agent_info = [{"current_step": 0, "x_ref": self.env.X_GOAL}]
 
         if n_episodes is not None:
             while trajs < n_episodes:
-                action = self._select_action(obs=obs, info=info)
+                time_start = time()
+                action = self._select_action(obs=obs, info=agent_info)
+                inference_time_data.append(time() - time_start)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
                     steps += 1
@@ -157,9 +161,13 @@ class BaseExperiment:
                             ctrl_data=ctrl_data, sf_data=sf_data
                         )
                         break
+                agent_info[0] = {
+                    "current_step": info["current_step"],
+                    "x_ref": self.env.X_GOAL,
+                }
         elif n_steps is not None:
             while steps < n_steps:
-                action = self._select_action(obs=obs, info=info)
+                action = self._select_action(obs=obs, info=agent_info)
                 # inner sim loop to accomodate different control frequencies
                 for _ in range(sim_steps):
                     steps += 1
@@ -184,6 +192,10 @@ class BaseExperiment:
                             ctrl_data=ctrl_data, sf_data=sf_data
                         )
                         break
+                agent_info[0] = {
+                    "current_step": info["current_step"],
+                    "x_ref": self.env.X_GOAL,
+                }
 
         trajs_data = self.env.data
         trajs_data["controller_data"] = munchify(dict(ctrl_data))

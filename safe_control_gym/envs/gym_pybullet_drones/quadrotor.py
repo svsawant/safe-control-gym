@@ -715,11 +715,11 @@ class Quadrotor(BaseAviary):
         else:
             U_EQ = np.ones(self.action_dim) * u_eq / self.action_dim
         # Define cost (quadratic form).
-        Q = cs.MX.sym("Q", nx, nx)
-        R = cs.MX.sym("R", nu, nu)
+        Qk = cs.MX.sym("Q", nx, nx)
+        Rk = cs.MX.sym("R", nu, nu)
         Xr = cs.MX.sym("Xr", nx, 1)
         Ur = cs.MX.sym("Ur", nu, 1)
-        cost_func = 0.5 * (X - Xr).T @ Q @ (X - Xr) + 0.5 * (U - Ur).T @ R @ (U - Ur)
+        cost_func = 0.5 * (X - Xr).T @ Qk @ (X - Xr) + 0.5 * (U - Ur).T @ Rk @ (U - Ur)
         # Define dynamics and cost dictionaries.
         dynamics = {
             "dyn_eqn": X_dot,
@@ -729,7 +729,7 @@ class Quadrotor(BaseAviary):
         }
         cost = {
             "cost_func": cost_func,
-            "vars": {"X": X, "U": U, "Xr": Xr, "Ur": Ur, "Q": Q, "R": R},
+            "vars": {"X": X, "U": U, "Xr": Xr, "Ur": Ur, "Q": Qk, "R": Rk},
         }
         # Additional params to cache
         params = {

@@ -27,7 +27,11 @@ class SymbolicModel:
         # Setup for dynamics.
         self.x_sym = dynamics["vars"]["X"]
         self.u_sym = dynamics["vars"]["U"]
+        self.p_sym = dynamics["vars"]["P"] if "P" in dynamics["vars"] else None
         self.x_dot = dynamics["dyn_eqn"]
+        self.param_x_dot = (
+            dynamics["param_dyn_eqn"] if "param_dyn_eqn" in dynamics else None
+        )
         if dynamics["obs_eqn"] is None:
             self.y_sym = self.x_sym
         else:
@@ -51,6 +55,8 @@ class SymbolicModel:
         self.nx = self.x_sym.shape[0]
         self.nu = self.u_sym.shape[0]
         self.ny = self.y_sym.shape[0]
+        if self.p_sym is not None:
+            self.npl = self.p_sym.shape[0]
         # Setup cost function.
         self.cost_func = cost["cost_func"]
         # print(self.cost_func)
@@ -69,6 +75,15 @@ class SymbolicModel:
         self.fc_func = cs.Function(
             "fc", [self.x_sym, self.u_sym], [self.x_dot], ["x", "u"], ["f"]
         )
+        # Parameterized continuous time dynamics
+        if self.param_x_dot is not None:
+            self.param_fc_func = cs.Function(
+                "fc_param",
+                [self.x_sym, self.u_sym, self.p_sym],
+                [self.param_x_dot],
+                ["x", "u", "p"],
+                ["f"],
+            )
         # Discrete time dynamics.
         self.fd_func = cs.integrator(
             "fd",

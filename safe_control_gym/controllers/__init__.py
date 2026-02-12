@@ -85,3 +85,9 @@ register(
     entry_point="safe_control_gym.controllers.mpc.mpc_acados:MPC_ACADOS",
     config_entry_point="safe_control_gym.controllers.mpc:mpc_acados.yaml",
 )
+
+register(
+    idx="ppo_mpc",
+    entry_point="safe_control_gym.controllers.rlmpc.ppo_mpc:PPO_MPC",
+    config_entry_point="safe_control_gym.controllers.rlmpc:ppo_mpc.yaml",
+)
