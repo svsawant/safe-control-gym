@@ -1,8 +1,7 @@
 """PPO-MPC utilities."""
 
-from collections import defaultdict, deque
+from collections import defaultdict
 from copy import deepcopy
-import time
 
 import casadi as cs
 import numpy as np
@@ -10,19 +9,11 @@ import torch
 import torch.nn as nn
 from gymnasium.spaces import Box
 
-from safe_control_gym.controllers.mpc.mpc_utils import reset_constraints
 from safe_control_gym.controllers.rlmpc.rlmpc_utils import (
-    euler_discrete,
-    rk_discrete,
-    _create_semi_definite_matrix,
     update_initial_guess,
     MPCFunction,
 )
 from safe_control_gym.envs.benchmark_env import Task
-from safe_control_gym.envs.constraints import (
-    GENERAL_CONSTRAINTS,
-    create_constraint_list,
-)
 from safe_control_gym.math_and_models.distributions import Normal
 from safe_control_gym.math_and_models.neural_networks import MLP
 

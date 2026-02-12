@@ -1,0 +1,52 @@
+algo_config:
+  # model args
+  hidden_dim: 256
+  activation: "relu"
+
+  # actor args
+  actor_config:
+    q_mpc: [10., 0.1, 10., 0.1, 0.1, 0.001]
+    r_mpc: [0.5, 0.5]
+    qt_mpc: [10., 0.1, 10., 0.1, 0.1, 0.001]
+    back_off: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    model_param: [0.6825742117895708, 0.4292449477599564, 0.4813652415802387, 0.4521088665975965, 0.30893385663149797]
+    # model_param: [1., 1., 1., 1., 1.]
+    mpc_config:
+      horizon: 20
+      warmstart: True
+      n_parallel_solver: 10
+      n_train_solver: 16
+      jit: True
+      jit_options:
+        # compiler: "clang"  # gcc, ccache gcc, clang
+        flags: ["-Og"]    # -O0, -Og, -O1, -O2, -O3 (-O1 and above may lead to very high compile times)
+
+  # optim args
+  gamma: 0.95
+  tau: 0.005
+  init_temperature: 0.005
+  target_entropy: -2.0
+  use_entropy_tuning: True
+  train_interval: 200
+  train_batch_size: 64
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  entropy_lr: 0.0003
+  update_freq: 3
+  exploration_init: -1.0
+  tanh_squash: False
+
+  # runner args
+  max_env_steps: 660000
+  warm_up_steps: 3000
+  rollout_batch_size: 10
+  max_buffer_size: 50000
+  eval_batch_size: 5
+
+  # misc
+  log_interval: 6600
+  save_interval: 660000
+  num_checkpoints: 0
+  eval_interval: 6600
+  eval_save_best: True
+  tensorboard: True
