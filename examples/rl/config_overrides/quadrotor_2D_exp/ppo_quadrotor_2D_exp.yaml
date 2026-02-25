@@ -1,6 +1,6 @@
 algo_config:
   # model args
-  hidden_dim: 256
+  hidden_dim: 128
   activation: "relu"
 
   # loss args
@@ -18,16 +18,16 @@ algo_config:
   critic_lr: 0.0003
 
   # runner args
-  max_env_steps: 660000
-  rollout_batch_size: 10
-  rollout_steps: 330
+  max_env_steps: 720000
+  rollout_batch_size: 20
+  rollout_steps: 180
   deque_size: 10
   eval_batch_size: 10
 
   # misc
-  log_interval: 6600
-  save_interval: 660000
+  log_interval: 7200
+  save_interval: 720000
   num_checkpoints: 0
-  eval_interval: 6600
+  eval_interval: 7200
   eval_save_best: True
   tensorboard: True

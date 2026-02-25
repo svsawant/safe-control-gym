@@ -449,15 +449,18 @@ class MPCFunction:
             "equality": con_eq,
             "structure_detection": "auto",
             "debug": False,
-            "jit": self.jit,
-            "jit_cleanup": False,
-            "jit_temp_suffix": False,
-            "jit_options": self.jit_options,
             "fatrop.mu_init": etau,
             "fatrop.max_iter": 500,
             "fatrop.print_level": 0,
             "fatrop.acceptable_tol": 1e-5,
         }
+        jit_opts = {
+            "jit": self.jit,
+            "jit_cleanup": False,
+            "jit_temp_suffix": False,
+            "jit_options": self.jit_options,
+        }
+        opts_setting.update(jit_opts)
         vnlp_prob = {
             "f": cost,
             "x": opt_vars,
@@ -523,12 +526,6 @@ class MPCFunction:
         start_time = time.time()
 
         # R_kkt function with jit
-        jit_opts = {
-            "jit": self.jit,
-            "jit_cleanup": False,
-            "jit_temp_suffix": False,
-            "jit_options": self.jit_options,
-        }
         all_fn = cs.Function(
             "all_fn",
             [z, fixed_param, ref_param, theta],

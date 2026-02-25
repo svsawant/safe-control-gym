@@ -13,7 +13,7 @@ ALGO='ppo'
 # ALGO='td3'
 # ALGO='ddpg'
 
-EXP_DATA='quad_results4'
+EXP_DATA='quad_results'
 EVAL_LIST=('performance' 'trajectory_data')
 
 if [ "$SYS" == 'cartpole' ]; then

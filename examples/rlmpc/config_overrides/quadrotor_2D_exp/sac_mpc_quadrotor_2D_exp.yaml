@@ -15,30 +15,29 @@ algo_config:
       horizon: 20
       warmstart: True
       n_parallel_solver: 10
-      n_train_solver: 16
+      n_train_solver: 32
       jit: True
       jit_options:
         # compiler: "clang"  # gcc, ccache gcc, clang
-        flags: ["-Og"]    # -O0, -Og, -O1, -O2, -O3 (-O1 and above may lead to very high compile times)
+        flags: ["-O2"]    # -O0, -Og, -O1, -O2, -O3 (-O1 and above may lead to very high compile times)
 
   # optim args
   gamma: 0.95
   tau: 0.005
   init_temperature: 0.005
-  target_entropy: -2.0
   use_entropy_tuning: True
-  train_interval: 200
-  train_batch_size: 64
+  train_interval: 100
+  train_batch_size: 128
   actor_lr: 0.0003
   critic_lr: 0.0003
   entropy_lr: 0.0003
   update_freq: 3
-  exploration_init: -1.0
+  exploration_init: -2.0
   tanh_squash: False
 
   # runner args
   max_env_steps: 660000
-  warm_up_steps: 3000
+  warm_up_steps: 100
   rollout_batch_size: 10
   max_buffer_size: 66000
   eval_batch_size: 5

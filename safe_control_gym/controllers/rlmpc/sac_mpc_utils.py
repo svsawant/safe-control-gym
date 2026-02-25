@@ -24,8 +24,6 @@ class SAC_MPC_Agent:
     def __init__(
         self,
         env_fun,
-        obs_space,
-        act_space,
         gamma,
         model,
         hidden_dim=256,
@@ -46,8 +44,8 @@ class SAC_MPC_Agent:
 
         # Parameters.
         self.env = env_fun
-        self.obs_space = obs_space
-        self.act_space = act_space
+        self.obs_space = env_fun.observation_space
+        self.act_space = env_fun.action_space
         self.exploration_init = exploration_init
         self.gamma = gamma
         self.tau = tau
@@ -57,8 +55,8 @@ class SAC_MPC_Agent:
         # Model.
         self.ac = MLPActorCritic(
             self.env,
-            obs_space,
-            act_space,
+            self.obs_space,
+            self.act_space,
             gamma,
             model,
             hidden_dims=[hidden_dim] * 2,
@@ -84,7 +82,7 @@ class SAC_MPC_Agent:
             self.alpha_opt = torch.optim.Adam([self.log_alpha], entropy_lr)
             if target_entropy is None:
                 # Use heuristic value from SAC paper
-                self.target_entropy = -np.prod(act_space.shape).item()
+                self.target_entropy = -np.prod(self.act_space.shape).item()
             else:
                 self.target_entropy = target_entropy
         else:
@@ -359,9 +357,9 @@ class MPCActor(nn.Module):
         self.traj_param = torch.FloatTensor(self.mpc.traj)
 
         # Construct output action distribution.
-        self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
-        self.log_std_layer = nn.Linear(hidden_dims[-1], act_dim)
-        # self.log_std = nn.Parameter(exploration_init * torch.ones(act_dim))
+        # self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
+        # self.log_std_layer = nn.Linear(hidden_dims[-1], act_dim)
+        self.log_std = nn.Parameter(exploration_init * torch.ones(act_dim))
         # self.dist_fn = lambda x: Normal(x, self.logstd.exp())
         self.dist_fn = lambda mu, log_std: Normal(mu, log_std.exp())
         self.log_std_min = -20
@@ -393,9 +391,9 @@ class MPCActor(nn.Module):
             act = self.inverse_squashing(act)
 
         # action distribution
-        net_out = self.net(torch.FloatTensor(obs))
-        log_std = self.log_std_layer(net_out)
-        log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
+        # net_out = self.net(torch.FloatTensor(obs))
+        # log_std = self.log_std_layer(net_out)
+        log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
         dist = self.dist_fn(act, log_std)
         if deterministic:
             x_t = dist.mode()
@@ -431,9 +429,9 @@ class MPCActor(nn.Module):
         action.requires_grad_()
 
         # action distribution
-        net_out = self.net(torch.FloatTensor(obs))
-        log_std = self.log_std_layer(net_out)
-        log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
+        # net_out = self.net(torch.FloatTensor(obs))
+        # log_std = self.log_std_layer(net_out)
+        log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
         if self.tanh_squash:
             # Inverse squashing
             z_t = self.inverse_squashing(action)
@@ -720,22 +718,13 @@ class MPCPolicyFunction(MPCFunction):
             nabla_pi_ref_batch, nabla_pi_theta_batch = [], []
             # dpi_cs = dpi_fn_train(optimal_batch, z, fixed_p, ref_p, theta.T).full()
             for i in range(obs_batch.shape[0]):
-                # nabla_pi_ref_batch.append(dpi_cs[:ref_p.shape[0], 2 * i: 2 * (i + 1)].T)
-                # nabla_pi_theta_batch.append(dpi_cs[ref_p.shape[0]:, 2 * i: 2 * (i + 1)].T)
                 nabla_pi_theta_batch.append(
                     int(optimal_batch[0, i])
                     * dpi_cs[:, self.model.nu * i : self.model.nu * (i + 1)].T
                 )
         else:
-            # optimal_batch = [True] * obs_batch.shape[0]
             rkkt_norm_batch = self.rkkt_norm_fns_train(z, fixed_p, ref_p, theta.T)
             optimal_batch = rkkt_norm_batch.full() < 1e-3
-            nabla_pi_ref_batch = [
-                np.zeros((self.model.nu, ref_p.shape[0]))
-            ] * obs_batch.shape[0]
-            nabla_pi_theta_batch = [
-                np.zeros((self.model.nu, theta.shape[1]))
-            ] * obs_batch.shape[0]
         return action_batch, nabla_pi_ref_batch, nabla_pi_theta_batch, optimal_batch
 
     def get_parallel_solver(self, n_solvers):

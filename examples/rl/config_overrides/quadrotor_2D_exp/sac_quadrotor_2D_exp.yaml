@@ -1,6 +1,6 @@
 algo_config:
   # model args
-  hidden_dim: 256
+  hidden_dim: 128
   activation: "relu"
   use_entropy_tuning: True
 
@@ -13,17 +13,17 @@ algo_config:
   entropy_lr: 0.0003
 
   # runner args
-  max_env_steps: 660000
+  max_env_steps: 720000
   warm_up_steps: 3000
-  rollout_batch_size: 10
-  max_buffer_size: 132000
+  rollout_batch_size: 20
+  max_buffer_size: 144000
   deque_size: 10
   eval_batch_size: 10
 
   # misc
-  log_interval: 6600
-  save_interval: 660000
+  log_interval: 7200
+  save_interval: 720000
   num_checkpoints: 0
-  eval_interval: 6600
+  eval_interval: 7200
   eval_save_best: True
   tensorboard: True

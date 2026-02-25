@@ -64,8 +64,6 @@ class SAC_MPC(BaseController):
         model = self.get_prior(self.env)
         self.agent = SAC_MPC_Agent(
             self.env,
-            self.env.observation_space,
-            self.env.action_space,
             self.gamma,
             model,
             hidden_dim=self.hidden_dim,

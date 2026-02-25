@@ -8,10 +8,10 @@ SYS='quadrotor_2D_exp'
 # TASK='stab'
 TASK='track'
 
-ALGO='ppo_mpc'
+# ALGO='ppo_mpc'
 # ALGO='ppo_vmpc'
 # ALGO='appo_mpc'
-# ALGO='sac_mpc'
+ALGO='sac_mpc'
 # ALGO='td3_mpc'
 
 EXP_NAME='test'

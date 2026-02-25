@@ -138,7 +138,15 @@ class PPO_MPC_Agent:
         """Returns value loss(es) given batch of data."""
         obs, ret, v_old = batch_th["obs"], batch_th["ret"], batch_th["v"]
         v_cur = self.ac.critic(obs)
-        value_loss = 0.5 * (v_cur - ret).pow(2).mean()
+        if self.use_clipped_value:
+            v_old_clipped = v_old + (v_cur - v_old).clamp(
+                -self.clip_param, self.clip_param
+            )
+            v_loss = (v_cur - ret).pow(2)
+            v_loss_clipped = (v_old_clipped - ret).pow(2)
+            value_loss = 0.5 * torch.max(v_loss, v_loss_clipped).mean()
+        else:
+            value_loss = 0.5 * (v_cur - ret).pow(2).mean()
         return value_loss
 
     def update(self, rollouts, device="cpu"):

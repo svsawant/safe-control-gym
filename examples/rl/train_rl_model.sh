@@ -8,12 +8,12 @@ SYS='quadrotor_2D_exp'
 # TASK='stab'
 TASK='track'
 
-# ALGO='ppo'
-ALGO='sac'
+ALGO='ppo'
+# ALGO='sac'
 # ALGO='td3'
 # ALGO='ddpg'
 
-EXP_NAME='quad_results4'
+EXP_NAME='quad_results'
 
 if [ "$SYS" == 'cartpole' ]; then
     SYS_NAME=$SYS
@@ -33,9 +33,10 @@ do
         --output_dir ./Results/${EXP_NAME}/ \
         --tag ${SYS}_${ALGO}_data \
         --seed ${SEED} \
-        --use_gpu 
+        --use_gpu \
         # --kv_overrides \
-            # algo_config.opt_epochs=10
+            # 'task_config.rew_state_weight=[1.0,0.1,1.0,0.1,0.01,0.001]'
+            # algo_config.opt_epochs=20
             # algo_config.random_process.std.args=0.2
             # task_config.randomized_init=True 
         # --pretrain_path /home/savvyfox/Projects/scg/examples/rl/models/${ALGO}/ 

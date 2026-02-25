@@ -1009,11 +1009,15 @@ class Quadrotor(BaseAviary):
         self.current_physical_action = action
 
         # Apply disturbances.
+        self.current_noisy_physical_action = self.current_physical_action.copy()
         if "action" in self.disturbances:
-            action = self.disturbances["action"].apply(action, self)
+            self.current_noisy_physical_action = self.disturbances["action"].apply(
+                self.current_physical_action, self
+            )
         if self.adversary_disturbance == "action":
-            action = action + self.adv_action
-        self.current_noisy_physical_action = action
+            self.current_noisy_physical_action = (
+                self.current_physical_action + self.adv_action
+            )
 
         # Identified dynamics model works with collective thrust and pitch directly
         # No need to compute RPMs, (save compute)
