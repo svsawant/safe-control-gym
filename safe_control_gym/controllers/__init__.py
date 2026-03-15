@@ -97,3 +97,9 @@ register(
     entry_point="safe_control_gym.controllers.rlmpc.sac_mpc:SAC_MPC",
     config_entry_point="safe_control_gym.controllers.rlmpc:sac_mpc.yaml",
 )
+
+register(
+    idx="appo_mpc",
+    entry_point="safe_control_gym.controllers.rlmpc.appo_mpc:APPO_MPC",
+    config_entry_point="safe_control_gym.controllers.rlmpc:appo_mpc.yaml",
+)
