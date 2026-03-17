@@ -445,6 +445,13 @@ class Quadrotor(BaseAviary):
         obs, info = self._get_observation(), self._get_reset_info()
         obs, info = super().after_reset(obs, info)
 
+        # Reset the goal trajectory
+        if self.TASK == Task.TRAJ_TRACKING:
+            if isinstance(self.episode_len_sec, list):
+                self.EPISODE_LEN_SEC = self.np_random.choice(self.episode_len_sec)
+                self.CTRL_STEPS = self.EPISODE_LEN_SEC * self.CTRL_FREQ
+            self.set_goal()
+
         # Return either an observation and dictionary or just the observation.
         return obs, info
 

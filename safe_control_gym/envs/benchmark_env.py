@@ -151,7 +151,11 @@ class BenchmarkEnv(gym.Env, ABC):
         self.CTRL_TIMESTEP = 1.0 / self.CTRL_FREQ
         self.PYB_TIMESTEP = 1.0 / self.PYB_FREQ
         # Maximum episode length in seconds.
-        self.EPISODE_LEN_SEC = episode_len_sec
+        self.episode_len_sec = episode_len_sec
+        if isinstance(episode_len_sec, list):
+            self.EPISODE_LEN_SEC = episode_len_sec[0]
+        else:
+            self.EPISODE_LEN_SEC = episode_len_sec
         self.CTRL_STEPS = self.EPISODE_LEN_SEC * self.CTRL_FREQ
         # Initialization of state.
         self.INIT_STATE = init_state

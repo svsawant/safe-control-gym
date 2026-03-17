@@ -71,7 +71,7 @@ task_config:
     alpha_3: 129.041538
     pitch_bias: 0.0 # in radian
 
-  episode_len_sec: 6
+  episode_len_sec: [5, 6, 9]
   cost: rl_reward
   obs_goal_horizon: 10
 
