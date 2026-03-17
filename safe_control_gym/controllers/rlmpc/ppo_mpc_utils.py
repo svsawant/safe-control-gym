@@ -167,7 +167,7 @@ class PPO_MPC_Agent:
                     entropy_loss,
                     approx_kl,
                     action_th,
-                    nabla_pi_ref,
+                    _,
                     nabla_pi_theta,
                 ) = self.compute_policy_loss(batch, batch_th)
                 # Update only when no KL constraint or constraint is satisfied.
@@ -330,9 +330,11 @@ class MPCActor(nn.Module):
             (self.q_mpc, self.r_mpc, self.qt_mpc, self.back_off, self.model_param)
         )
         self.mpc_param = nn.Parameter(torch.FloatTensor(temp))
-        self.param_net = MLP(obs_dim, self.n_learnable_param, hidden_dims, activation)
+        # self.param_net = MLP(obs_dim, self.n_learnable_param, hidden_dims, activation)
         # self.traj_param = nn.Parameter(torch.FloatTensor(self.mpc.traj))
         self.traj_param = torch.FloatTensor(self.mpc.traj)
+        with torch.no_grad():
+            self.mpc_param.clamp_(1e-5, 100.0)
 
         # Construct output action distribution.
         self.logstd = nn.Parameter(exploration_init * torch.ones(act_dim))
@@ -387,12 +389,12 @@ class MPCActor(nn.Module):
         if obs.ndim > 1:
             theta = self.mpc_param.repeat(
                 obs.shape[0], 1
-            ) + 0.0 * self.param_net.forward(torch.FloatTensor(obs))
+            )  # + 0.0 * self.param_net.forward(torch.FloatTensor(obs))
         else:
-            theta = self.mpc_param + 0.0 * self.param_net.forward(
-                torch.FloatTensor(obs)
-            )
-        theta += torch.rand_like(theta) * 1e-6
+            theta = self.mpc_param  # + 0.0 * self.param_net.forward(
+            #     torch.FloatTensor(obs)
+            # )
+        # theta += torch.rand_like(theta) * 1e-6
         return theta
 
     def get_references(self, info_batch):

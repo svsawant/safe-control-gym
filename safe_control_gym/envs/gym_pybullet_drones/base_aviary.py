@@ -291,6 +291,9 @@ class BaseAviary(BenchmarkEnv):
         for _ in range(self.PYB_STEPS_PER_CTRL):
             # Update and store the drones kinematic info for certain
             # Between aggregate steps for certain types of update.
+            if self.PHYSICS in [Physics.DYN_SI_2D]:
+                # set the state of the drone after stepping with the analytical model
+                self._set_pybullet_information()
             if self.PYB_STEPS_PER_CTRL > 1 and self.PHYSICS in [
                 Physics.DYN,
                 Physics.PYB_GND,
