@@ -76,7 +76,7 @@ task_config:
   obs_goal_horizon: 10
 
   # RL Reward
-  rew_state_weight: [20., .1, 20., .1, .1, 0.001]
+  rew_state_weight: [10., .1, 10., .1, .1, 0.001]
   rew_act_weight: [.1, .1]
   rew_exponential: True
 

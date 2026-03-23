@@ -37,6 +37,7 @@ class SAC_MPC_Agent:
         entropy_lr=0.001,
         activation="relu",
         actor_config=None,
+        sigma_network=False,
         tanh_squash=False,
         update_freq=1,
         **kwargs,
@@ -63,6 +64,7 @@ class SAC_MPC_Agent:
             exploration_init=self.exploration_init,
             activation=self.activation,
             actor_config=actor_config,
+            sigma_network=sigma_network,
             tanh_squash=tanh_squash,
         )
         self.log_alpha = torch.tensor(np.log(init_temperature))
@@ -99,7 +101,8 @@ class SAC_MPC_Agent:
         """Puts agent to device."""
         self.ac.to(device)
         self.ac_targ.to(device)
-        self.log_alpha = self.log_alpha.to(device)
+        # self.log_alpha = self.log_alpha.to(device)
+        self.log_alpha.data = self.log_alpha.data.to(device)
 
     def train(self):
         """Sets training mode."""
@@ -121,7 +124,7 @@ class SAC_MPC_Agent:
             "ac_targ": self.ac_targ.state_dict(),
             "actor_opt": self.actor_opt.state_dict(),
             "critic_opt": self.critic_opt.state_dict(),
-            "alpha_opt": self.alpha_opt.state_dict(),
+            # "alpha_opt": self.alpha_opt.state_dict(),
         }
 
     def load_state_dict(self, state_dict, strict=True):
@@ -131,16 +134,9 @@ class SAC_MPC_Agent:
         self.ac_targ.load_state_dict(state_dict["ac_targ"], strict=strict)
         self.actor_opt.load_state_dict(state_dict["actor_opt"])
         self.critic_opt.load_state_dict(state_dict["critic_opt"])
-        self.alpha_opt.load_state_dict(state_dict["alpha_opt"])
+        # self.alpha_opt.load_state_dict(state_dict["alpha_opt"])
 
-    def compute_policy_loss(self, batch, batch_th):
-        """Returns policy loss(es) given batch of data."""
-        obs_th = batch_th["obs"]
-        obs, info = batch["obs"], batch["info"]
-        act_th, logp, action_th, nabla_pi_ref, nabla_pi_theta, optimal = (
-            self.ac.actor.forward_train(obs, info)
-        )
-
+    def compute_policy_loss(self, obs_th, act_th, logp, optimal):
         """Returns policy loss(es) given batch of data."""
         q1 = self.ac.q1(obs_th, act_th)
         q2 = self.ac.q2(obs_th, act_th)
@@ -152,16 +148,11 @@ class SAC_MPC_Agent:
         if self.use_entropy_tuning:
             entropy_loss = -(self.log_alpha * (logp + self.target_entropy).detach())
             entropy_loss = torch.where(optimal > 0.9, entropy_loss, torch.nan).nanmean()
-        return (
-            policy_loss,
-            entropy_loss,
-            action_th,
-            nabla_pi_ref,
-            nabla_pi_theta,
-            optimal,
-        )
+        return policy_loss, entropy_loss
 
-    def compute_q_loss(self, batch, batch_th):
+    def compute_q_loss(
+        self, batch, batch_th
+    ):  # , next_state_th, next_action_th, nabla_snext_theta, nabla_pinext_theta, optimal):
         """Returns q-value loss(es) given batch of data."""
         obs, act, next_obs = batch_th["obs"], batch_th["act"], batch_th["next_obs"]
         rew, mask = batch_th["rew"], batch_th["mask"]
@@ -171,12 +162,17 @@ class SAC_MPC_Agent:
         q2 = self.ac.q2(obs, act)
 
         with torch.no_grad():
-            next_act, next_logp, _, _, _, optimal = self.ac.actor.forward_train(
-                next_obs_np,
-                info,
-                update_info=True,
-                compute_sensitivities=False,
+            next_act, next_logp, _, _, _, _, _, _, _, optimal = (
+                self.ac.actor.forward_train(
+                    next_obs_np,
+                    info,
+                    update_info=True,
+                    compute_sensitivities=False,
+                )
             )
+            # next_act, next_logp = self.ac.actor.forward_train_approx(
+            #     next_obs, next_state_th, next_action_th, nabla_snext_theta, nabla_pinext_theta
+            # )
             next_q1_targ = self.ac_targ.q1(next_obs, next_act)
             next_q2_targ = self.ac_targ.q2(next_obs, next_act)
             next_q_targ = torch.min(next_q1_targ, next_q2_targ)
@@ -194,7 +190,9 @@ class SAC_MPC_Agent:
         results = defaultdict(list)
 
         # critic update
-        critic_loss = self.compute_q_loss(batch, batch_th)
+        critic_loss = self.compute_q_loss(
+            batch, batch_th
+        )  # , next_state_th, next_action_th, nabla_snext_theta, nabla_pinext_theta, optimal)
         self.critic_opt.zero_grad()
         critic_loss.backward()
         self.critic_opt.step()
@@ -202,14 +200,31 @@ class SAC_MPC_Agent:
 
         # actor update
         if self.count % self.update_freq == 0:
+            # Set requires_grad to False for critic networks so that the gradients can be passed through the mpc to actor parameters.
+            for p in self.ac.q1.parameters():
+                p.requires_grad = False
+            for p in self.ac.q2.parameters():
+                p.requires_grad = False
+
+            # MPC forward and backward
+            obs_th = batch_th["obs"]
+            obs, info = batch["obs"], batch["info"]
             (
-                policy_loss,
-                entropy_loss,
+                act_th,
+                logp,
                 action_th,
-                _,
+                next_state_th,
+                next_action_th,
+                nabla_pi_ref,
                 nabla_pi_theta,
-                _,
-            ) = self.compute_policy_loss(batch, batch_th)
+                nabla_snext_theta,
+                nabla_pinext_theta,
+                optimal,
+            ) = self.ac.actor.forward_train(obs, info)
+
+            policy_loss, entropy_loss = self.compute_policy_loss(
+                obs_th, act_th, logp, optimal
+            )
             self.actor_opt.zero_grad()
             policy_loss.backward()
 
@@ -237,8 +252,16 @@ class SAC_MPC_Agent:
             results["theta_loss"] = theta_loss.item()
             # results['exploration_std'] = self.ac.actor.logstd.exp().mean().item()
 
-            # update target networks
-            soft_update(self.ac, self.ac_targ, self.tau)
+            # Set requires_grad back to True for critic networks for next update step.
+            for p in self.ac.q1.parameters():
+                p.requires_grad = True
+            for p in self.ac.q2.parameters():
+                p.requires_grad = True
+
+        # update target networks
+        # soft_update(self.ac, self.ac_targ, self.tau)
+        soft_update(self.ac.q1, self.ac_targ.q1, self.tau)
+        soft_update(self.ac.q2, self.ac_targ.q2, self.tau)
         self.count += 1
         return results
 
@@ -267,6 +290,7 @@ class MLPActorCritic(nn.Module):
         exploration_init=-1.0,
         activation="tanh",
         actor_config=None,
+        sigma_network=False,
         tanh_squash=False,
     ):
         super().__init__()
@@ -289,6 +313,7 @@ class MLPActorCritic(nn.Module):
             model,
             exploration_init,
             actor_config,
+            sigma_network=sigma_network,
             tanh_squash=tanh_squash,
         )
         # Q functions
@@ -332,6 +357,7 @@ class MPCActor(nn.Module):
         model,
         exploration_init,
         actor_config,
+        sigma_network=False,
         tanh_squash=False,
     ):
         super().__init__()
@@ -359,14 +385,16 @@ class MPCActor(nn.Module):
             self.mpc_param.clamp_(1e-5, 100.0)
 
         # Construct output action distribution.
-        # self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
-        # self.log_std_layer = nn.Linear(hidden_dims[-1], act_dim)
-        self.log_std = nn.Parameter(exploration_init * torch.ones(act_dim))
-        # self.dist_fn = lambda x: Normal(x, self.logstd.exp())
-        self.dist_fn = lambda mu, log_std: Normal(mu, log_std.exp())
+        self.sigma_network = sigma_network
+        self.tanh_squash = tanh_squash
         self.log_std_min = -20
         self.log_std_max = 2
-        self.tanh_squash = tanh_squash
+        if self.sigma_network:
+            self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
+            self.log_std_layer = nn.Linear(hidden_dims[-1], act_dim)
+        else:
+            self.log_std = nn.Parameter(exploration_init * torch.ones(act_dim))
+        self.dist_fn = lambda mu, log_std: Normal(mu, log_std.exp())
 
         # action rescaling (from cleanrl)
         self.action_scale = torch.tensor(
@@ -393,9 +421,11 @@ class MPCActor(nn.Module):
             act = self.inverse_squashing(act)
 
         # action distribution
-        # net_out = self.net(torch.FloatTensor(obs))
-        # log_std = self.log_std_layer(net_out)
-        log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
+        if self.sigma_network:
+            net_out = self.net(torch.FloatTensor(obs))
+            log_std = self.log_std_layer(net_out)
+        else:
+            log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
         dist = self.dist_fn(act, log_std)
         if deterministic:
             x_t = dist.mode()
@@ -411,7 +441,7 @@ class MPCActor(nn.Module):
 
     def forward_train(self, obs, info, update_info=False, compute_sensitivities=True):
         theta = self.get_theta_param(obs)
-        action, nabla_pi_ref, nabla_pi_theta, optimal_flag = (
+        action, next_state, next_action, sensitivities_info, optimal_flag = (
             self.mpc.select_action_batch_train(
                 obs,
                 theta.detach().numpy(),
@@ -421,8 +451,19 @@ class MPCActor(nn.Module):
             )
         )
         action = torch.FloatTensor(action)
-        nabla_pi_ref = torch.FloatTensor(np.array(nabla_pi_ref))
-        nabla_pi_theta = torch.FloatTensor(np.array(nabla_pi_theta))
+        next_state = torch.FloatTensor(next_state)
+        next_action = torch.FloatTensor(next_action)
+        nabla_pi_ref = torch.FloatTensor(np.array(sensitivities_info["nabla_pi_ref"]))
+        nabla_pi_theta = torch.FloatTensor(
+            np.array(sensitivities_info["nabla_pi_theta"])
+        )
+        nabla_snext_theta = torch.FloatTensor(
+            np.array(sensitivities_info["nabla_snext_theta"])
+        )
+        nabla_pinext_theta = torch.FloatTensor(
+            np.array(sensitivities_info["nabla_pinext_theta"])
+        )
+
         optimal_flag = (
             torch.FloatTensor(optimal_flag).T
             if len(optimal_flag) > 0
@@ -431,9 +472,11 @@ class MPCActor(nn.Module):
         action.requires_grad_()
 
         # action distribution
-        # net_out = self.net(torch.FloatTensor(obs))
-        # log_std = self.log_std_layer(net_out)
-        log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
+        if self.sigma_network:
+            net_out = self.net(torch.FloatTensor(obs))
+            log_std = self.log_std_layer(net_out)
+        else:
+            log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
         if self.tanh_squash:
             # Inverse squashing
             z_t = self.inverse_squashing(action)
@@ -452,7 +495,54 @@ class MPCActor(nn.Module):
             )
         else:
             act = x_t
-        return act, logp, action, nabla_pi_ref, nabla_pi_theta, optimal_flag
+        return (
+            act,
+            logp,
+            action,
+            next_state,
+            next_action,
+            nabla_pi_ref,
+            nabla_pi_theta,
+            nabla_snext_theta,
+            nabla_pinext_theta,
+            optimal_flag,
+        )
+
+    def forward_train_approx(
+        self, next_obs, obsnext, actnext, nabla_snext, nabla_pinext
+    ):
+        dx = next_obs[:, : obsnext.shape[1]] - obsnext
+        deltheta = torch.linalg.lstsq(nabla_snext, dx.unsqueeze(-1)).solution.squeeze(
+            -1
+        )
+        du = torch.einsum("bij,bj->bi", nabla_pinext, deltheta)
+        next_action = actnext + du
+
+        # action distribution
+        if self.sigma_network:
+            net_out = self.net(torch.FloatTensor(next_obs))
+            log_std = self.log_std_layer(net_out)
+        else:
+            log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
+        if self.tanh_squash:
+            # Inverse squashing
+            z_t = self.inverse_squashing(next_action)
+            dist = self.dist_fn(z_t, log_std)
+        else:
+            dist = self.dist_fn(next_action, log_std)
+        x_t = dist.rsample()
+        logp = dist.log_prob(x_t)
+
+        # Squash the output
+        if self.tanh_squash:
+            y_t = torch.tanh(x_t)
+            next_act = y_t * self.action_scale + self.action_bias
+            logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
+                -1, keepdim=True
+            )
+        else:
+            next_act = x_t
+        return next_act, logp
 
     def _init_param_val(self):
         self.param_dict = {
@@ -570,6 +660,22 @@ class MPCPolicyFunction(MPCFunction):
             self.get_parallel_solver(self.n_train_solver)
         )
 
+    def setup_optimizer(self):
+        super().setup_optimizer()
+        x_var, u_var, opt_vars = (
+            self.solver_dict["x_var"],
+            self.solver_dict["u_var"],
+            self.solver_dict["opt_vars"],
+        )
+
+        # Next state function for training
+        opt_x_next_fn = cs.Function("opt_x_next_fun", [opt_vars], [x_var[:, 1]])
+        self.solver_dict["opt_x_next_fn"] = opt_x_next_fn
+
+        # Next action function for training
+        opt_act_next_fn = cs.Function("opt_act_fun", [opt_vars], [u_var[:, 1]])
+        self.solver_dict["opt_act_next_fn"] = opt_act_next_fn
+
     def select_action_batch(self, obs_batch, theta, traj_ref, agent_info):
         if not obs_batch.ndim > 1:
             obs_batch = obs_batch[None, :]
@@ -674,6 +780,8 @@ class MPCPolicyFunction(MPCFunction):
         opt_act_fn = self.solver_dict["opt_act_fn"]
         opt_vars_fn = self.solver_dict["opt_vars_fn"]
         xus_fn = self.solver_dict["xus_fn"]
+        x_next_fn = self.solver_dict["opt_x_next_fn"]
+        opt_next_act_fn = self.solver_dict["opt_act_next_fn"]
 
         x0, fixed_p, ref_p = [], [], []
         lbg = con_lbg.full().repeat(obs_batch.shape[0], 1)
@@ -711,23 +819,60 @@ class MPCPolicyFunction(MPCFunction):
         soln_batch = self.pi_solvers_train(x0=x0, p=p, lbg=lbg, ubg=ubg)
         z = cs.vertcat(soln_batch["x"], soln_batch["lam_g"])
         action_batch = opt_act_fn(soln_batch["x"]).full().T
+        next_action_batch = opt_next_act_fn(soln_batch["x"]).full().T
+        next_state_batch = x_next_fn(soln_batch["x"]).full().T
 
         # Post-processing the solution
         nabla_pi_ref_batch, nabla_pi_theta_batch, optimal_batch = [], [], []
+        nabla_snext_theta_batch, nabla_pinext_theta_batch = [], []
         if compute_sensitivities:
             rkkt_norm_batch, dpi_cs = self.all_solvers_train(z, fixed_p, ref_p, theta.T)
             optimal_batch = rkkt_norm_batch.full() < 1e-3
             nabla_pi_ref_batch, nabla_pi_theta_batch = [], []
             # dpi_cs = dpi_fn_train(optimal_batch, z, fixed_p, ref_p, theta.T).full()
+            nx, nu, npl = (
+                self.model.nx,
+                self.model.nu,
+                self.solver_dict["theta_param"].shape[0],
+            )
             for i in range(obs_batch.shape[0]):
                 nabla_pi_theta_batch.append(
                     int(optimal_batch[0, i])
-                    * dpi_cs[:, self.model.nu * i : self.model.nu * (i + 1)].T
+                    * dpi_cs[
+                        nx : nx + nu,
+                        npl * i : npl * (i + 1),
+                    ]
+                )
+                nabla_snext_theta_batch.append(
+                    int(optimal_batch[0, i])
+                    * dpi_cs[
+                        2 * nx + nu : 3 * nx + nu,
+                        npl * i : npl * (i + 1),
+                    ]
+                )
+                nabla_pinext_theta_batch.append(
+                    int(optimal_batch[0, i])
+                    * dpi_cs[
+                        3 * nx + nu : 3 * nx + 2 * nu,
+                        npl * i : npl * (i + 1),
+                    ]
                 )
         else:
             rkkt_norm_batch = self.rkkt_norm_fns_train(z, fixed_p, ref_p, theta.T)
             optimal_batch = rkkt_norm_batch.full() < 1e-3
-        return action_batch, nabla_pi_ref_batch, nabla_pi_theta_batch, optimal_batch
+        sensitivities_info_batch = {
+            "nabla_pi_ref": nabla_pi_ref_batch,
+            "nabla_pi_theta": nabla_pi_theta_batch,
+            "nabla_snext_theta": nabla_snext_theta_batch,
+            "nabla_pinext_theta": nabla_pinext_theta_batch,
+        }
+        return (
+            action_batch,
+            next_state_batch,
+            next_action_batch,
+            sensitivities_info_batch,
+            optimal_batch,
+        )
 
     def get_parallel_solver(self, n_solvers):
         pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread")

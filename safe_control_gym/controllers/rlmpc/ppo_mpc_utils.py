@@ -178,15 +178,16 @@ class PPO_MPC_Agent:
                     (policy_loss + self.entropy_coef * entropy_loss).backward()
 
                     # Passing the gradients through the mpc
+                    # action_th.grad now contains dL/da
                     theta = self.ac.actor.get_theta_param(batch_th["obs"])
                     theta_loss = (
                         action_th.grad.unsqueeze(1)
                         @ nabla_pi_theta
                         @ theta.unsqueeze(2)
-                    )
+                    ).sum()
                     # traj_ref = self.ac.actor.get_ref_param(batch['info'])
                     # ref_loss = action_th.grad.unsqueeze(1) @ nabla_pi_ref @ traj_ref.unsqueeze(2)
-                    (theta_loss.sum()).backward()
+                    theta_loss.backward()
                     self.actor_opt.step()
                     with torch.no_grad():
                         self.ac.actor.mpc_param.clamp_(1e-5, 100.0)
@@ -194,7 +195,7 @@ class PPO_MPC_Agent:
                     p_loss_epoch += policy_loss.item()
                     e_loss_epoch += entropy_loss.item()
                     kl_epoch += approx_kl.item()
-                    theta_loss_epoch += theta_loss.sum().item()
+                    theta_loss_epoch += theta_loss.item()
                     # ref_loss_epoch += ref_loss.sum().item()
 
                 # Critic update.
@@ -507,9 +508,9 @@ class MPCPolicyFunction(MPCFunction):
             fixed_param = obs[: self.model.nx]
             ref_param = traj_ref[i].T.reshape(-1, 1)[:, 0]
             opt_vars_init = np.zeros(self.solver_dict["opt_vars"].shape)
-            if (
-                self.infos[i] is not None
-            ):  # shift previous solutions by 1 step based on last soln
+
+            # shift previous solutions by 1 step based on last soln, if available
+            if self.infos[i] is not None:
                 opt_vars_init = self.infos[i]["opt_var"]
                 x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
                 x_prev, u_prev, sigma_prev = (
@@ -614,7 +615,12 @@ class MPCPolicyFunction(MPCFunction):
             # nabla_pi_theta_batch.append(dpi_cs[ref_p.shape[0]:, 2 * i: 2 * (i + 1)].T)
             nabla_pi_theta_batch.append(
                 int(optimal_batch[0, i])
-                * dpi_cs[:, self.model.nu * i : self.model.nu * (i + 1)].T
+                * dpi_cs[
+                    self.model.nx : self.model.nx + self.model.nu,
+                    self.solver_dict["theta_param"].shape[0]
+                    * i : self.solver_dict["theta_param"].shape[0]
+                    * (i + 1),
+                ]
             )
         action_batch = torch.FloatTensor(action_batch)
         nabla_pi_ref_batch = torch.FloatTensor(np.array(nabla_pi_ref_batch))

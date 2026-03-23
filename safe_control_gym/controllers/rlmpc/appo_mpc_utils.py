@@ -138,7 +138,15 @@ class APPO_MPC_Agent:
         """Returns value loss(es) given batch of data."""
         obs, ret, v_old = batch["obs"], batch["ret"], batch["v"]
         v_cur = self.ac.critic(obs)
-        value_loss = 0.5 * (v_cur - ret).pow(2).mean()
+        if self.use_clipped_value:
+            v_old_clipped = v_old + (v_cur - v_old).clamp(
+                -self.clip_param, self.clip_param
+            )
+            v_loss = (v_cur - ret).pow(2)
+            v_loss_clipped = (v_old_clipped - ret).pow(2)
+            value_loss = 0.5 * torch.max(v_loss, v_loss_clipped).mean()
+        else:
+            value_loss = 0.5 * (v_cur - ret).pow(2).mean()
         return value_loss
 
     def update(self, rollouts, device="cpu"):
@@ -371,10 +379,11 @@ class MPCActor(nn.Module):
         if obs.ndim > 1:
             theta = self.mpc_param.repeat(
                 obs.shape[0], 1
-            )  # + 0.0 * self.param_net.forward(obs)
+            )  # + 1.0 * self.param_net.forward(obs)
         else:
-            theta = self.mpc_param  # + 0.0 * self.param_net.forward(obs)
+            theta = self.mpc_param  # + 1.0 * self.param_net.forward(obs)
         # theta += torch.rand_like(theta) * 1e-6
+        # theta = torch.clamp(theta, 1e-5, 100.0)
         return theta
 
     def get_references(self, info_batch):
@@ -551,7 +560,12 @@ class MPCPolicyFunction(MPCFunction):
             action_batch.append(action)
             nabla_pi_theta_batch.append(
                 int(optimal_batch[0, i])
-                * dpidp_batch[:, self.model.nu * i : self.model.nu * (i + 1)].T
+                * dpidp_batch[
+                    self.model.nx : self.model.nx + self.model.nu,
+                    self.solver_dict["theta_param"].shape[0]
+                    * i : self.solver_dict["theta_param"].shape[0]
+                    * (i + 1),
+                ]
             )
             info_batch.append(info)
         self.infos = deepcopy(info_batch)
@@ -656,18 +670,6 @@ class APPOBuffer(object):
 # -----------------------------------------------------------------------------------
 #                   Misc
 # -----------------------------------------------------------------------------------
-
-
-def update_initial_guess(x_prev, u_prev, sigma_prev, opt_vars_fn):
-    # shift previous solutions by 1 step
-    u_guess = deepcopy(u_prev)
-    x_guess = deepcopy(x_prev)
-    sigma_guess = deepcopy(sigma_prev)
-    u_guess[:, :-1] = u_guess[:, 1:]
-    x_guess[:, :-1] = x_guess[:, 1:]
-    sigma_guess[:, :-1] = sigma_guess[:, 1:]
-    opt_vars_init = opt_vars_fn(x_guess, u_guess, sigma_guess).full()
-    return opt_vars_init
 
 
 def random_sample(indices, batch_size, drop_last=True):

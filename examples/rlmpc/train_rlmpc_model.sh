@@ -9,9 +9,9 @@ SYS='quadrotor_2D_exp'
 TASK='track'
 
 # ALGO='ppo_mpc'
-# ALGO='ppo_vmpc'
 # ALGO='appo_mpc'
-ALGO='sac_mpc'
+ALGO='ppo_vmpc'
+# ALGO='sac_mpc'
 # ALGO='td3_mpc'
 
 EXP_NAME='test'
@@ -31,10 +31,11 @@ do
         --task ${SYS_NAME} \
         --overrides \
             ./config_overrides/${SYS}/${ALGO}_${SYS}.yaml \
-            ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
+            ./config_overrides/${SYS}/${SYS}_${TASK}_gen.yaml \
         --output_dir ./Results/${EXP_NAME} \
         --tag ${SYS}_${ALGO} \
         --seed ${SEED} \
         --kv_overrides \
-            task_config.randomized_init=True
+            task_config.randomized_init=True \
+            task_config.rew_exponential=False
 done

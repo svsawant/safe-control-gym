@@ -488,7 +488,36 @@ class MPCFunction:
         z = cs.vertcat(opt_vars, mult)
         theta = cs.vertcat(cost_param, back_off_param, model_param)
 
-        # Generate sensitivity of the KKT matrix
+        #### Sensitivities for value function
+        lagrangian_fn = cs.Function(
+            "Lagrangian", [z, fixed_param, ref_param, theta], [lagrangian]
+        )
+        dlag_fn = lagrangian_fn.factory(
+            "dV", ["i0", "i1", "i2", "i3"], ["jac:o0:i2", "jac:o0:i3"]
+        )
+        [dVdref, dVdtheta] = dlag_fn(z, fixed_param, ref_param, theta)
+        # Sensitivity against theta
+        dVdtheta_fn = cs.Function(
+            "dVdtheta_fn", [z, fixed_param, ref_param, theta], [dVdtheta.T]
+        )
+        # dVdtheta_zeros = cs.MX.zeros(dVdtheta.shape)
+        # f1_true = cs.Function(
+        #     "f1_true", [z, fixed_param, ref_param, theta], [dVdtheta.T]
+        # )
+        # f1_false = cs.Function(
+        #     "f1_false", [z, fixed_param, ref_param, theta], [dVdtheta_zeros.T]
+        # )
+        # dVdtheta_fn = cs.Function.if_else("dPi_fn", f1_true, f1_false)
+        # Sensitivity against ref
+        # dVdref_fn = cs.Function(
+        #     "dVdref_fn", [z, fixed_param, ref_param, theta], [dVdref.T]
+        # )
+        # dVdref_zeros = cs.MX.zeros(dVdref.shape)
+        # f2_true = cs.Function("f2_true", [z, fixed_param, ref_param, theta], [dVdref.T])
+        # f2_false = cs.Function("f2_false", [z, fixed_param, ref_param, theta], [dVdref_zeros.T])
+        # dVdref_fn = cs.Function.if_else("dPi_fn", f2_true, f2_false)
+
+        #### Generate sensitivity of the KKT matrix
         rkkt_fn = cs.Function("rkkt_fn", [z, fixed_param, ref_param, theta], [R_kkt])
         rkkt_norm_fn = cs.Function(
             "rkkt_norm_fn", [z, fixed_param, ref_param, theta], [cs.norm_2(R_kkt)]
@@ -505,14 +534,18 @@ class MPCFunction:
         start_time = time.time()
 
         # Generate sensitivity of the optimal solution
+        # 1. Pseudo inverse method (less efficient when there are many decision variables)
         # dzdP = -cs.inv(dRdz) @ dRdP
-        # dzdP = -cs.solve(dRdz, dRdP)
+        # 2. Linear solver method (more efficient, especially for large problems, since it can exploit sparsity)
+        dzdP = -cs.solve(dRdz, dRdP)
         # dPi = dzdP[nx: nx + nu, :].T
-        S = cs.DM.zeros(nu, dRdz.shape[0])
-        for i in range(nu):
-            S[i, nx + i] = 1.0
-        dPi_prime = cs.solve(dRdz.T, S.T).T
-        dPi = -(dPi_prime @ dRdP).T
+        dPi = dzdP
+        # 3. Adjoint method (most efficient when there are many parameters, but requires additional implementation effort)
+        # S = cs.DM.zeros(nu, dRdz.shape[0])
+        # for i in range(nu):
+        #     S[i, nx + i] = 1.0
+        # dPi_prime = cs.solve(dRdz.T, S.T).T
+        # dPi = -(dPi_prime @ dRdP).T
         dPi_zeros = cs.MX.zeros(dPi.shape)
         f_true = cs.Function("f_true", [z, fixed_param, ref_param, theta], [dPi])
         f_false = cs.Function(
@@ -545,11 +578,13 @@ class MPCFunction:
             "opt_vars_fn": opt_vars_fn,
             "xus_fn": xus_fn,
             "opt_act_fn": opt_act_fn,
+            "theta_param": theta,
             "cost": cost,
             "lower_bound": con_lbg,
             "upper_bound": con_ubg,
             "lang_mult_fn": lang_mult_fn,
             "solver": pisolver,
+            "dVdtheta_fn": dVdtheta_fn,
             "rkkt_fn": rkkt_fn,
             "rkkt_norm_fn": rkkt_norm_fn,
             "dpi_fn": dPi_fn,

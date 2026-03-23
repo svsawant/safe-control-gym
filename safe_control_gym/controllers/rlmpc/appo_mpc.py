@@ -52,10 +52,12 @@ class APPO_MPC(BaseController):
                 env_func, None, self.rollout_batch_size, self.num_workers, seed
             )
             self.venv = VecRecordEpisodeStatistics(self.venv, self.deque_size)
-            self.eval_venv = env_func(seed=seed * 111)
-            self.eval_venv = RecordEpisodeStatistics(self.eval_venv, self.deque_size)
-            # self.eval_venv = make_vec_envs(env_func, None, self.eval_batch_size, self.num_workers, seed * 111)
-            # self.eval_venv = VecRecordEpisodeStatistics(self.eval_venv, self.deque_size)
+            # self.eval_venv = env_func(seed=seed * 111)
+            # self.eval_venv = RecordEpisodeStatistics(self.eval_venv, self.deque_size)
+            self.eval_venv = make_vec_envs(
+                env_func, None, self.eval_batch_size, self.num_workers, seed * 111
+            )
+            self.eval_venv = VecRecordEpisodeStatistics(self.eval_venv, self.deque_size)
         else:
             # Testing only.
             self.env = RecordEpisodeStatistics(self.env)
@@ -374,49 +376,61 @@ class APPO_MPC(BaseController):
         self.obs_normalizer.set_read_only()
         if env is None:
             env = self.venv
-        else:
-            # if not is_wrapped(env, RecordEpisodeStatistics) or is_wrapped(env, VecRecordEpisodeStatistics):
-            #     env = RecordEpisodeStatistics(env, n_episodes)
-            #     # Add episodic stats to be tracked.
-            #     env.add_tracker('constraint_violation', 0, mode='queue')
-            #     env.add_tracker('constraint_values', 0, mode='queue')
-            #     env.add_tracker('mse', 0, mode='queue')
-            pass
 
         obs, env_info = env.reset()
         obs = self.obs_normalizer(obs)
-        ep_returns, ep_lengths = [], []
-        frames = []
-        agent_info = [{"current_step": 0, "x_ref": env.X_GOAL}]
-        mse, ep_rmse = [], []
+        ep_returns, ep_lengths, ep_rmse, frames = [], [], [], []
+        if hasattr(env, "envs"):
+            agent_info = []
+            for e in env.envs:
+                agent_info.append({"current_step": 0, "x_ref": e.X_GOAL})
+        else:
+            agent_info = [{"current_step": 0, "x_ref": env.X_GOAL}]
+
         while len(ep_returns) < n_episodes:
             action = self.select_action(obs=obs, info=agent_info)
             obs, _, done, info = env.step(action)
-            mse.append(info["mse"])
             if render:
                 env.render()
                 frames.append(env.render("rgb_array"))
             if verbose:
                 print(f"obs {obs} | act {action}")
-            if done:
-                assert "episode" in info
-                ep_rmse.append(np.array(mse).mean() ** 0.5)
-                mse = []
-                ep_returns.append(info["episode"]["r"])
-                ep_lengths.append(info["episode"]["l"])
-                obs, env_info = env.reset()
-                info["current_step"] = 0
-                self.agent.reset()
+
+            if hasattr(env, "envs"):
+                for idx, inf in enumerate(info["n"]):
+                    if done[idx]:
+                        assert "episode" in inf
+                        ep_returns.append(inf["episode"]["r"])
+                        ep_lengths.append(inf["episode"]["l"])
+                        ep_rmse.append(
+                            np.sqrt(inf["episode"]["mse"] / inf["episode"]["l"])
+                        )
+                        self.agent.reset()
+                    agent_info[idx] = {
+                        "current_step": inf["current_step"],
+                        "x_ref": env.envs[idx].X_GOAL,
+                    }
+            else:
+                if done:
+                    assert "episode" in info
+                    ep_returns.append(info["episode"]["r"])
+                    ep_lengths.append(info["episode"]["l"])
+                    ep_rmse.append(
+                        np.sqrt(info["episode"]["mse"] / info["episode"]["l"])
+                    )
+                    obs, _ = env.reset()
+                    info["current_step"] = 0
+                    self.agent.reset()
+                agent_info[0] = {
+                    "current_step": info["current_step"],
+                    "x_ref": env.X_GOAL,
+                }
             obs = self.obs_normalizer(obs)
-            agent_info[0] = {"current_step": info["current_step"], "x_ref": env.X_GOAL}
         # Collect evaluation results.
-        ep_lengths = np.asarray(ep_lengths)
-        ep_returns = np.asarray(ep_returns)
         eval_results = {
-            "ep_returns": ep_returns,
-            "ep_lengths": ep_lengths,
-            "rmse": np.array(ep_rmse).mean(),
-            "rmse_std": np.array(ep_rmse).std(),
+            "ep_returns": np.asarray(ep_returns),
+            "ep_lengths": np.asarray(ep_lengths),
+            "ep_rmse": np.asarray(ep_rmse),
         }
         if len(frames) > 0:
             eval_results["frames"] = frames
@@ -482,8 +496,7 @@ class APPO_MPC(BaseController):
             eval_ep_lengths = results["eval"]["ep_lengths"]
             eval_ep_returns = results["eval"]["ep_returns"]
             eval_constraint_violation = results["eval"]["constraint_violation"]
-            eval_rmse = results["eval"]["rmse"]
-            eval_rmse_std = results["eval"]["rmse_std"]
+            eval_ep_rmse = results["eval"]["ep_rmse"]
             self.logger.add_scalars(
                 {
                     "ep_length": eval_ep_lengths.mean(),
@@ -491,15 +504,15 @@ class APPO_MPC(BaseController):
                     "ep_return_std": eval_ep_returns.std(),
                     "ep_reward": (eval_ep_returns / eval_ep_lengths).mean(),
                     "constraint_violation": eval_constraint_violation.mean(),
-                    "rmse": eval_rmse,
-                    "rmse_std": eval_rmse_std,
+                    "rmse": np.array(eval_ep_rmse).mean(),
+                    "rmse_std": np.array(eval_ep_rmse).std(),
                 },
                 step,
                 prefix="stat_eval",
             )
         # Print summary table
-        self.logger.dump_scalars()
         print("MPC params:")
         print(self.agent.ac.actor.mpc_param.cpu().detach().numpy())
-        # print('Policy logstd:')
-        # print(self.agent.ac.actor.log_std.cpu().detach().numpy())
+        print("Policy logstd:")
+        print(self.agent.ac.actor.log_std.cpu().detach().numpy())
+        self.logger.dump_scalars()
