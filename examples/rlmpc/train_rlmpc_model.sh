@@ -31,7 +31,7 @@ do
         --task ${SYS_NAME} \
         --overrides \
             ./config_overrides/${SYS}/${ALGO}_${SYS}.yaml \
-            ./config_overrides/${SYS}/${SYS}_${TASK}_gen.yaml \
+            ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
         --output_dir ./Results/${EXP_NAME} \
         --tag ${SYS}_${ALGO} \
         --seed ${SEED} \

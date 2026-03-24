@@ -103,3 +103,9 @@ register(
     entry_point="safe_control_gym.controllers.rlmpc.appo_mpc:APPO_MPC",
     config_entry_point="safe_control_gym.controllers.rlmpc:appo_mpc.yaml",
 )
+
+register(
+    idx="ppo_vmpc",
+    entry_point="safe_control_gym.controllers.rlmpc.ppo_vmpc:PPO_VMPC",
+    config_entry_point="safe_control_gym.controllers.rlmpc:ppo_vmpc.yaml",
+)

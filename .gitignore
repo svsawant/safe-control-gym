@@ -38,3 +38,5 @@ poetry.lock
 
 # OS
 .DS_Store
+
+*.c
