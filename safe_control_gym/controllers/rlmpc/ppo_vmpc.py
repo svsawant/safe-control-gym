@@ -1,4 +1,4 @@
-"""Proximal Policy Optimization (PPO) with MPC"""
+"""Proximal Policy Optimization (PPO) with VMPC"""
 
 import os
 import time
@@ -59,7 +59,7 @@ class PPO_VMPC(BaseController):
             )
             self.eval_venv = VecRecordEpisodeStatistics(self.eval_venv, self.deque_size)
             for env in self.eval_venv.envs:
-                env.rew_exponential = self.eval_env_rew_exponential
+                env.rew_exponential = self.eval_reward_exponential
         else:
             # Testing only.
             self.env = RecordEpisodeStatistics(self.env)
@@ -290,7 +290,9 @@ class PPO_VMPC(BaseController):
         start = time.time()
         agent_info = []
         for env in self.venv.envs:
-            agent_info.append({"current_step": 0, "x_ref": env.X_GOAL})
+            agent_info.append(
+                {"current_step": env.ctrl_step_counter, "x_ref": env.X_GOAL}
+            )
         for _ in range(self.rollout_steps):
             with torch.no_grad():
                 act, v, logp, soln_info, results_dict, optimal = self.agent.ac.step(
@@ -314,12 +316,15 @@ class PPO_VMPC(BaseController):
                     continue
                 inff = inf["terminal_info"]
                 if "TimeLimit.truncated" in inff and inff["TimeLimit.truncated"]:
-                    # terminal_obs = inf['terminal_observation']
-                    # terminal_obs_tensor = torch.FloatTensor(terminal_obs).unsqueeze(0).to(self.device)
+                    terminal_obs = inf["terminal_observation"]
+                    terminal_obs_tensor = (
+                        torch.FloatTensor(terminal_obs).unsqueeze(0).to(self.device)
+                    )
                     # terminal_val = self.agent.ac.critic(terminal_obs_tensor).squeeze().detach().cpu().numpy()
-                    terminal_val = self.agent.ac.critic(
-                        torch.FloatTensor(soln_info[idx]["val"]),
-                        torch.FloatTensor(soln_info[idx]["dvdp"]),
+                    terminal_val = self.agent.ac.hybrid_critic(
+                        terminal_obs_tensor,
+                        soln_info[idx]["val"],
+                        soln_info[idx]["dvdp"],
                     )
                     terminal_v[idx] = terminal_val.detach().cpu().numpy()
             rollouts.push(
@@ -362,7 +367,6 @@ class PPO_VMPC(BaseController):
         results["train"] = self.agent.update(rollouts, self.device)
         results["step"] = self.total_steps
         results["elapsed_time"] = time.time() - start
-        # results.update({'step': self.total_steps, 'elapsed_time': time.time() - start})
         return results
 
     def run(self, env=None, render=False, n_episodes=1, verbose=False):
@@ -373,7 +377,7 @@ class PPO_VMPC(BaseController):
         if env is None:
             env = self.venv
 
-        obs, info = env.reset()
+        obs, _ = env.reset()
         obs = self.obs_normalizer(obs)
         ep_returns, ep_lengths, ep_rmse, frames = [], [], [], []
         if hasattr(env, "envs"):
@@ -457,10 +461,10 @@ class PPO_VMPC(BaseController):
                     for k in [
                         "policy_loss",
                         "value_loss",
+                        "lstsq_value_loss",
                         "entropy_loss",
                         "approx_kl",
                         "theta_loss",
-                        "v_theta_loss",
                     ]
                 },
                 step,
@@ -512,5 +516,5 @@ class PPO_VMPC(BaseController):
         print("Policy logstd:")
         print(self.agent.ac.actor.logstd.detach().numpy())
         print("Value params:")
-        print(self.agent.ac.critic.weights.numpy())
+        print(self.agent.ac.hybrid_critic.weights.numpy())
         self.logger.dump_scalars()

@@ -288,7 +288,9 @@ class APPO_MPC(BaseController):
         start = time.time()
         agent_info = []
         for env in self.venv.envs:
-            agent_info.append({"current_step": 0, "x_ref": env.X_GOAL})
+            agent_info.append(
+                {"current_step": env.ctrl_step_counter, "x_ref": env.X_GOAL}
+            )
         for _ in range(self.rollout_steps):
             with torch.no_grad():
                 act, v, logp, mpc_act, nabla_pi_theta, optimal = self.agent.ac.step(
@@ -377,7 +379,7 @@ class APPO_MPC(BaseController):
         if env is None:
             env = self.venv
 
-        obs, env_info = env.reset()
+        obs, _ = env.reset()
         obs = self.obs_normalizer(obs)
         ep_returns, ep_lengths, ep_rmse, frames = [], [], [], []
         if hasattr(env, "envs"):

@@ -158,8 +158,8 @@ class PPO_MPC_Agent:
         # assert if num_mini_batch is 0
         assert num_mini_batch != 0, "num_mini_batch is 0"
         for _ in range(self.opt_epochs):
-            p_loss_epoch, v_loss_epoch, e_loss_epoch, kl_epoch = 0, 0, 0, 0
-            theta_loss_epoch, ref_loss_epoch = 0, 0
+            p_loss_epoch, e_loss_epoch, kl_epoch = 0, 0, 0
+            v_loss_epoch, theta_loss_epoch = 0, 0
             for batch, batch_th in rollouts.sampler(self.mini_batch_size, device):
                 # Actor update.
                 (
@@ -209,7 +209,6 @@ class PPO_MPC_Agent:
             results["entropy_loss"].append(e_loss_epoch / num_mini_batch)
             results["approx_kl"].append(kl_epoch / num_mini_batch)
             results["theta_loss"].append(theta_loss_epoch / num_mini_batch)
-            results["ref_loss"].append(ref_loss_epoch / num_mini_batch)
         results = {k: sum(v) / len(v) for k, v in results.items()}
         return results
 

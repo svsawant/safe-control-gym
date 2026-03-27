@@ -126,7 +126,9 @@ class SAC_MPC(BaseController):
             self.obs = self.obs_normalizer(obs)
             self.agent_info = []
             for env in self.venv.envs:
-                self.agent_info.append({"current_step": 0, "x_ref": env.X_GOAL})
+                self.agent_info.append(
+                    {"current_step": env.ctrl_step_counter, "x_ref": env.X_GOAL}
+                )
             self.buffer = SACBuffer(
                 self.env.observation_space,
                 self.env.action_space,
@@ -388,7 +390,7 @@ class SAC_MPC(BaseController):
         if env is None:
             env = self.venv
 
-        obs, env_info = env.reset()
+        obs, _ = env.reset()
         obs = self.obs_normalizer(obs)
         ep_returns, ep_lengths, ep_rmse, frames = [], [], [], []
         if hasattr(env, "envs"):

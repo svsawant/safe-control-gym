@@ -285,7 +285,9 @@ class PPO_MPC(BaseController):
         start = time.time()
         agent_info = []
         for env in self.venv.envs:
-            agent_info.append({"current_step": 0, "x_ref": env.X_GOAL})
+            agent_info.append(
+                {"current_step": env.ctrl_step_counter, "x_ref": env.X_GOAL}
+            )
         for _ in range(self.rollout_steps):
             with torch.no_grad():
                 act, v, logp, soln_info, results_dict, optimal = self.agent.ac.step(
@@ -363,7 +365,6 @@ class PPO_MPC(BaseController):
         results["train"] = self.agent.update(rollouts, self.device)
         results["step"] = self.total_steps
         results["elapsed_time"] = time.time() - start
-        # results.update({'step': self.total_steps, 'elapsed_time': time.time() - start})
         return results
 
     def run(self, env=None, render=False, n_episodes=1, verbose=False):
@@ -461,7 +462,6 @@ class PPO_MPC(BaseController):
                         "entropy_loss",
                         "approx_kl",
                         "theta_loss",
-                        "ref_loss",
                     ]
                 },
                 step,

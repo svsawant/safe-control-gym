@@ -15,8 +15,8 @@ algo_config:
       horizon: 10
       warmstart: True
       n_parallel_solver: 10
-      n_train_solver: 16
-      jit: False
+      n_train_solver: 64
+      jit: True
       jit_options:
         # compiler: "clang"  # gcc, ccache gcc, clang
         flags: ["-O2"]    # -O0, -Og, -O1, -O2, -O3 (-O1 and above may lead to very high compile times)
@@ -33,8 +33,8 @@ algo_config:
   value_loss_coef: 0.0
 
   # optim args
-  opt_epochs: 10
-  mini_batch_size: 128
+  opt_epochs: 5
+  mini_batch_size: 64
   actor_lr: 0.0003
   critic_lr: 0.0003
 
@@ -43,7 +43,7 @@ algo_config:
   rollout_batch_size: 10
   rollout_steps: 180
   eval_batch_size: 10
-  eval_reward_exponential: True
+  eval_reward_exponential: False
 
   # misc
   log_interval: 3600

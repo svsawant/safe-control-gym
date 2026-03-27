@@ -74,7 +74,9 @@ class PPO_VMPC_Agent:
 
         # Optimizers.
         self.actor_opt = torch.optim.Adam(self.ac.actor.parameters(), actor_lr)
-        # self.critic_opt = torch.optim.Adam(self.ac.critic.parameters(), critic_lr)
+        self.critic_opt = torch.optim.Adam(
+            self.ac.hybrid_critic.parameters(), critic_lr
+        )
 
     def to(self, device):
         """Puts agent to device."""
@@ -97,14 +99,14 @@ class PPO_VMPC_Agent:
         return {
             "ac": self.ac.state_dict(),
             "actor_opt": self.actor_opt.state_dict(),
-            # "critic_opt": self.critic_opt.state_dict()
+            "critic_opt": self.critic_opt.state_dict(),
         }
 
     def load_state_dict(self, state_dict, strict=True):
         """Restores agent state."""
         self.ac.load_state_dict(state_dict["ac"], strict=strict)
         self.actor_opt.load_state_dict(state_dict["actor_opt"])
-        # self.critic_opt.load_state_dict(state_dict["critic_opt"])
+        self.critic_opt.load_state_dict(state_dict["critic_opt"])
 
     def compute_policy_loss(self, batch, batch_th):
         """Returns policy loss(es) given batch of data."""
@@ -147,6 +149,21 @@ class PPO_VMPC_Agent:
             optimal,
         )
 
+    def compute_value_loss(self, batch_th):
+        """Returns value loss(es) given batch of data."""
+        obs, ret, v_old = batch_th["obs"], batch_th["ret"], batch_th["v"]
+        v_cur = self.ac.hybrid_critic.nn_critic_value(obs)
+        if self.use_clipped_value:
+            v_old_clipped = v_old + (v_cur - v_old).clamp(
+                -self.clip_param, self.clip_param
+            )
+            v_loss = (v_cur - ret).pow(2)
+            v_loss_clipped = (v_old_clipped - ret).pow(2)
+            value_loss = 0.5 * torch.max(v_loss, v_loss_clipped).mean()
+        else:
+            value_loss = 0.5 * (v_cur - ret).pow(2).mean()
+        return value_loss
+
     def update(self, rollouts, device="cpu"):
         """Updates model parameters based on current training batch."""
         results = defaultdict(list)
@@ -157,7 +174,7 @@ class PPO_VMPC_Agent:
         assert num_mini_batch != 0, "num_mini_batch is 0"
         for _ in range(self.opt_epochs):
             p_loss_epoch, e_loss_epoch, kl_epoch = 0, 0, 0
-            v_loss_epoch, theta_loss_epoch, v_theta_loss_epoch = 0, 0, 0
+            v_loss_epoch, theta_loss_epoch = 0, 0
             Av, bv = [], []
             for batch, batch_th in rollouts.sampler(self.mini_batch_size, device):
                 (
@@ -165,14 +182,14 @@ class PPO_VMPC_Agent:
                     entropy_loss,
                     approx_kl,
                     action_th,
-                    v_mpc,
-                    nabla_v_theta,
+                    _,
+                    _,
                     _,
                     nabla_pi_theta,
                     optimal,
                 ) = self.compute_policy_loss(batch, batch_th)
-                val = self.ac.critic(v_mpc, nabla_v_theta)
-                td_error = batch_th["ret"].float() - val
+                # val = self.ac.hybrid_critic.linear_critic_value(v_mpc, nabla_v_theta)
+                # td_error = batch_th["ret"].float() - val
 
                 # Actor update.
                 # Update only when no KL constraint or constraint is satisfied.
@@ -189,15 +206,15 @@ class PPO_VMPC_Agent:
                         @ nabla_pi_theta
                         @ theta.unsqueeze(2)
                     ).sum()
-                    v_theta_loss = (
-                        td_error.unsqueeze(2)
-                        @ nabla_v_theta.unsqueeze(1)
-                        @ theta.unsqueeze(2)
-                    ).mean()
+                    # v_theta_loss = (
+                    #     td_error.detach().unsqueeze(2)
+                    #     @ nabla_v_theta.unsqueeze(1)
+                    #     @ theta.unsqueeze(2)
+                    # ).mean()
                     # traj_ref = self.ac.actor.get_ref_param(batch['info'])
                     # ref_loss = action_th.grad.unsqueeze(1) @ nabla_pi_ref @ traj_ref.unsqueeze(2)
-                    (theta_loss + self.value_loss_coef * v_theta_loss).backward()
-                    # theta_loss.sum().backward()
+                    # (theta_loss + float(self.value_loss_coef) * v_theta_loss).backward()
+                    theta_loss.backward()
                     self.actor_opt.step()
                     with torch.no_grad():
                         self.ac.actor.mpc_param.clamp_(1e-5, 100.0)
@@ -207,43 +224,66 @@ class PPO_VMPC_Agent:
                     kl_epoch += approx_kl.item()
                     theta_loss_epoch += theta_loss.item()
                     # ref_loss_epoch += ref_loss.sum().item()
-                    v_theta_loss_epoch += v_theta_loss.item()
+                    # v_theta_loss_epoch += v_theta_loss.item()
 
-                # Critic update
-                # value_loss = 0.5 * td_error.pow(2).mean()
-                # self.critic_opt.zero_grad()
-                # value_loss.backward()
-                # self.critic_opt.step()
-                # v_loss_epoch += value_loss.item()
-                # Linear equations for value function loss.
-                for i in range(optimal.shape[0]):
-                    if optimal[i, 0] > 0.5:
-                        Av.append(-nabla_v_theta[i, :].numpy())
-                        bv.append((batch_th["ret"][i, 0] + v_mpc[i, 0]).numpy())
-
-            # If there are no valid samples, skip the critic update.
-            if len(Av) > 0:
-                Av = np.asarray(Av, dtype=np.float64)
-                bv = np.asarray(bv, dtype=np.float64).reshape(-1, 1)
-
-                # optional: normalize columns
-                col_scale = np.maximum(np.linalg.norm(Av, axis=0, keepdims=True), 1e-8)
-                Avn = Av / col_scale
-
-                AtA = Avn.T @ Avn
-                Atb = Avn.T @ bv
-                w_scaled = np.linalg.solve(AtA + 1e-4 * np.eye(AtA.shape[0]), Atb)
-                w = (w_scaled / col_scale.T).squeeze(-1)
-                self.ac.critic.weights.copy_(torch.as_tensor(w, dtype=torch.float32))
-
-                resid = Av @ w.reshape(-1, 1) - bv
-                results["value_loss"].append(0.5 * np.mean(resid**2))
+                # NN Critic update.
+                value_loss = self.compute_value_loss(batch_th)
+                self.critic_opt.zero_grad()
+                value_loss.backward()
+                self.critic_opt.step()
+                v_loss_epoch += value_loss.item()
 
             results["policy_loss"].append(p_loss_epoch / num_mini_batch)
             results["entropy_loss"].append(e_loss_epoch / num_mini_batch)
             results["approx_kl"].append(kl_epoch / num_mini_batch)
             results["theta_loss"].append(theta_loss_epoch / num_mini_batch)
-            results["v_theta_loss"].append(v_theta_loss_epoch / num_mini_batch)
+            # results["v_theta_loss"].append(v_theta_loss_epoch / num_mini_batch)
+            results["value_loss"].append(v_loss_epoch / num_mini_batch)
+
+        # Linear Critic update
+        Av, bv = [], []
+        for batch, batch_th in rollouts.sampler(self.mini_batch_size, device):
+            obs, act, info = batch_th["obs"], batch_th["act"], batch["info"]
+            (
+                _,
+                _,
+                _,
+                v_mpc,
+                nabla_v_theta,
+                _,
+                _,
+                optimal,
+            ) = self.ac.actor.forward_train(obs, act, info)
+            # Linear equations for value function loss.
+            for i in range(optimal.shape[0]):
+                if optimal[i, 0] > 0.5:
+                    Av.append(-nabla_v_theta[i, :].numpy())
+                    bv.append((batch_th["ret"][i, 0] + v_mpc[i, 0]).numpy())
+
+        # If there are no valid samples, skip the critic update.
+        if len(Av) > 0:
+            Av = np.asarray(Av, dtype=np.float64)
+            bv = np.asarray(bv, dtype=np.float64).reshape(-1, 1)
+
+            # optional: normalize columns
+            col_scale = np.maximum(np.linalg.norm(Av, axis=0, keepdims=True), 1e-8)
+            Avn = Av  # / col_scale
+
+            AtA = Avn.T @ Avn
+            Atb = Avn.T @ bv
+            w_scaled = np.linalg.solve(AtA + 1e-4 * np.eye(AtA.shape[0]), Atb)
+            # w = (w_scaled / col_scale.T).squeeze(-1)
+            w = w_scaled.squeeze(-1)
+            self.ac.hybrid_critic.weights.copy_(torch.as_tensor(w, dtype=torch.float32))
+
+            resid = Av @ w.reshape(-1, 1) - bv
+            linear_v_loss_epoch = 0.5 * np.mean(resid**2)
+            results["lstsq_value_loss"].append(linear_v_loss_epoch)
+        nn_v_loss_epoch = v_loss_epoch / num_mini_batch
+        self.ac.hybrid_critic.weight_coeff_critic = nn_v_loss_epoch / (
+            linear_v_loss_epoch + nn_v_loss_epoch + 1e-6
+        )
+
         results = {k: sum(v) / len(v) for k, v in results.items()}
         return results
 
@@ -293,7 +333,9 @@ class MLPActorCritic(nn.Module):
             actor_config,
         )
         # Value function.
-        self.critic = LinearCritic(self.actor.n_learnable_param)
+        self.hybrid_critic = Critic(
+            obs_dim, self.actor.n_learnable_param, hidden_dims, activation
+        )
 
     def step(self, obs, info=None):
         dist, _, v_mpc, dvdp, soln_info, results_dict, optimal_flag = self.actor(
@@ -301,7 +343,7 @@ class MLPActorCritic(nn.Module):
         )
         a = dist.sample()
         logp_a = dist.log_prob(a)
-        v = self.critic(torch.FloatTensor(v_mpc), torch.FloatTensor(dvdp))
+        v = self.hybrid_critic(obs, v_mpc, dvdp)
         return (
             a.cpu().numpy(),
             v.cpu().numpy(),
@@ -320,18 +362,29 @@ class MLPActorCritic(nn.Module):
         self.actor.reset(idx)
 
 
-class LinearCritic(nn.Module):
+class Critic(nn.Module):
     """Linear value function approximator."""
 
-    def __init__(self, input_dim):
+    def __init__(self, obs_dim, input_dim, hidden_dims, activation):
         super().__init__()
         # self.weights = nn.Parameter(torch.zeros(input_dim))
         # self.weights = torch.zeros(input_dim)
         self.register_buffer("weights", torch.zeros(input_dim))
+        self.v_net = MLP(obs_dim, 1, hidden_dims, activation)
+        self.weight_coeff_critic = 1.0
 
-    def forward(self, vmpc, dvdtheta):
-        val = vmpc + dvdtheta @ self.weights.unsqueeze(1)
-        return -val
+    def forward(self, obs, vmpc, dvdtheta):
+        val1 = -vmpc - dvdtheta @ self.weights.unsqueeze(1)
+        val2 = self.v_net(obs)
+        val = self.weight_coeff_critic * val1 + (1 - self.weight_coeff_critic) * val2
+        return val
+
+    def linear_critic_value(self, vmpc, dvdtheta):
+        val = -vmpc - dvdtheta @ self.weights.unsqueeze(1)
+        return val
+
+    def nn_critic_value(self, obs):
+        return self.v_net(obs)
 
 
 class MPCActor(nn.Module):
@@ -582,8 +635,10 @@ class MPCPolicyFunction(MPCFunction):
         rkkt_norm_batch = self.rkkt_norm_fns(z, fixed_p, ref_p, theta.T)
         dvdp_batch = self.dvdp_fns(z, fixed_p, ref_p, theta.T)
         optimal_batch = rkkt_norm_batch.full() < 1e-3
-        vmpc_batch = soln_batch["f"].full().T
-        dvdp_batch = (dvdp_batch.full() * optimal_batch.astype(float)).T
+        vmpc_batch = torch.FloatTensor(soln_batch["f"].full().T)
+        dvdp_batch = torch.FloatTensor(
+            dvdp_batch.full() * optimal_batch.astype(float)
+        ).T
 
         # Post-processing the solution
         action_batch, results_dict_batch, info_batch = [], [], []
@@ -840,34 +895,6 @@ class PPOBuffer(object):
 # -----------------------------------------------------------------------------------
 #                   Misc
 # -----------------------------------------------------------------------------------
-
-
-def update_initial_guess(x_prev, u_prev, sigma_prev, opt_vars_fn):
-    # shift previous solutions by 1 step
-    u_guess = deepcopy(u_prev)
-    x_guess = deepcopy(x_prev)
-    sigma_guess = deepcopy(sigma_prev)
-    u_guess[:, :-1] = u_guess[:, 1:]
-    x_guess[:, :-1] = x_guess[:, 1:]
-    sigma_guess[:, :-1] = sigma_guess[:, 1:]
-    opt_vars_init = opt_vars_fn(x_guess, u_guess, sigma_guess).full()
-    return opt_vars_init
-
-
-def _create_semi_definite_matrix(n):
-    # U = cs.SX.sym("U", cs.Sparsity.lower(n))
-    # u = cs.vertcat(*U.nonzeros())
-    # W_upper = cs.Function("Lower_tri_W", [u], [U])
-    # np = int(n * (n + 1) / 2)
-    # p = cs.MX.sym("p", np)
-    # W = W_upper(p)
-    # WW = W.T @ W
-
-    n_param = n
-    P = cs.MX.sym("P", n)
-    W = cs.diag(P)
-    # WW = cs.sqrt(W.T @ W)
-    return W, P, n_param
 
 
 def random_sample(indices, batch_size, drop_last=True):
