@@ -16,7 +16,7 @@ algo_config:
       warmstart: True
       n_parallel_solver: 10
       n_train_solver: 64
-      jit: True
+      jit: False
       jit_options:
         # compiler: "clang"  # gcc, ccache gcc, clang
         flags: ["-O2"]    # -O0, -Og, -O1, -O2, -O3 (-O1 and above may lead to very high compile times)
@@ -37,15 +37,15 @@ algo_config:
   tanh_squash: False
 
   # runner args
-  max_env_steps: 360000
+  max_env_steps: 180000
   warm_up_steps: 1800
   rollout_batch_size: 10
-  max_buffer_size: 180000
+  max_buffer_size: 90000
   eval_batch_size: 10
 
   # misc
   log_interval: 3600
-  save_interval: 360000
+  save_interval: 180000
   num_checkpoints: 0
   eval_interval: 3600
   eval_save_best: True
