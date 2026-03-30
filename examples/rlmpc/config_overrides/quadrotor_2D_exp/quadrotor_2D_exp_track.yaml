@@ -73,7 +73,7 @@ task_config:
 
   episode_len_sec: 6
   cost: rl_reward
-  obs_goal_horizon: 10
+  obs_goal_horizon: 20
 
   # RL Reward
   rew_state_weight: [10., .1, 10., .1, .1, 0.001]

@@ -10,7 +10,10 @@ import torch.nn as nn
 from gymnasium.spaces import Box
 
 from safe_control_gym.controllers.mpc.mpc_utils import reset_constraints
-from safe_control_gym.controllers.rlmpc.rlmpc_utils import AdamOptimizer, euler_discrete
+from safe_control_gym.controllers.ppo_mpc.rlmpc_utils import (
+    AdamOptimizer,
+    euler_discrete,
+)
 from safe_control_gym.envs.benchmark_env import Task
 from safe_control_gym.envs.constraints import (
     GENERAL_CONSTRAINTS,
@@ -835,7 +838,6 @@ class MPCPolicyFunction:
         print(optimal)
         print(action)
         # print(nabla_pi_model)
-        p()
 
         # additional info
         info = {
@@ -843,8 +845,8 @@ class MPCPolicyFunction:
             "soln": deepcopy(soln),
             "fixed_param": deepcopy(fixed_param),
             "ref_param": deepcopy(ref_param),
-            "cost_param": deepcopy(cost_param),
-            "model_param": deepcopy(model_param),
+            # "cost_param": deepcopy(cost_param),
+            # "model_param": deepcopy(model_param),
             "traj_step": deepcopy(self.traj_step) - 1,
         }
         return action, info, results_dict, optimal

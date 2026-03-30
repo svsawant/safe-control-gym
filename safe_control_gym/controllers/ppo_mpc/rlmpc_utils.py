@@ -520,7 +520,10 @@ class MPCFunction:
         #### Generate sensitivity of the KKT matrix
         rkkt_fn = cs.Function("rkkt_fn", [z, fixed_param, ref_param, theta], [R_kkt])
         rkkt_norm_fn = cs.Function(
-            "rkkt_norm_fn", [z, fixed_param, ref_param, theta], [cs.norm_2(R_kkt)]
+            "rkkt_norm_fn",
+            [z, fixed_param, ref_param, theta],
+            [cs.norm_2(R_kkt)],
+            jit_opts,
         )
         dR_sensfunc = rkkt_fn.factory(
             "dR", ["i0", "i1", "i2", "i3"], ["jac:o0:i0", "jac:o0:i2", "jac:o0:i3"]
@@ -575,20 +578,26 @@ class MPCFunction:
             "u_var": u_var,
             "state_slack": sigma_var,
             "opt_vars": opt_vars,
+            "mult": mult,
+            "fixed_param": fixed_param,
+            "ref_param": ref_param,
+            "theta_param": theta,
             "opt_vars_fn": opt_vars_fn,
             "xus_fn": xus_fn,
             "opt_act_fn": opt_act_fn,
-            "theta_param": theta,
             "cost": cost,
             "lower_bound": con_lbg,
             "upper_bound": con_ubg,
             "lang_mult_fn": lang_mult_fn,
             "solver": pisolver,
+            "R_kkt": R_kkt,
+            "dVdtheta": dVdtheta,
             "dVdtheta_fn": dVdtheta_fn,
             "rkkt_fn": rkkt_fn,
             "rkkt_norm_fn": rkkt_norm_fn,
             "dpi_fn": dPi_fn,
             "all_fn": all_fn,
+            "jit_options": jit_opts,
         }
 
     def get_references(self, traj_step=None, traj_ref=None):

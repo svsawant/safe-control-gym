@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from safe_control_gym.controllers.base_controller import BaseController
-from safe_control_gym.controllers.rlmpc.appo_mpc_utils import (
+from safe_control_gym.controllers.ppo_mpc.appo_mpc_utils import (
     APPO_MPC_Agent,
     APPOBuffer,
     compute_returns_and_advantages,

@@ -88,24 +88,30 @@ register(
 
 register(
     idx="ppo_mpc",
-    entry_point="safe_control_gym.controllers.rlmpc.ppo_mpc:PPO_MPC",
-    config_entry_point="safe_control_gym.controllers.rlmpc:ppo_mpc.yaml",
+    entry_point="safe_control_gym.controllers.ppo_mpc.ppo_mpc:PPO_MPC",
+    config_entry_point="safe_control_gym.controllers.ppo_mpc:ppo_mpc.yaml",
 )
 
 register(
     idx="sac_mpc",
-    entry_point="safe_control_gym.controllers.rlmpc.sac_mpc:SAC_MPC",
-    config_entry_point="safe_control_gym.controllers.rlmpc:sac_mpc.yaml",
+    entry_point="safe_control_gym.controllers.sac_mpc.sac_mpc:SAC_MPC",
+    config_entry_point="safe_control_gym.controllers.sac_mpc:sac_mpc.yaml",
 )
 
 register(
     idx="appo_mpc",
-    entry_point="safe_control_gym.controllers.rlmpc.appo_mpc:APPO_MPC",
-    config_entry_point="safe_control_gym.controllers.rlmpc:appo_mpc.yaml",
+    entry_point="safe_control_gym.controllers.ppo_mpc.appo_mpc:APPO_MPC",
+    config_entry_point="safe_control_gym.controllers.ppo_mpc:appo_mpc.yaml",
 )
 
 register(
     idx="ppo_vmpc",
-    entry_point="safe_control_gym.controllers.rlmpc.ppo_vmpc:PPO_VMPC",
-    config_entry_point="safe_control_gym.controllers.rlmpc:ppo_vmpc.yaml",
+    entry_point="safe_control_gym.controllers.ppo_mpc.ppo_vmpc:PPO_VMPC",
+    config_entry_point="safe_control_gym.controllers.ppo_mpc:ppo_vmpc.yaml",
+)
+
+register(
+    idx="sac_qmpc",
+    entry_point="safe_control_gym.controllers.sac_mpc.sac_qmpc:SAC_QMPC",
+    config_entry_point="safe_control_gym.controllers.sac_mpc:sac_qmpc.yaml",
 )

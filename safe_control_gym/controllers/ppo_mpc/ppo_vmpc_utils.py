@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from gymnasium.spaces import Box
 
-from safe_control_gym.controllers.rlmpc.rlmpc_utils import (
+from safe_control_gym.controllers.ppo_mpc.rlmpc_utils import (
     update_initial_guess,
     MPCFunction,
 )
@@ -74,9 +74,9 @@ class PPO_VMPC_Agent:
 
         # Optimizers.
         self.actor_opt = torch.optim.Adam(self.ac.actor.parameters(), actor_lr)
-        self.critic_opt = torch.optim.Adam(
-            self.ac.hybrid_critic.parameters(), critic_lr
-        )
+        # self.critic_opt = torch.optim.Adam(
+        #     self.ac.hybrid_critic.parameters(), critic_lr
+        # )
 
     def to(self, device):
         """Puts agent to device."""
@@ -99,14 +99,14 @@ class PPO_VMPC_Agent:
         return {
             "ac": self.ac.state_dict(),
             "actor_opt": self.actor_opt.state_dict(),
-            "critic_opt": self.critic_opt.state_dict(),
+            # "critic_opt": self.critic_opt.state_dict(),
         }
 
     def load_state_dict(self, state_dict, strict=True):
         """Restores agent state."""
         self.ac.load_state_dict(state_dict["ac"], strict=strict)
         self.actor_opt.load_state_dict(state_dict["actor_opt"])
-        self.critic_opt.load_state_dict(state_dict["critic_opt"])
+        # self.critic_opt.load_state_dict(state_dict["critic_opt"])
 
     def compute_policy_loss(self, batch, batch_th):
         """Returns policy loss(es) given batch of data."""
@@ -126,7 +126,7 @@ class PPO_VMPC_Agent:
             nabla_pi_ref,
             nabla_pi_theta,
             optimal,
-        ) = self.ac.actor.forward_train(obs, act, info)
+        ) = self.ac.actor.forward_train(obs, act, info, pi_sensitivity=True)
 
         # Policy.
         ratio = torch.exp(logp - logp_old)
@@ -227,11 +227,11 @@ class PPO_VMPC_Agent:
                     # v_theta_loss_epoch += v_theta_loss.item()
 
                 # NN Critic update.
-                value_loss = self.compute_value_loss(batch_th)
-                self.critic_opt.zero_grad()
-                value_loss.backward()
-                self.critic_opt.step()
-                v_loss_epoch += value_loss.item()
+                # value_loss = self.compute_value_loss(batch_th)
+                # self.critic_opt.zero_grad()
+                # value_loss.backward()
+                # self.critic_opt.step()
+                # v_loss_epoch += value_loss.item()
 
             results["policy_loss"].append(p_loss_epoch / num_mini_batch)
             results["entropy_loss"].append(e_loss_epoch / num_mini_batch)
@@ -253,7 +253,7 @@ class PPO_VMPC_Agent:
                 _,
                 _,
                 optimal,
-            ) = self.ac.actor.forward_train(obs, act, info)
+            ) = self.ac.actor.forward_train(obs, act, info, v_sensitivity=True)
             # Linear equations for value function loss.
             for i in range(optimal.shape[0]):
                 if optimal[i, 0] > 0.5:
@@ -266,7 +266,7 @@ class PPO_VMPC_Agent:
             bv = np.asarray(bv, dtype=np.float64).reshape(-1, 1)
 
             # optional: normalize columns
-            col_scale = np.maximum(np.linalg.norm(Av, axis=0, keepdims=True), 1e-8)
+            # col_scale = np.maximum(np.linalg.norm(Av, axis=0, keepdims=True), 1e-8)
             Avn = Av  # / col_scale
 
             AtA = Avn.T @ Avn
@@ -279,10 +279,10 @@ class PPO_VMPC_Agent:
             resid = Av @ w.reshape(-1, 1) - bv
             linear_v_loss_epoch = 0.5 * np.mean(resid**2)
             results["lstsq_value_loss"].append(linear_v_loss_epoch)
-        nn_v_loss_epoch = v_loss_epoch / num_mini_batch
-        self.ac.hybrid_critic.weight_coeff_critic = nn_v_loss_epoch / (
-            linear_v_loss_epoch + nn_v_loss_epoch + 1e-6
-        )
+        # nn_v_loss_epoch = v_loss_epoch / num_mini_batch
+        # self.ac.hybrid_critic.weight_coeff_critic = nn_v_loss_epoch / (
+        #     linear_v_loss_epoch + nn_v_loss_epoch + 1e-6
+        # )
 
         results = {k: sum(v) / len(v) for k, v in results.items()}
         return results
@@ -354,7 +354,7 @@ class MLPActorCritic(nn.Module):
         )
 
     def act(self, obs, info=None):
-        dist, _, _, _, _, _, _ = self.actor(obs, actor_info=info)
+        dist, _, _, _, _, _, _ = self.actor(obs, actor_info=info, sensitivity=False)
         a = dist.mode()
         return a.cpu().numpy()
 
@@ -375,8 +375,8 @@ class Critic(nn.Module):
 
     def forward(self, obs, vmpc, dvdtheta):
         val1 = -vmpc - dvdtheta @ self.weights.unsqueeze(1)
-        val2 = self.v_net(obs)
-        val = self.weight_coeff_critic * val1 + (1 - self.weight_coeff_critic) * val2
+        # val2 = self.v_net(obs)
+        val = self.weight_coeff_critic * val1  # + (1 - self.weight_coeff_critic) * val2
         return val
 
     def linear_critic_value(self, vmpc, dvdtheta):
@@ -437,12 +437,14 @@ class MPCActor(nn.Module):
             "f": np.array(self.model_param),
         }
 
-    def forward(self, obs, act=None, actor_info=None):
+    def forward(self, obs, act=None, actor_info=None, sensitivity=True):
         theta = self.get_theta_param(obs)
         traj_param = self.get_references(actor_info)
         if obs.ndim > 1:
             action, v_mpc, dvdp, info, results_dict, optimal_flag = (
-                self.mpc.select_action_batch(obs, theta.numpy(), traj_param, actor_info)
+                self.mpc.select_action_batch(
+                    obs, theta.numpy(), traj_param, actor_info, sensitivity=sensitivity
+                )
             )
         else:
             action, info, results_dict, optimal_flag = self.mpc.select_action(
@@ -457,7 +459,7 @@ class MPCActor(nn.Module):
             logp_a = dist.log_prob(act)
         return dist, logp_a, v_mpc, dvdp, info, results_dict, optimal_flag
 
-    def forward_train(self, obs, act, info):
+    def forward_train(self, obs, act, info, pi_sensitivity=False, v_sensitivity=False):
         theta = self.get_theta_param(obs)
         action, v_mpc, nabla_v_theta, nabla_pi_ref, nabla_pi_theta, optimal_flag = (
             self.mpc.select_action_batch_train(
@@ -465,6 +467,8 @@ class MPCActor(nn.Module):
                 theta.detach().numpy(),
                 self.traj_param.detach().numpy(),
                 info,
+                pi_sensitivity=pi_sensitivity,
+                v_sensitivity=v_sensitivity,
             )
         )
         action_th = action
@@ -577,14 +581,38 @@ class MPCPolicyFunction(MPCFunction):
         )
 
         # Parallel solvers
-        self.pi_solvers, self.rkkt_norm_fns, _, self.dvdp_fns, _ = (
+        self.pi_solvers, self.rkkt_norm_fns, _, self.all_solvers2 = (
             self.get_parallel_solver(self.n_parallel_solver)
         )
-        self.pi_solvers_train, _, _, self.dvdp_fns_train, self.all_solvers_train = (
+        self.pi_solvers_train, _, self.all_solvers_train, self.all_solvers2_train = (
             self.get_parallel_solver(self.n_train_solver)
         )
 
-    def select_action_batch(self, obs_batch, theta, traj_ref, actor_info):
+    def setup_optimizer(self):
+        super().setup_optimizer()
+
+        z = cs.vertcat(self.solver_dict["opt_vars"], self.solver_dict["mult"])
+        fixed_param = self.solver_dict["fixed_param"]
+        ref_param = self.solver_dict["ref_param"]
+        theta = self.solver_dict["theta_param"]
+        start_time = time.time()
+
+        # R_kkt function with jit
+        all_fn2 = cs.Function(
+            "all_fn2",
+            [z, fixed_param, ref_param, theta],
+            [cs.norm_2(self.solver_dict["R_kkt"]), self.solver_dict["dVdtheta"].T],
+            self.solver_dict["jit_options"],
+        )
+        self.solver_dict["all_fn2"] = all_fn2
+        # all_fn.save("all_fn.casadi")
+        print(
+            f"[MPC Setup] JIT compilation time: {time.time() - start_time:.3f} seconds."
+        )
+
+    def select_action_batch(
+        self, obs_batch, theta, traj_ref, actor_info, sensitivity=True
+    ):
         if not obs_batch.ndim > 1:
             obs_batch = obs_batch[None, :]
         con_lbg = self.solver_dict["lower_bound"]
@@ -631,14 +659,20 @@ class MPCPolicyFunction(MPCFunction):
 
         # Forward pass through solver
         soln_batch = self.pi_solvers(x0=x0, p=p, lbg=lbg, ubg=ubg)
-        z = cs.vertcat(soln_batch["x"], soln_batch["lam_g"])
-        rkkt_norm_batch = self.rkkt_norm_fns(z, fixed_p, ref_p, theta.T)
-        dvdp_batch = self.dvdp_fns(z, fixed_p, ref_p, theta.T)
-        optimal_batch = rkkt_norm_batch.full() < 1e-3
-        vmpc_batch = torch.FloatTensor(soln_batch["f"].full().T)
-        dvdp_batch = torch.FloatTensor(
-            dvdp_batch.full() * optimal_batch.astype(float)
-        ).T
+        if sensitivity:
+            z = cs.vertcat(soln_batch["x"], soln_batch["lam_g"])
+            # rkkt_norm_batch = self.rkkt_norm_fns(z, fixed_p, ref_p, theta.T)
+            # dvdp_batch = self.dvdp_fns(z, fixed_p, ref_p, theta.T)
+            rkkt_norm_batch, dvdp_batch = self.all_solvers2(z, fixed_p, ref_p, theta.T)
+            optimal_batch = rkkt_norm_batch.full() < 1e-3
+            vmpc_batch = torch.FloatTensor(soln_batch["f"].full().T)
+            dvdp_batch = torch.FloatTensor(
+                dvdp_batch.full() * optimal_batch.astype(float)
+            ).T
+        else:
+            optimal_batch = np.array([True] * obs_batch.shape[0])
+            vmpc_batch = torch.FloatTensor(soln_batch["f"].full().T)
+            dvdp_batch = None
 
         # Post-processing the solution
         action_batch, results_dict_batch, info_batch = [], [], []
@@ -664,16 +698,18 @@ class MPCPolicyFunction(MPCFunction):
 
             # additional info
             info = {
-                "success": optimal_batch[0, i],
                 "opt_var": opt_vars,
                 "fixed_param": deepcopy(fixed_p[:, i]),
                 "ref_param": deepcopy(ref_p[:, i]),
                 "theta_param": deepcopy(theta[i, :]),
-                "val": vmpc_batch[i, :],
-                "dvdp": dvdp_batch[i, :],
                 "traj_step": deepcopy(actor_info[i]["current_step"]),
                 "x_ref": deepcopy(actor_info[i]["x_ref"]),
             }
+            if sensitivity:
+                info["optimal"] = optimal_batch[0, i]
+                info["rkkt_norm"] = rkkt_norm_batch.full()[0, i]
+                info["val"] = vmpc_batch[i, :]
+                info["dvdp"] = dvdp_batch[i, :]
 
             # results batch
             action_batch.append(action)
@@ -689,15 +725,23 @@ class MPCPolicyFunction(MPCFunction):
             optimal_batch,
         )
 
-    def select_action_batch_train(self, obs_batch, theta, traj_ref, info_batch):
+    def select_action_batch_train(
+        self,
+        obs_batch,
+        theta,
+        traj_ref,
+        info_batch,
+        pi_sensitivity=False,
+        v_sensitivity=False,
+    ):
         """Solves nonlinear mpc problem to get next action for training.
         Args:
             obs_batch (ndarray): Current state/observation.
             theta (ndarray): Learnable param based on current state
             traj_ref (ndarray): Learnable trajectory
             info_batch (list): List of info dicts for each batch element.
-            compute_v_sensitivity (bool): Whether to compute sensitivity of value function.
-            compute_dpi_sensitivity (bool): Whether to compute sensitivity of policy.
+            pi_sensitivity (bool): Whether to compute sensitivity of policy.
+            v_sensitivity (bool): Whether to compute sensitivity of value function.
         Returns:
             action_batch (torch.Tensor): Input/action to the task/env.
             V_mpc (torch.Tensor): Value function for each batch element.
@@ -740,23 +784,30 @@ class MPCPolicyFunction(MPCFunction):
         # dVdtheta = dVdtheta_fn(optimal_batch, z, fixed_p, ref_p, theta.T).full().T
         # action_batch = opt_act_fn(soln_batch["x"]).full().T
         # dpi_cs = dpi_fn_train(optimal_batch, z, fixed_p, ref_p, theta.T).full()
-        rkkt_norm_batch, dpi_cs = self.all_solvers_train(z, fixed_p, ref_p, theta.T)
-        dvdp_batch = self.dvdp_fns_train(z, fixed_p, ref_p, theta.T)
-        optimal_batch = rkkt_norm_batch.full() < 1e-3
         V_mpc = soln_batch["f"].full().T
-        dVdtheta = (dvdp_batch.full() * optimal_batch.astype(float)).T
-        nabla_pi_ref_batch, nabla_pi_theta_batch = [], []
-        for i in range(obs_batch.shape[0]):
-            # nabla_pi_ref_batch.append(dpi_cs[:ref_p.shape[0], self.model.nu * i: self.model.nu * (i + 1)].T)
-            nabla_pi_theta_batch.append(
-                int(optimal_batch[0, i])
-                * dpi_cs[
-                    self.model.nx : self.model.nx + self.model.nu,
-                    self.solver_dict["theta_param"].shape[0]
-                    * i : self.solver_dict["theta_param"].shape[0]
-                    * (i + 1),
-                ]
+        if pi_sensitivity:
+            rkkt_norm_batch, dpi_cs = self.all_solvers_train(z, fixed_p, ref_p, theta.T)
+            optimal_batch = rkkt_norm_batch.full() < 1e-3
+            nabla_pi_ref_batch, nabla_pi_theta_batch = [], []
+            for i in range(obs_batch.shape[0]):
+                # nabla_pi_ref_batch.append(dpi_cs[:ref_p.shape[0], self.model.nu * i: self.model.nu * (i + 1)].T)
+                nabla_pi_theta_batch.append(
+                    int(optimal_batch[0, i])
+                    * dpi_cs[
+                        self.model.nx : self.model.nx + self.model.nu,
+                        self.solver_dict["theta_param"].shape[0]
+                        * i : self.solver_dict["theta_param"].shape[0]
+                        * (i + 1),
+                    ]
+                )
+            dVdtheta = []
+        elif v_sensitivity:
+            rkkt_norm_batch, dvdp_batch = self.all_solvers2_train(
+                z, fixed_p, ref_p, theta.T
             )
+            optimal_batch = rkkt_norm_batch.full() < 1e-3
+            dVdtheta = (dvdp_batch.full() * optimal_batch.astype(float)).T
+            nabla_pi_ref_batch, nabla_pi_theta_batch = [], []
 
         # Convert to torch tensors
         action_batch = torch.FloatTensor(action_batch)
@@ -779,13 +830,15 @@ class MPCPolicyFunction(MPCFunction):
         rkkt_norm_solvers = self.solver_dict["rkkt_norm_fn"].map(n_solvers, "thread")
         # rkkt_fn = cs.Function.load('rkkt_fn.casadi')
         # rkkt_solvers = rkkt_fn.map(n_solvers, 'thread')
-        dpi_solvers = self.solver_dict["dpi_fn"].map(n_solvers, "thread")
+        # dpi_solvers = self.solver_dict["dpi_fn"].map(n_solvers, "thread")
         # dPi_fn = cs.Function.load('dPi_fn.casadi')
         # dpi_solvers = dPi_fn.map(n_solvers, 'thread')
-        dvdp_solvers = self.solver_dict["dVdtheta_fn"].map(n_solvers, "thread")
+        # dvdp_solvers = self.solver_dict["dVdtheta_fn"].map(n_solvers, "thread")
         all_fn = self.solver_dict["all_fn"]
         all_solvers = all_fn.map(n_solvers, "thread")
-        return pi_solvers, rkkt_norm_solvers, dpi_solvers, dvdp_solvers, all_solvers
+        all_fn2 = self.solver_dict["all_fn2"]
+        all_solvers2 = all_fn2.map(n_solvers, "thread")
+        return pi_solvers, rkkt_norm_solvers, all_solvers, all_solvers2
 
 
 class PPOBuffer(object):

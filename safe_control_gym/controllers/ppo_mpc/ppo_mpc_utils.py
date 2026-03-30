@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from gymnasium.spaces import Box
 
-from safe_control_gym.controllers.rlmpc.rlmpc_utils import (
+from safe_control_gym.controllers.ppo_mpc.rlmpc_utils import (
     update_initial_guess,
     MPCFunction,
 )
