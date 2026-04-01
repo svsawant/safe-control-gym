@@ -308,7 +308,10 @@ class SAC_MPC(BaseController):
             )
         if self.total_steps < self.warm_up_steps:
             action = np.stack(
-                [self.env.action_space.sample() for _ in range(self.rollout_batch_size)]
+                [
+                    self.venv.envs[i].action_space.sample()
+                    for i in range(self.rollout_batch_size)
+                ]
             )
         next_obs, rew, done, info = self.venv.step(action)
         next_obs = self.obs_normalizer(next_obs)
