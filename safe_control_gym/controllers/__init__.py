@@ -93,6 +93,12 @@ register(
 )
 
 register(
+    idx="phi_ppo_mpc",
+    entry_point="safe_control_gym.controllers.ppo_mpc.phi_ppo_mpc:PhiPPO_MPC",
+    config_entry_point="safe_control_gym.controllers.ppo_mpc:phi_ppo_mpc.yaml",
+)
+
+register(
     idx="sac_mpc",
     entry_point="safe_control_gym.controllers.sac_mpc.sac_mpc:SAC_MPC",
     config_entry_point="safe_control_gym.controllers.sac_mpc:sac_mpc.yaml",

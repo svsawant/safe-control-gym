@@ -2,6 +2,11 @@
 results/
 temp-data/
 Results/
+.codex
+examples/rlmpc/command.txt
+examples/rlmpc/experiment_results/
+examples/rlmpc/generated_phi/
+safe_control_gym/controllers/ppo_mpc/static_phi/
 
 # acados
 c_generated_code/

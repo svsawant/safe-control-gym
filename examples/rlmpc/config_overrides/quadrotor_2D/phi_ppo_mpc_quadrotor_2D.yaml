@@ -1,0 +1,53 @@
+algo_config:
+  phi_path: "./generated_phi/phi_tini-15_horizon-20_auto.npy"
+  phi_bias_path: null
+
+  hidden_dim: 256
+  activation: "relu"
+
+  survival_bonus: 0.05
+
+  actor_config:
+    qy_mpc: [7, 7, 2]
+    r_mpc: [1, 1]
+    terminal_weight_scale: 0.3
+    w_sigma_init: 10.0
+    theta_max_init: 10.0
+    mpc_config:
+      horizon: 20
+      t_ini: 15
+      y_indices: [0, 2, 4]
+      theta_max: 10.0
+      theta_index_in_y: 2
+      w_sigma: 1000.0
+      n_parallel_solver: 10
+      n_train_solver: 128
+
+  gamma: 0.98
+  use_gae: True
+  gae_lambda: 0.95
+  use_clipped_value: True
+  clip_param: 0.2
+  target_kl: 0.005
+  entropy_coef: 0.001
+  exploration_init: -2.0
+  phi_lr_scale: 1
+  grad_clip: 1.0
+
+  opt_epochs: 10
+  mini_batch_size: 128
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+
+  max_env_steps: 660000
+  rollout_batch_size: 10
+  rollout_steps: 330
+  eval_batch_size: 5
+
+  log_interval: 3300
+  save_interval: 660000
+  num_checkpoints: 0
+  eval_interval: 6600
+  eval_save_best: True
+  early_stopping_patience: 0
+  tensorboard: True

@@ -645,7 +645,7 @@ class PPOBuffer(object):
         keys (list): names of all data from scheme.
     """
 
-    def __init__(self, obs_space, act_space, max_length, batch_size):
+    def __init__(self, obs_space, act_space, max_length, batch_size, z_past_dim=None):
         super().__init__()
         self.max_length = max_length
         self.batch_size = batch_size
@@ -669,6 +669,8 @@ class PPOBuffer(object):
             "results_dict": {"vshape": (T, N), "dtype": object, "init": np.empty},
             "optimal": {"vshape": (T, N, 1)},
         }
+        if z_past_dim is not None:
+            self.scheme["z_past"] = {"vshape": (T, N, z_past_dim)}
         self.keys = list(self.scheme.keys())
         self.reset()
 

@@ -1,0 +1,50 @@
+task_config:
+  info_in_reset: True
+  ctrl_freq: 50
+  pyb_freq: 1000
+  gui: False
+  physics: pyb
+  quad_type: 2
+  normalized_rl_action_space: False
+
+  inertial_prop: {}
+  randomized_init: False
+  init_state:
+    init_x: 0.0
+    init_x_dot: 0.0
+    init_z: 1.0
+    init_z_dot: 0.0
+    init_theta: 0.0
+    init_theta_dot: 0.0
+  init_state_randomization_info:
+    init_x: {distrib: uniform, low: -0.2, high: 0.2}
+    init_x_dot: {distrib: uniform, low: -0.1, high: 0.1}
+    init_z: {distrib: uniform, low: -0.2, high: 0.2}
+    init_z_dot: {distrib: uniform, low: -0.1, high: 0.1}
+    init_theta: {distrib: uniform, low: -0.05, high: 0.05}
+    init_theta_dot: {distrib: uniform, low: -0.1, high: 0.1}
+  randomized_inertial_prop: False
+
+  task: traj_tracking
+  task_info:
+    trajectory_type: figure8
+    num_cycles: 1
+    trajectory_plane: 'xz'
+    trajectory_position_offset: [0, 1]
+    trajectory_scale: 1
+
+  episode_len_sec: 5
+  cost: rl_reward
+  rew_state_weight: [1.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+  info_mse_metric_state_weight: [1.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+  rew_act_weight: [0.0, 0.0]
+  rew_exponential: False
+  done_on_out_of_bound: True
+  out_of_bounds_penalty_per_remaining_step: 2.0
+  done_on_violation: False
+  
+  constraints:
+    - constraint_form: default_constraint
+      constrained_variable: state
+    - constraint_form: default_constraint
+      constrained_variable: input
