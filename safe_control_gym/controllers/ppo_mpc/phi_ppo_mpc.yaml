@@ -1,20 +1,5 @@
-# Default configuration for PhiPPO_MPC.
-#
-# This file plays the same role as ppo_mpc.yaml for PPO_MPC.
-# Overrides should be placed in the experiment config YAML (see
-# examples/rlmpc/config_overrides/quadrotor_2D/phi_ppo_mpc_quadrotor_2D.yaml).
-#
-# === PHI-SPECIFIC PARAMETERS ===
-# phi_path      : path to the .npy file containing the full Phi matrix,
-#                 shape (n_target, n_past + n_future_u).
-#                 MUST be overridden in the experiment config.
-# phi_bias_path : optional path to the bias vector b (shape n_target).
-#                 Set to null if b = 0 (the typical case).
-# t_ini         : I/O history length in timesteps.  Must match the Phi matrix.
-# y_indices     : which state components are treated as outputs y.
-#                 [0, 2, 4] = x, z, theta for the 2D quadrotor.
-# theta_max     : pitch-angle constraint bound (radians).
-# theta_index_in_y : which y component is the pitch angle (index into y_indices).
+
+## Currently stale (I think), everything of importance is overwritten. 
 
 phi_path: "MUST_BE_OVERRIDDEN"
 phi_bias_path: null

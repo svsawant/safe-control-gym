@@ -19,7 +19,7 @@ class PhiEnv:
         self.n_y = len(self.y_indices)
         self.n_u = int(np.asarray(env.action_space.shape).prod())
 
-        # Only expose the output coordinates.
+        # Only expose the output coordinates
         full_low = env.observation_space.low
         full_high = env.observation_space.high
         self.observation_space = spaces.Box(
@@ -37,7 +37,7 @@ class PhiEnv:
 
         self._u_hist = None
         self._y_hist = None
-        # Keep the last history around for time-limit handling.
+        # Keep the last history around for time-limit handling
         self._terminal_z_past = None
 
     def __getattr__(self, name):
