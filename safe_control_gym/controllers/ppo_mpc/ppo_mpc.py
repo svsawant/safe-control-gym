@@ -509,7 +509,8 @@ class PPO_MPC(BaseController):
             )
         # Print summary table
         print("MPC params:")
-        print(self.agent.ac.actor.mpc_param.detach().numpy())
+        mpc_param = self.agent.ac.actor._build_mpc_param()
+        print(mpc_param.cpu().detach().numpy())
         print("Policy logstd:")
         print(self.agent.ac.actor.logstd.detach().numpy())
         self.logger.dump_scalars()

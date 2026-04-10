@@ -172,6 +172,7 @@ class PPO_VMPC_Agent:
         )
         # assert if num_mini_batch is 0
         assert num_mini_batch != 0, "num_mini_batch is 0"
+        n_actor_updates = 0
         for _ in range(self.opt_epochs):
             p_loss_epoch, e_loss_epoch, kl_epoch = 0, 0, 0
             v_loss_epoch, theta_loss_epoch = 0, 0
@@ -217,7 +218,15 @@ class PPO_VMPC_Agent:
                     theta_loss.backward()
                     self.actor_opt.step()
                     with torch.no_grad():
-                        self.ac.actor.mpc_param.clamp_(1e-5, 100.0)
+                        self.ac.actor.q_param.clamp_(1e-5, 100.0)
+                        self.ac.actor.r_param.clamp_(1e-5, 100.0)
+                        self.ac.actor.qt_param.clamp_(1e-5, 100.0)
+                        self.ac.actor.model_param.clamp_(1e-5, 100.0)
+                        # self.ac.actor.back_off_fixed.clamp_(1e-5, 100.0)
+                        # self.ac.actor.mpc_param.clamp_(1e-5, 100.0)
+                        self.ac.actor.logstd.clamp_(
+                            self.ac.actor.log_std_min, self.ac.actor.log_std_max
+                        )
 
                     p_loss_epoch += policy_loss.item()
                     e_loss_epoch += entropy_loss.item()
@@ -225,6 +234,7 @@ class PPO_VMPC_Agent:
                     theta_loss_epoch += theta_loss.item()
                     # ref_loss_epoch += ref_loss.sum().item()
                     # v_theta_loss_epoch += v_theta_loss.item()
+                    n_actor_updates += 1
 
                 # NN Critic update.
                 # value_loss = self.compute_value_loss(batch_th)
@@ -233,10 +243,10 @@ class PPO_VMPC_Agent:
                 # self.critic_opt.step()
                 # v_loss_epoch += value_loss.item()
 
-            results["policy_loss"].append(p_loss_epoch / num_mini_batch)
-            results["entropy_loss"].append(e_loss_epoch / num_mini_batch)
-            results["approx_kl"].append(kl_epoch / num_mini_batch)
-            results["theta_loss"].append(theta_loss_epoch / num_mini_batch)
+            results["policy_loss"].append(p_loss_epoch / max(n_actor_updates, 1))
+            results["entropy_loss"].append(e_loss_epoch / max(n_actor_updates, 1))
+            results["approx_kl"].append(kl_epoch / max(n_actor_updates, 1))
+            results["theta_loss"].append(theta_loss_epoch / max(n_actor_updates, 1))
             # results["v_theta_loss"].append(v_theta_loss_epoch / num_mini_batch)
             results["value_loss"].append(v_loss_epoch / num_mini_batch)
 
@@ -333,8 +343,9 @@ class MLPActorCritic(nn.Module):
             actor_config,
         )
         # Value function.
+        mpc_param = self.actor._build_mpc_param()
         self.hybrid_critic = Critic(
-            obs_dim, self.actor.n_learnable_param, hidden_dims, activation
+            obs_dim, mpc_param.shape[0], hidden_dims, activation
         )
 
     def step(self, obs, info=None):
@@ -375,7 +386,7 @@ class Critic(nn.Module):
 
     def forward(self, obs, vmpc, dvdtheta):
         val1 = -vmpc - dvdtheta @ self.weights.unsqueeze(1)
-        # val2 = self.v_net(obs)
+        val2 = self.v_net(obs)
         val = self.weight_coeff_critic * val1  # + (1 - self.weight_coeff_critic) * val2
         return val
 
@@ -407,35 +418,29 @@ class MPCActor(nn.Module):
         self.mpc = MPCPolicyFunction(env, gamma, model, **actor_config["mpc_config"])
 
         # Parameters
-        self.q_mpc = actor_config["q_mpc"]
-        self.r_mpc = actor_config["r_mpc"]
-        self.qt_mpc = actor_config["qt_mpc"]
-        self.back_off = actor_config["back_off"]
-        self.model_param = actor_config["model_param"]
-        self._init_param_val()
-        self.n_learnable_param = 0
-        for k in self.param_dict.keys():
-            self.n_learnable_param += self.param_dict[k].shape[0]
-        temp = np.concatenate(
-            (self.q_mpc, self.r_mpc, self.qt_mpc, self.back_off, self.model_param)
+        self.q_init = actor_config["q_mpc"]
+        self.r_init = actor_config["r_mpc"]
+        self.qt_init = actor_config["qt_mpc"]
+        self.back_off_init = actor_config["back_off"]
+        self.model_init = actor_config["model_param"]
+        self.q_param = nn.Parameter(torch.tensor(self.q_init, dtype=torch.float32))
+        self.r_param = nn.Parameter(torch.tensor(self.r_init, dtype=torch.float32))
+        self.qt_param = nn.Parameter(torch.tensor(self.qt_init, dtype=torch.float32))
+        self.model_param = nn.Parameter(
+            torch.tensor(self.model_init, dtype=torch.float32)
         )
-        self.mpc_param = nn.Parameter(torch.FloatTensor(temp))
-        # self.param_net = MLP(obs_dim, self.n_learnable_param, hidden_dims, activation)
-        # self.traj_param = nn.Parameter(torch.FloatTensor(self.mpc.traj))
-        self.traj_param = torch.FloatTensor(self.mpc.traj)
-        with torch.no_grad():
-            self.mpc_param.clamp_(1e-5, 100.0)
+        # self.back_off_param = nn.Parameter(
+        #     torch.tensor(self.back_off_init, dtype=torch.float32)
+        # )
+        self.register_buffer(
+            "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
+        )
 
         # Construct output action distribution.
         self.logstd = nn.Parameter(exploration_init * torch.ones(act_dim))
         self.dist_fn = lambda x: Normal(x, self.logstd.exp())
-
-    def _init_param_val(self):
-        self.param_dict = {
-            "l": np.concatenate((self.q_mpc, self.r_mpc, self.qt_mpc)),
-            "b": np.array(self.back_off),
-            "f": np.array(self.model_param),
-        }
+        self.log_std_min = -4
+        self.log_std_max = 2
 
     def forward(self, obs, act=None, actor_info=None, sensitivity=True):
         theta = self.get_theta_param(obs)
@@ -465,7 +470,6 @@ class MPCActor(nn.Module):
             self.mpc.select_action_batch_train(
                 obs.numpy(),
                 theta.detach().numpy(),
-                self.traj_param.detach().numpy(),
                 info,
                 pi_sensitivity=pi_sensitivity,
                 v_sensitivity=v_sensitivity,
@@ -489,14 +493,22 @@ class MPCActor(nn.Module):
     def reset(self, idx):
         self.mpc.reset(idx)
 
+    def _build_mpc_param(self):
+        return torch.cat(
+            [
+                self.q_param,
+                self.r_param,
+                self.qt_param,
+                self.back_off_fixed,
+                self.model_param,
+            ],
+            dim=0,
+        )
+
     def get_theta_param(self, obs):
+        theta = self._build_mpc_param()
         if obs.ndim > 1:
-            theta = self.mpc_param.repeat(obs.shape[0], 1)
-            # + 0.0 * self.param_net.forward(torch.FloatTensor(obs))
-        else:
-            theta = self.mpc_param
-            # + 0.0 * self.param_net.forward(torch.FloatTensor(obs))
-        # theta += torch.rand_like(theta) * 1e-6
+            return theta.unsqueeze(0).repeat(obs.shape[0], 1)
         return theta
 
     def get_references(self, info_batch):
@@ -522,31 +534,6 @@ class MPCActor(nn.Module):
                 raise Exception("Reference for this mode is not implemented.")
             goal_states_batch.append(goal_states)
         return goal_states_batch  # list of (nx, T+1).
-
-    def get_ref_param(self, info_batch):
-        goal_states_batch = torch.FloatTensor()
-        if self.mpc.env.TASK == Task.TRAJ_TRACKING:
-            for info in info_batch:
-                traj_step = info["traj_step"]
-                # Slice trajectory for horizon steps, if not long enough, repeat last state.
-                start = min(traj_step, self.mpc.traj.shape[-1])
-                end = min(traj_step + self.mpc.T + 1, self.mpc.traj.shape[-1])
-                remain = max(0, self.mpc.T + 1 - (end - start))
-                goal_states = (
-                    torch.cat(
-                        (
-                            self.traj_param[:, start:end],
-                            torch.tile(self.traj_param[:, -1:], (1, remain)),
-                        ),
-                        -1,
-                    )
-                    .T.reshape(-1, 1)
-                    .T
-                )
-                goal_states_batch = torch.cat((goal_states_batch, goal_states), 0)
-        else:
-            raise Exception("Reference update for this mode is not implemented.")
-        return goal_states_batch  # (nx, T+1).
 
 
 class MPCPolicyFunction(MPCFunction):
@@ -574,11 +561,12 @@ class MPCPolicyFunction(MPCFunction):
             soft_constraints=soft_constraints,
             constraint_tol=constraint_tol,
             additional_constraints=additional_constraints,
-            n_parallel_solver=n_parallel_solver,
-            n_train_solver=n_train_solver,
             jit=jit,
             jit_options=jit_options,
         )
+        self.n_parallel_solver = n_parallel_solver
+        self.n_train_solver = n_train_solver
+        self.infos = [None] * self.n_parallel_solver
 
         # Parallel solvers
         self.pi_solvers, self.rkkt_norm_fns, _, self.all_solvers2 = (
@@ -591,20 +579,24 @@ class MPCPolicyFunction(MPCFunction):
     def setup_optimizer(self):
         super().setup_optimizer()
 
-        z = cs.vertcat(self.solver_dict["opt_vars"], self.solver_dict["mult"])
+        # z = cs.vertcat(self.solver_dict["opt_vars"], self.solver_dict["mult"])
+        z = self.solver_dict["z"]
         fixed_param = self.solver_dict["fixed_param"]
         ref_param = self.solver_dict["ref_param"]
         theta = self.solver_dict["theta_param"]
         start_time = time.time()
 
         # R_kkt function with jit
-        all_fn2 = cs.Function(
-            "all_fn2",
+        all_fn = cs.Function(
+            "all_fn",
             [z, fixed_param, ref_param, theta],
-            [cs.norm_2(self.solver_dict["R_kkt"]), self.solver_dict["dVdtheta"].T],
+            [
+                cs.norm_2(self.pi_sensitivity_dict["R_kkt"]),
+                self.v_sensitivities_dict["dVdtheta"].T,
+            ],
             self.solver_dict["jit_options"],
         )
-        self.solver_dict["all_fn2"] = all_fn2
+        self.v_sensitivities_dict["all_fn"] = all_fn
         # all_fn.save("all_fn.casadi")
         print(
             f"[MPC Setup] JIT compilation time: {time.time() - start_time:.3f} seconds."
@@ -619,10 +611,6 @@ class MPCPolicyFunction(MPCFunction):
         con_ubg = self.solver_dict["upper_bound"]
         opt_vars_fn = self.solver_dict["opt_vars_fn"]
         xus_fn = self.solver_dict["xus_fn"]
-        traj_step = self.traj_step
-        # goal_states = self.get_references(traj_step, traj_ref)
-        if self.mode == "tracking":
-            self.traj_step += 1
 
         # eval_data_batch = []
         x0, fixed_p, ref_p = [], [], []
@@ -632,7 +620,8 @@ class MPCPolicyFunction(MPCFunction):
         if not obs_batch.ndim > 1:
             obs_batch = obs_batch[None, :]
         for i, obs in enumerate(obs_batch):
-            fixed_param = obs[: self.model.nx]
+            fixed_param = np.zeros((self.model.nx + self.model.nu))
+            fixed_param[: self.model.nx] = obs[: self.model.nx]
             ref_param = traj_ref[i].T.reshape(-1, 1)[:, 0]
             opt_vars_init = np.zeros(self.solver_dict["opt_vars"].shape)
 
@@ -729,7 +718,6 @@ class MPCPolicyFunction(MPCFunction):
         self,
         obs_batch,
         theta,
-        traj_ref,
         info_batch,
         pi_sensitivity=False,
         v_sensitivity=False,
@@ -761,12 +749,10 @@ class MPCPolicyFunction(MPCFunction):
             obs_batch = obs_batch[None, :]
         for i, obs in enumerate(obs_batch):
             info = info_batch[i]
-            traj_step = info["traj_step"]
             opt_vars_init = info["opt_var"]
-            # goal_states = self.get_references(traj_step, traj_ref)
-            fixed_param = obs[: self.model.nx]
+            fixed_param = np.zeros((self.model.nx + self.model.nu))
+            fixed_param[: self.model.nx] = obs[: self.model.nx]
             ref_param = info["ref_param"]
-            # ref_param = goal_states.T.reshape(-1, 1)[:, 0]
 
             x0.append(opt_vars_init)
             fixed_p.append(fixed_param)
@@ -791,13 +777,12 @@ class MPCPolicyFunction(MPCFunction):
             nabla_pi_ref_batch, nabla_pi_theta_batch = [], []
             for i in range(obs_batch.shape[0]):
                 # nabla_pi_ref_batch.append(dpi_cs[:ref_p.shape[0], self.model.nu * i: self.model.nu * (i + 1)].T)
+                ntheta = self.solver_dict["theta_param"].shape[0]
                 nabla_pi_theta_batch.append(
                     int(optimal_batch[0, i])
                     * dpi_cs[
-                        self.model.nx : self.model.nx + self.model.nu,
-                        self.solver_dict["theta_param"].shape[0]
-                        * i : self.solver_dict["theta_param"].shape[0]
-                        * (i + 1),
+                        :,
+                        ntheta * i : ntheta * (i + 1),
                     ]
                 )
             dVdtheta = []
@@ -827,16 +812,12 @@ class MPCPolicyFunction(MPCFunction):
 
     def get_parallel_solver(self, n_solvers):
         pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread")
-        rkkt_norm_solvers = self.solver_dict["rkkt_norm_fn"].map(n_solvers, "thread")
-        # rkkt_fn = cs.Function.load('rkkt_fn.casadi')
-        # rkkt_solvers = rkkt_fn.map(n_solvers, 'thread')
-        # dpi_solvers = self.solver_dict["dpi_fn"].map(n_solvers, "thread")
-        # dPi_fn = cs.Function.load('dPi_fn.casadi')
-        # dpi_solvers = dPi_fn.map(n_solvers, 'thread')
-        # dvdp_solvers = self.solver_dict["dVdtheta_fn"].map(n_solvers, "thread")
-        all_fn = self.solver_dict["all_fn"]
+        rkkt_norm_solvers = self.pi_sensitivity_dict["rkkt_norm_fn"].map(
+            n_solvers, "thread"
+        )
+        all_fn = self.pi_sensitivity_dict["all_fn"]
         all_solvers = all_fn.map(n_solvers, "thread")
-        all_fn2 = self.solver_dict["all_fn2"]
+        all_fn2 = self.v_sensitivities_dict["all_fn"]
         all_solvers2 = all_fn2.map(n_solvers, "thread")
         return pi_solvers, rkkt_norm_solvers, all_solvers, all_solvers2
 

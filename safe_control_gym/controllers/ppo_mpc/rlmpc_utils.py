@@ -122,8 +122,6 @@ class MPCFunction:
         soft_constraints: bool = True,
         constraint_tol: float = 1e-6,
         additional_constraints: list = None,
-        n_parallel_solver: int = 1,
-        n_train_solver: int = 1,
         jit: bool = False,
         jit_options: dict = None,
     ):
@@ -136,8 +134,6 @@ class MPCFunction:
         self.soft_constraints = soft_constraints
         self.constraint_tol = constraint_tol
         self.warmstart = warmstart
-        self.n_parallel_solver = n_parallel_solver
-        self.n_train_solver = n_train_solver
         self.jit = jit
         self.jit_options = jit_options if jit_options is not None else {}
 
@@ -169,8 +165,6 @@ class MPCFunction:
         self.x_goal = None
         self.mode = None
         self.traj = None
-        self.traj_step = 0
-        self.infos = [None] * self.n_parallel_solver
         # Setup reference input.
         if self.env.TASK == Task.STABILIZATION:
             self.mode = "stabilization"
@@ -178,8 +172,6 @@ class MPCFunction:
         elif self.env.TASK == Task.TRAJ_TRACKING:
             self.mode = "tracking"
             self.traj = self.env.X_GOAL.T
-            # Step along the reference.
-            self.traj_step = 0
 
         # Setup optimizer
         self.solver_dict = None
@@ -194,11 +186,6 @@ class MPCFunction:
         self.sigma_prev = None
         self.x_goal = None
         self.traj = None
-        self.traj_step = 0
-        if idx is not None:
-            self.infos[idx] = None
-        else:
-            self.infos = [None] * self.n_parallel_solver
 
         # Setup reference input.
         if self.env.TASK == Task.STABILIZATION:
@@ -207,8 +194,6 @@ class MPCFunction:
         elif self.env.TASK == Task.TRAJ_TRACKING:
             self.mode = "tracking"
             self.traj = self.env.X_GOAL.T
-            # Step along the reference.
-            self.traj_step = 0
 
     def add_constraints(self, constraints):
         """Add the constraints (from a list) to the system.
@@ -293,9 +278,10 @@ class MPCFunction:
         # Fixed parameters
         # Initial state.
         x_init = cs.MX.sym("x_init", nx, 1)
+        a_init = cs.MX.sym("a_init", nu, 1)
         # Reference (equilibrium point or trajectory, last step for terminal cost).
         x_ref = cs.MX.sym("x_ref", nx, T + 1)
-        fixed_param = cs.vertcat(x_init)
+        fixed_param = cs.vertcat(x_init, a_init)
         ref_param = cs.reshape(x_ref, -1, 1)
 
         # Learnable parameters
@@ -341,16 +327,38 @@ class MPCFunction:
         con_list, con_lbg, con_ubg, con_eq = [], [], [], []
         H_eq, H_ieq = [], []
         mult, lamb, mu = [], [], []
-        # initial condition constraints
+        qcon_list, qcon_lbg, qcon_ubg, qcon_eq = [], [], [], []
+        qH_eq, qH_ieq = [], []
+        qmult, qlamb, qmu = [], [], []
+
+        # initial state condition constraints
         con_list.append(x_var[:, 0] - x_init)
         con_lbg.append(cs.DM.zeros(nx, 1))
         con_ubg.append(cs.DM.zeros(nx, 1))
         con_eq += [True] * nx
+        qcon_list.append(x_var[:, 0] - x_init)
+        qcon_lbg.append(cs.DM.zeros(nx, 1))
+        qcon_ubg.append(cs.DM.zeros(nx, 1))
+        qcon_eq += [True] * nx
 
         H_eq.append(x_var[:, 0] - x_init)
         lm = cs.MX.sym("lm", nx)
         mult.append(lm)
         lamb.append(lm)
+        qH_eq.append(x_var[:, 0] - x_init)
+        qmult.append(lm)
+        qlamb.append(lm)
+
+        # initial action condition constraints
+        qcon_list.append(u_var[:, 0] - a_init)
+        lm = cs.MX.sym("lm", nu)
+        qcon_lbg.append(cs.DM.zeros(nu, 1))
+        qcon_ubg.append(cs.DM.zeros(nu, 1))
+        qcon_eq += [True] * nu
+        qH_eq.append(u_var[:, 0] - a_init)
+        qmult.append(lm)
+        qlamb.append(lm)
+
         for i in range(self.T):
             # Dynamics constraints.
             next_state = self.dynamics_func(
@@ -360,44 +368,47 @@ class MPCFunction:
             con_lbg.append(cs.DM.zeros(nx, 1))
             con_ubg.append(cs.DM.zeros(nx, 1))
             con_eq += [True] * nx
+            qcon_list.append(x_var[:, i + 1] - next_state)
+            qcon_lbg.append(cs.DM.zeros(nx, 1))
+            qcon_ubg.append(cs.DM.zeros(nx, 1))
+            qcon_eq += [True] * nx
 
-            H_eq.append(x_var[:, i + 1] - next_state)
             lm = cs.MX.sym("lm", nx)
+            H_eq.append(x_var[:, i + 1] - next_state)
             mult.append(lm)
             lamb.append(lm)
+            qH_eq.append(x_var[:, i + 1] - next_state)
+            qmult.append(lm)
+            qlamb.append(lm)
 
             # State bounds
             for sc_i, state_constraint in enumerate(self.state_constraints_sym):
                 cost += w @ sigma_var[:, i]
-                con_list.append(
+                constraint = [
                     state_constraint(x_var[:, i])[:nx]
                     - sigma_var[:, i]
-                    + back_off_param
-                )
-                con_list.append(
+                    + back_off_param,
                     state_constraint(x_var[:, i])[nx:]
                     - sigma_var[:, i]
-                    + back_off_param
-                )
-                con_list.append(-sigma_var[:, i])
+                    + back_off_param,
+                    -sigma_var[:, i],
+                ]
+                con_list += constraint
                 con_lbg.append(-cs.DM.inf(3 * nx, 1))
                 con_ubg.append(cs.DM.zeros(3 * nx, 1))
                 con_eq += [False] * 3 * nx
+                qcon_list += constraint
+                qcon_lbg.append(-cs.DM.inf(3 * nx, 1))
+                qcon_ubg.append(cs.DM.zeros(3 * nx, 1))
+                qcon_eq += [False] * 3 * nx
 
-                H_ieq.append(
-                    state_constraint(x_var[:, i])[:nx]
-                    - sigma_var[:, i]
-                    + back_off_param
-                )
-                H_ieq.append(
-                    state_constraint(x_var[:, i])[nx:]
-                    - sigma_var[:, i]
-                    + back_off_param
-                )
-                H_ieq.append(-sigma_var[:, i])
                 lm = cs.MX.sym("lm", 3 * nx)
+                H_ieq += constraint
                 mult.append(lm)
                 mu.append(lm)
+                qH_ieq += constraint
+                qmult.append(lm)
+                qmu.append(lm)
 
             # Action bounds
             for ic_i, input_constraint in enumerate(self.input_constraints_sym):
@@ -405,43 +416,60 @@ class MPCFunction:
                 con_lbg.append(-cs.DM.inf(2 * nu, 1))
                 con_ubg.append(cs.DM.zeros(2 * nu, 1))
                 con_eq += [False] * 2 * nu
+                if i != 0:  # initial action constraint is not added to Q function
+                    qcon_list.append(
+                        input_constraint(u_var[:, i]) + self.constraint_tol
+                    )
+                    qcon_lbg.append(-cs.DM.inf(2 * nu, 1))
+                    qcon_ubg.append(cs.DM.zeros(2 * nu, 1))
+                    qcon_eq += [False] * 2 * nu
 
                 H_ieq.append(input_constraint(u_var[:, i]) + self.constraint_tol)
                 lm = cs.MX.sym("lm", 2 * nu)
                 mult.append(lm)
                 mu.append(lm)
-
+                if i != 0:
+                    qH_ieq.append(input_constraint(u_var[:, i]) + self.constraint_tol)
+                    qmult.append(lm)
+                    qmu.append(lm)
         # Final state constraints.
         for sc_i, state_constraint in enumerate(self.state_constraints_sym):
             cost += w @ sigma_var[:, -1]
-            con_list.append(
-                state_constraint(x_var[:, -1])[:nx] - sigma_var[:, -1] + back_off_param
-            )
-            con_list.append(
-                state_constraint(x_var[:, -1])[nx:] - sigma_var[:, -1] + back_off_param
-            )
-            con_list.append(-sigma_var[:, -1])
+            constraint = [
+                state_constraint(x_var[:, -1])[:nx] - sigma_var[:, -1] + back_off_param,
+                state_constraint(x_var[:, -1])[nx:] - sigma_var[:, -1] + back_off_param,
+                -sigma_var[:, -1],
+            ]
+            con_list += constraint
             con_lbg.append(-cs.DM.inf(3 * nx, 1))
             con_ubg.append(cs.DM.zeros(3 * nx, 1))
             con_eq += [False] * 3 * nx
+            qcon_list += constraint
+            qcon_lbg.append(-cs.DM.inf(3 * nx, 1))
+            qcon_ubg.append(cs.DM.zeros(3 * nx, 1))
+            qcon_eq += [False] * 3 * nx
 
-            H_ieq.append(
-                state_constraint(x_var[:, -1])[:nx] - sigma_var[:, -1] + back_off_param
-            )
-            H_ieq.append(
-                state_constraint(x_var[:, -1])[nx:] - sigma_var[:, -1] + back_off_param
-            )
-            H_ieq.append(-sigma_var[:, -1])
             lm = cs.MX.sym("lm", 3 * nx)
+            H_ieq += constraint
             mult.append(lm)
             mu.append(lm)
+            qH_ieq += constraint
+            qmult.append(lm)
+            qmu.append(lm)
         # concatenating all the lists
         con_list, H_eq, H_ieq = cs.vcat(con_list), cs.vcat(H_eq), cs.vcat(H_ieq)
         mult, lamb, mu = cs.vcat(mult), cs.vcat(lamb), cs.vcat(mu)
         con_lbg, con_ubg = cs.vcat(con_lbg), cs.vcat(con_ubg)
-        lang_mult_fn = cs.Function("lang_mult_fn", [mult], [lamb, mu])
+        qcon_list, qH_eq, qH_ieq = cs.vcat(qcon_list), cs.vcat(qH_eq), cs.vcat(qH_ieq)
+        qmult, qlamb, qmu = cs.vcat(qmult), cs.vcat(qlamb), cs.vcat(qmu)
+        qcon_lbg, qcon_ubg = cs.vcat(qcon_lbg), cs.vcat(qcon_ubg)
+        # z contains all variables of the lagrangian
+        z = cs.vertcat(opt_vars, mult)
+        qz = cs.vertcat(opt_vars, qmult)
+        theta = cs.vertcat(cost_param, back_off_param, model_param)
+        # lang_mult_fn = cs.Function("lang_mult_fn", [mult], [lamb, mu])
 
-        # Create solver (IPOPT solver in this version)
+        # Create solver (FATROP solver in this version)
         opts_setting = {
             "print_time": 0,
             "record_time": True,
@@ -456,8 +484,8 @@ class MPCFunction:
         }
         jit_opts = {
             "jit": self.jit,
-            "jit_cleanup": False,
-            "jit_temp_suffix": False,
+            "jit_cleanup": True,
+            "jit_temp_suffix": True,
             "jit_options": self.jit_options,
         }
         opts_setting.update(jit_opts)
@@ -470,9 +498,39 @@ class MPCFunction:
             "g": con_list,
         }
         pisolver = cs.nlpsol("pisolver", "fatrop", vnlp_prob, opts_setting)
+
+        # Q function
+        qopts_setting = deepcopy(opts_setting)
+        qopts_setting.update({"equality": qcon_eq})
+        qnlp_prob = deepcopy(vnlp_prob)
+        qnlp_prob["g"] = qcon_list
+        qsolver = cs.nlpsol("qsolver", "fatrop", qnlp_prob, qopts_setting)
         print(
             f"[MPC Setup] NLP problem setup time: {time.time() - start_time:.3f} seconds."
         )
+        self.solver_dict = {
+            "x_var": x_var,
+            "u_var": u_var,
+            "state_slack": sigma_var,
+            "opt_vars": opt_vars,
+            "mult": mult,
+            "z": z,
+            "qz": qz,
+            "fixed_param": fixed_param,
+            "ref_param": ref_param,
+            "theta_param": theta,
+            "opt_vars_fn": opt_vars_fn,
+            "xus_fn": xus_fn,
+            "opt_act_fn": opt_act_fn,
+            "cost": cost,
+            "lower_bound": con_lbg,
+            "upper_bound": con_ubg,
+            "solver": pisolver,
+            "qlower_bound": qcon_lbg,
+            "qupper_bound": qcon_ubg,
+            "qsolver": qsolver,
+            "jit_options": jit_opts,
+        }
         start_time = time.time()
 
         # Build Lagrangian
@@ -484,9 +542,6 @@ class MPCFunction:
             H_eq,
             mu * H_ieq + etau,
         )
-        # z contains all variables of the lagrangian
-        z = cs.vertcat(opt_vars, mult)
-        theta = cs.vertcat(cost_param, back_off_param, model_param)
 
         #### Sensitivities for value function
         lagrangian_fn = cs.Function(
@@ -495,27 +550,16 @@ class MPCFunction:
         dlag_fn = lagrangian_fn.factory(
             "dV", ["i0", "i1", "i2", "i3"], ["jac:o0:i2", "jac:o0:i3"]
         )
-        [dVdref, dVdtheta] = dlag_fn(z, fixed_param, ref_param, theta)
+        [_, dVdtheta] = dlag_fn(z, fixed_param, ref_param, theta)
         # Sensitivity against theta
         dVdtheta_fn = cs.Function(
             "dVdtheta_fn", [z, fixed_param, ref_param, theta], [dVdtheta.T]
         )
-        # dVdtheta_zeros = cs.MX.zeros(dVdtheta.shape)
-        # f1_true = cs.Function(
-        #     "f1_true", [z, fixed_param, ref_param, theta], [dVdtheta.T]
-        # )
-        # f1_false = cs.Function(
-        #     "f1_false", [z, fixed_param, ref_param, theta], [dVdtheta_zeros.T]
-        # )
-        # dVdtheta_fn = cs.Function.if_else("dPi_fn", f1_true, f1_false)
-        # Sensitivity against ref
-        # dVdref_fn = cs.Function(
-        #     "dVdref_fn", [z, fixed_param, ref_param, theta], [dVdref.T]
-        # )
-        # dVdref_zeros = cs.MX.zeros(dVdref.shape)
-        # f2_true = cs.Function("f2_true", [z, fixed_param, ref_param, theta], [dVdref.T])
-        # f2_false = cs.Function("f2_false", [z, fixed_param, ref_param, theta], [dVdref_zeros.T])
-        # dVdref_fn = cs.Function.if_else("dPi_fn", f2_true, f2_false)
+        self.v_sensitivities_dict = {
+            "dVdtheta": dVdtheta,
+            "dVdtheta_fn": dVdtheta_fn,
+            "jit_options": jit_opts,
+        }
 
         #### Generate sensitivity of the KKT matrix
         rkkt_fn = cs.Function("rkkt_fn", [z, fixed_param, ref_param, theta], [R_kkt])
@@ -540,15 +584,15 @@ class MPCFunction:
         # 1. Pseudo inverse method (less efficient when there are many decision variables)
         # dzdP = -cs.inv(dRdz) @ dRdP
         # 2. Linear solver method (more efficient, especially for large problems, since it can exploit sparsity)
-        dzdP = -cs.solve(dRdz, dRdP)
+        # dzdP = -cs.solve(dRdz, dRdP)
         # dPi = dzdP[nx: nx + nu, :].T
-        dPi = dzdP
+        # dPi = dzdP
         # 3. Adjoint method (most efficient when there are many parameters, but requires additional implementation effort)
-        # S = cs.DM.zeros(nu, dRdz.shape[0])
-        # for i in range(nu):
-        #     S[i, nx + i] = 1.0
-        # dPi_prime = cs.solve(dRdz.T, S.T).T
-        # dPi = -(dPi_prime @ dRdP).T
+        S = cs.DM.zeros(nu, dRdz.shape[0])
+        for i in range(nu):
+            S[i, nx + i] = 1.0
+        dPi_prime = cs.solve(dRdz.T, S.T).T
+        dPi = -(dPi_prime @ dRdP)
         dPi_zeros = cs.MX.zeros(dPi.shape)
         f_true = cs.Function("f_true", [z, fixed_param, ref_param, theta], [dPi])
         f_false = cs.Function(
@@ -556,8 +600,85 @@ class MPCFunction:
         )
         dPi_fn = cs.Function.if_else("dPi_fn", f_true, f_false)
         # dPi_fn.save('dPi_fn.casadi')
+        self.pi_sensitivity_dict = {
+            "R_kkt": R_kkt,
+            "rkkt_fn": rkkt_fn,
+            "rkkt_norm_fn": rkkt_norm_fn,
+            "dpi_fn": dPi_fn,
+            "jit_options": jit_opts,
+        }
         print(
             f"[MPC Setup] Sensitivity setup time: {time.time() - start_time:.3f} seconds."
+        )
+        start_time = time.time()
+
+        #### Sensitivities for Q function
+        qalambda_fn = cs.Function(
+            "qalambda_fn",
+            [qz],
+            [
+                qz[
+                    opt_vars.shape[0]
+                    + self.model.nx : opt_vars.shape[0]
+                    + self.model.nx
+                    + self.model.nu
+                ]
+            ],
+        )
+        qlagrangian = cost + cs.transpose(qlamb) @ qH_eq + cs.transpose(qmu) @ qH_ieq
+        dqlag_dw = cs.jacobian(qlagrangian, opt_vars)
+        qR_kkt = cs.vertcat(
+            cs.transpose(dqlag_dw),
+            qH_eq,
+            qmu * qH_ieq + etau,
+        )
+        qlagrangian_fn = cs.Function(
+            "Q_Lagrangian", [qz, fixed_param, ref_param, theta], [qlagrangian]
+        )
+        dqlag_fn = qlagrangian_fn.factory(
+            "dQ", ["i0", "i1", "i2", "i3"], ["jac:o0:i2", "jac:o0:i3"]
+        )
+        [_, dQdtheta] = dqlag_fn(qz, fixed_param, ref_param, theta)
+        # Sensitivity against theta
+        dQdtheta_fn = cs.Function(
+            "dQdtheta_fn", [qz, fixed_param, ref_param, theta], [dQdtheta.T]
+        )
+        qrkkt_fn = cs.Function(
+            "qrkkt_fn", [qz, fixed_param, ref_param, theta], [qR_kkt]
+        )
+        qrkkt_norm_fn = cs.Function(
+            "qrkkt_norm_fn",
+            [qz, fixed_param, ref_param, theta],
+            [cs.norm_2(qR_kkt)],
+            jit_opts,
+        )
+        # Sensitivity of the KKT matrix for Q function for second order sensitivity
+        dqR_sensfunc = qrkkt_fn.factory(
+            "dR", ["i0", "i1", "i2", "i3"], ["jac:o0:i0", "jac:o0:i2", "jac:o0:i3"]
+        )
+        [dqRdz, dqRdP_ref, dqRdP_theta] = dqR_sensfunc(
+            qz, fixed_param, ref_param, theta
+        )
+        # dRdP = cs.horzcat(dRdP_ref, dRdP_theta)
+        dqRdP = cs.horzcat(dqRdP_theta)  # only learnable
+        dqzdP = -cs.solve(dqRdz, dqRdP)
+        dqLdaP = dqzdP[
+            opt_vars.shape[0]
+            + self.model.nx : opt_vars.shape[0]
+            + self.model.nx
+            + self.model.nu,
+            :,
+        ]
+        self.q_sensitivities_dict = {
+            "dQdtheta": dQdtheta,
+            "dQdtheta_fn": dQdtheta_fn,
+            "qrkkt_fn": qrkkt_fn,
+            "qrkkt_norm_fn": qrkkt_norm_fn,
+            "qalambda_fn": qalambda_fn,
+            "dqLdaP": dqLdaP,
+        }
+        print(
+            f"[MPC Setup] Q sensitivity setup time: {time.time() - start_time:.3f} seconds."
         )
         start_time = time.time()
 
@@ -572,33 +693,7 @@ class MPCFunction:
         print(
             f"[MPC Setup] JIT compilation time: {time.time() - start_time:.3f} seconds."
         )
-
-        self.solver_dict = {
-            "x_var": x_var,
-            "u_var": u_var,
-            "state_slack": sigma_var,
-            "opt_vars": opt_vars,
-            "mult": mult,
-            "fixed_param": fixed_param,
-            "ref_param": ref_param,
-            "theta_param": theta,
-            "opt_vars_fn": opt_vars_fn,
-            "xus_fn": xus_fn,
-            "opt_act_fn": opt_act_fn,
-            "cost": cost,
-            "lower_bound": con_lbg,
-            "upper_bound": con_ubg,
-            "lang_mult_fn": lang_mult_fn,
-            "solver": pisolver,
-            "R_kkt": R_kkt,
-            "dVdtheta": dVdtheta,
-            "dVdtheta_fn": dVdtheta_fn,
-            "rkkt_fn": rkkt_fn,
-            "rkkt_norm_fn": rkkt_norm_fn,
-            "dpi_fn": dPi_fn,
-            "all_fn": all_fn,
-            "jit_options": jit_opts,
-        }
+        self.pi_sensitivity_dict["all_fn"] = all_fn
 
     def get_references(self, traj_step=None, traj_ref=None):
         """Constructs reference states along mpc horizon.(nx, T+1)."""
@@ -640,15 +735,14 @@ class MPCFunction:
         xus_fn = solver_dict["xus_fn"]
 
         # Collect the fixed param
+        fixed_param = np.zeros((self.model.nx + self.model.nu, 1))
+        fixed_param[: self.model.nx, :] = obs[: self.model.nx, None]
         # Assign reference trajectory within horizon.
-        fixed_param = obs[: self.model.nx, None]
         # goal_states = self.get_references(self.traj_step, traj_ref)
         goal_states = traj_ref[0].copy()
         ref_param = goal_states.T.reshape(-1, 1)
         # Collect learnable parameters
         p_param = np.concatenate((fixed_param, ref_param, theta[:, None]))[:, 0]
-        if self.mode == "tracking":
-            self.traj_step += 1
 
         opt_vars_init = np.zeros(
             (solver_dict["opt_vars"].shape[0], solver_dict["opt_vars"].shape[1])
@@ -694,6 +788,5 @@ class MPCFunction:
             "fixed_param": deepcopy(fixed_param),
             "ref_param": deepcopy(ref_param),
             "theta_param": deepcopy(theta),
-            "traj_step": deepcopy(self.traj_step) - 1,
         }
         return action, info, results_dict, optimal

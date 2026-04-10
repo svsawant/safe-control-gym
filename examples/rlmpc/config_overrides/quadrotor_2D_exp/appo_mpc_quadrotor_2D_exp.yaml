@@ -15,7 +15,7 @@ algo_config:
       horizon: 10
       warmstart: True
       n_parallel_solver: 10
-      jit: True
+      jit: False
       jit_options:
         # compiler: "clang"  # gcc, ccache gcc, clang
         flags: ["-O2"]    # -O0, -Og, -O1, -O2, -O3 (-O1 and above may lead to very high compile times)

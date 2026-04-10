@@ -277,10 +277,11 @@ class APPO_MPC(BaseController):
         self.agent.reset()
         self.agent.train()
         self.obs_normalizer.unset_read_only()
+        mpc_param = self.agent.ac.actor._build_mpc_param()
         rollouts = APPOBuffer(
             self.venv.observation_space,
             self.venv.action_space,
-            self.agent.ac.actor.mpc_param.shape[0],
+            mpc_param.shape[0],
             self.rollout_steps,
             self.rollout_batch_size,
         )
@@ -368,7 +369,6 @@ class APPO_MPC(BaseController):
         results["train"] = self.agent.update(rollouts, self.device)
         results["step"] = self.total_steps
         results["elapsed_time"] = time.time() - start
-        # results.update({'step': self.total_steps, 'elapsed_time': time.time() - start})
         return results
 
     def run(self, env=None, render=False, n_episodes=1, verbose=False):
@@ -514,7 +514,8 @@ class APPO_MPC(BaseController):
             )
         # Print summary table
         print("MPC params:")
-        print(self.agent.ac.actor.mpc_param.cpu().detach().numpy())
+        mpc_param = self.agent.ac.actor._build_mpc_param()
+        print(mpc_param.cpu().detach().numpy())
         print("Policy logstd:")
-        print(self.agent.ac.actor.log_std.cpu().detach().numpy())
+        print(self.agent.ac.actor.logstd.cpu().detach().numpy())
         self.logger.dump_scalars()
