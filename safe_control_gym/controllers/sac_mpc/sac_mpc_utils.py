@@ -156,7 +156,7 @@ class SAC_MPC_Agent:
         """Returns q-value loss(es) given batch of data."""
         obs, act, next_obs = batch_th["obs"], batch_th["act"], batch_th["next_obs"]
         rew, mask = batch_th["rew"], batch_th["mask"]
-        next_obs_np = np.array(batch["next_obs"])
+        next_obs_np = batch["next_obs"]
         info = batch["info"]
         q1 = self.ac.q1(obs, act)
         q2 = self.ac.q2(obs, act)

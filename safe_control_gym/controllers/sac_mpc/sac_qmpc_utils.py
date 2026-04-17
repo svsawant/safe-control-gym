@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from copy import deepcopy
+import time
 
 import casadi as cs
 import numpy as np
@@ -37,8 +38,6 @@ class SAC_QMPC_Agent:
         entropy_lr=0.001,
         activation="relu",
         actor_config=None,
-        sigma_network=False,
-        tanh_squash=False,
         update_freq=1,
         **kwargs,
     ):
@@ -64,8 +63,6 @@ class SAC_QMPC_Agent:
             exploration_init=self.exploration_init,
             activation=self.activation,
             actor_config=actor_config,
-            sigma_network=sigma_network,
-            tanh_squash=tanh_squash,
         )
         self.log_alpha = torch.tensor(np.log(init_temperature))
 
@@ -76,9 +73,9 @@ class SAC_QMPC_Agent:
 
         # Optimizers.
         self.actor_opt = torch.optim.Adam(self.ac.actor.parameters(), actor_lr)
-        self.critic_opt = torch.optim.Adam(
-            list(self.ac.q1.parameters()) + list(self.ac.q2.parameters()), critic_lr
-        )
+        # self.critic_opt = torch.optim.Adam(
+        #     list(self.ac.q1.parameters()) + list(self.ac.q2.parameters()), critic_lr
+        # )
         if self.use_entropy_tuning:
             self.log_alpha.requires_grad = True
             self.alpha_opt = torch.optim.Adam([self.log_alpha], entropy_lr)
@@ -123,7 +120,7 @@ class SAC_QMPC_Agent:
             "log_alpha": self.log_alpha,
             "ac_targ": self.ac_targ.state_dict(),
             "actor_opt": self.actor_opt.state_dict(),
-            "critic_opt": self.critic_opt.state_dict(),
+            # "critic_opt": self.critic_opt.state_dict(),
             "alpha_opt": self.alpha_opt.state_dict(),
         }
 
@@ -133,7 +130,7 @@ class SAC_QMPC_Agent:
         self.log_alpha = self.log_alpha.to(next(self.ac.parameters()).device)
         self.ac_targ.load_state_dict(state_dict["ac_targ"], strict=strict)
         self.actor_opt.load_state_dict(state_dict["actor_opt"])
-        self.critic_opt.load_state_dict(state_dict["critic_opt"])
+        # self.critic_opt.load_state_dict(state_dict["critic_opt"])
         self.alpha_opt.load_state_dict(state_dict["alpha_opt"])
 
     def compute_policy_loss(self, obs_th, act_th, logp, optimal):
@@ -151,97 +148,139 @@ class SAC_QMPC_Agent:
         return policy_loss, entropy_loss
 
     def compute_q_loss(
-        self, batch, batch_th
-    ):  # , next_state_th, next_action_th, nabla_snext_theta, nabla_pinext_theta, optimal):
+        self,
+        batch,
+        new_mpc_act,
+        q_mpc,
+        nabla_q_theta,
+        nabla_q_act_theta,
+        x0,
+        optimal,
+    ):
         """Returns q-value loss(es) given batch of data."""
-        obs, act, next_obs = batch_th["obs"], batch_th["act"], batch_th["next_obs"]
-        rew, mask = batch_th["rew"], batch_th["mask"]
-        next_obs_np = np.array(batch["next_obs"])
-        info = batch["info"]
-        q1 = self.ac.q1(obs, act)
-        q2 = self.ac.q2(obs, act)
+        obs, act, next_obs = batch["obs"], batch["act"], batch["next_obs"]
+        rew, info = batch["rew"], batch["info"]
 
-        with torch.no_grad():
-            next_act, next_logp, _, _, _, _, _, _, _, optimal = (
-                self.ac.actor.forward_train(
-                    next_obs_np,
-                    info,
-                    update_info=True,
-                    compute_sensitivities=False,
+        # MPC forward and backward for the next state
+        (
+            next_act,
+            next_logp,
+            next_mpc_act,
+            _,
+            _,
+            next_q_mpc,
+            _,
+            nabla_q_theta_next,
+            nabla_q_act_theta_next,
+            next_optimal,
+            x0,
+        ) = self.ac.actor.forward_train(next_obs, info, update_info=True, x0=x0)
+
+        Aq, bq = [], []
+        for i in range(obs.shape[0]):
+            if optimal[i, 0] > 0.9 and next_optimal[i, 0] > 0.9:
+                da1 = act[i] - new_mpc_act[i].detach().cpu().numpy()
+                da2 = (next_act[i] - new_mpc_act[i]).detach().cpu().numpy()
+                A = (
+                    -nabla_q_theta[i][0, :]
+                    - da1 @ nabla_q_act_theta[i]
+                    + self.gamma * nabla_q_theta_next[i][0, :]
+                    + self.gamma * da2 @ nabla_q_act_theta_next[i]
                 )
-            )
-            # next_act, next_logp = self.ac.actor.forward_train_approx(
-            #     next_obs, next_state_th, next_action_th, nabla_snext_theta, nabla_pinext_theta
-            # )
-            next_q1_targ = self.ac_targ.q1(next_obs, next_act)
-            next_q2_targ = self.ac_targ.q2(next_obs, next_act)
-            next_q_targ = torch.min(next_q1_targ, next_q2_targ)
-            # q value regression target
-            q_targ = rew + self.gamma * mask * (next_q_targ - self.alpha * next_logp)
+                b = (
+                    rew[i]
+                    - self.gamma * next_q_mpc[i]
+                    - (self.alpha * next_logp[i]).detach().cpu().numpy()
+                    + q_mpc[i]
+                )
+                Aq.append(A)
+                bq.append(b)
+        if len(Aq) > 0:
+            Aq = np.asarray(Aq, dtype=np.float64)
+            bq = np.asarray(bq, dtype=np.float64).reshape(-1, 1)
 
-        q1_loss = (q1 - q_targ).pow(2)
-        q2_loss = (q2 - q_targ).pow(2)
-        critic_loss = q1_loss + q2_loss
-        critic_loss = torch.where(optimal > 0.9, critic_loss, torch.nan).nanmean()
-        return critic_loss
+            AtA = Aq.T @ Aq
+            Atb = Aq.T @ bq
+            w_scaled = np.linalg.solve(AtA + 1e-4 * np.eye(AtA.shape[0]), Atb)
+            # w = (w_scaled / col_scale.T).squeeze(-1)
+            w = w_scaled.squeeze(-1)
+            self.ac.q1.weights.copy_(torch.as_tensor(w, dtype=torch.float32))
+
+            resid = Aq @ w.reshape(-1, 1) - bq
+            linear_q_loss = 0.5 * np.mean(resid**2)
+        return linear_q_loss
 
     def update(self, batch, batch_th, device="cpu"):
         """Updates model parameters based on current training batch."""
         results = defaultdict(list)
+        # MPC forward and backward
+        obs, act, next_obs = batch["obs"], batch["act"], batch["next_obs"]
+        rew, info = batch["rew"], batch["info"]
+        (
+            new_act,
+            logp,
+            new_mpc_act,
+            _,
+            nabla_pi_theta,
+            q_mpc,
+            _,
+            nabla_q_theta,
+            nabla_q_act_theta,
+            optimal,
+            x0,
+        ) = self.ac.actor.forward_train(obs, info, pi_sensitivities=True)
 
         # critic update
-        critic_loss = self.compute_q_loss(
-            batch, batch_th
-        )  # , next_state_th, next_action_th, nabla_snext_theta, nabla_pinext_theta, optimal)
-        self.critic_opt.zero_grad()
-        critic_loss.backward()
-        self.critic_opt.step()
-        results["critic_loss"] = critic_loss.item()
+        q_loss = self.compute_q_loss(
+            batch,
+            new_mpc_act,
+            q_mpc,
+            nabla_q_theta,
+            nabla_q_act_theta,
+            x0,
+            optimal,
+        )
+        results["critic_loss"] = q_loss
 
         # actor update
         if self.count % self.update_freq == 0:
-            # Set requires_grad to False for critic networks so that the gradients can be passed through the mpc to actor parameters.
-            for p in self.ac.q1.parameters():
-                p.requires_grad = False
-            for p in self.ac.q2.parameters():
-                p.requires_grad = False
-
-            # MPC forward and backward
-            obs_th = batch_th["obs"]
-            obs, info = batch["obs"], batch["info"]
-            (
-                act_th,
-                logp,
-                action_th,
-                next_state_th,
-                next_action_th,
-                nabla_pi_ref,
-                nabla_pi_theta,
-                nabla_snext_theta,
-                nabla_pinext_theta,
-                optimal,
-            ) = self.ac.actor.forward_train(obs, info)
-
-            policy_loss, entropy_loss = self.compute_policy_loss(
-                obs_th, act_th, logp, optimal
+            # compute policy loss and gradients
+            nabla_q_at = torch.FloatTensor(np.array(nabla_q_act_theta))
+            policy_loss = -(
+                (new_act - new_mpc_act.detach()).unsqueeze(1)
+                @ nabla_q_at
+                @ self.ac.q1.weights.tile(obs.shape[0], 1).unsqueeze(-1)
             )
-            self.actor_opt.zero_grad()
+            policy_loss = torch.where(optimal > 0.9, policy_loss, torch.nan).nanmean()
             policy_loss.backward()
 
             # Passing the gradients through the mpc
             theta = self.ac.actor.get_theta_param(batch_th["obs"])
             theta_loss = (
-                action_th.grad.unsqueeze(1) @ nabla_pi_theta @ theta.unsqueeze(2)
+                new_mpc_act.grad.unsqueeze(1) @ nabla_pi_theta @ theta.unsqueeze(2)
             ).sum()
             # traj_ref = self.ac.actor.get_ref_param(batch['info'])
             # ref_loss = action_th.grad.unsqueeze(1) @ nabla_pi_ref @ traj_ref.unsqueeze(2)
             theta_loss.backward()
             self.actor_opt.step()
             with torch.no_grad():
-                self.ac.actor.mpc_param.clamp_(1e-5, 100.0)
-                # self.ac.actor.logstd.clamp_(-3.5, -0.5)
+                self.ac.actor.q_param.clamp_(1e-5, 100.0)
+                self.ac.actor.r_param.clamp_(1e-5, 100.0)
+                self.ac.actor.qt_param.clamp_(1e-5, 100.0)
+                self.ac.actor.model_param.clamp_(1e-5, 100.0)
+                # self.ac.actor.back_off_fixed.clamp_(1e-5, 100.0)
+                # self.ac.actor.mpc_param.clamp_(1e-5, 100.0)
+                self.ac.actor.logstd.clamp_(
+                    self.ac.actor.log_std_min, self.ac.actor.log_std_max
+                )
 
+            # compute entropy loss
+            entropy_loss = torch.zeros(1)
             if self.use_entropy_tuning:
+                entropy_loss = -(self.log_alpha * (logp + self.target_entropy).detach())
+                entropy_loss = torch.where(
+                    optimal > 0.9, entropy_loss, torch.nan
+                ).nanmean()
                 self.alpha_opt.zero_grad()
                 entropy_loss.backward()
                 self.alpha_opt.step()
@@ -251,16 +290,10 @@ class SAC_QMPC_Agent:
             results["alpha"] = self.alpha.item()
             results["theta_loss"] = theta_loss.item()
 
-            # Set requires_grad back to True for critic networks for next update step.
-            for p in self.ac.q1.parameters():
-                p.requires_grad = True
-            for p in self.ac.q2.parameters():
-                p.requires_grad = True
-
         # update target networks
         # soft_update(self.ac, self.ac_targ, self.tau)
-        soft_update(self.ac.q1, self.ac_targ.q1, self.tau)
-        soft_update(self.ac.q2, self.ac_targ.q2, self.tau)
+        # soft_update(self.ac.q1, self.ac_targ.q1, self.tau)
+        # soft_update(self.ac.q2, self.ac_targ.q2, self.tau)
         self.count += 1
         return results
 
@@ -315,9 +348,10 @@ class MLPActorCritic(nn.Module):
             sigma_network=sigma_network,
             tanh_squash=tanh_squash,
         )
+        mpc_param = self.actor._build_mpc_param()
         # Q functions
-        self.q1 = MLPQFunction(obs_dim, act_dim, hidden_dims, activation)
-        self.q2 = MLPQFunction(obs_dim, act_dim, hidden_dims, activation)
+        self.q1 = Critic(obs_dim, act_dim, mpc_param.shape[0], hidden_dims, activation)
+        # self.q2 = Critic(obs_dim, act_dim, input_dim, hidden_dims, activation)
 
     def step(self, obs, info=None):
         a, soln_info = self.actor(obs, actor_info=info)
@@ -331,13 +365,27 @@ class MLPActorCritic(nn.Module):
         self.actor.reset(idx)
 
 
-class MLPQFunction(nn.Module):
+class Critic(nn.Module):
+    """Linear Q function approximator."""
 
-    def __init__(self, obs_dim, act_dim, hidden_dims, activation):
+    def __init__(self, obs_dim, act_dim, input_dim, hidden_dims, activation):
         super().__init__()
+        self.register_buffer("weights", torch.zeros(input_dim))
         self.q_net = MLP(obs_dim + act_dim, 1, hidden_dims, activation)
+        self.weight_coeff_critic = 1.0
 
-    def forward(self, obs, act):
+    def forward(self, obs, act, q_mpc, mpc_act, nabla_q_theta, nabla_q_act_theta):
+        da = act - mpc_act
+        q1 = (
+            -q_mpc
+            - nabla_q_theta @ self.weights
+            - da @ nabla_q_act_theta @ self.weights
+        )
+        q2 = self.q_net(torch.cat([obs, act], dim=-1))
+        q = self.weight_coeff_critic * q1 + (1 - self.weight_coeff_critic) * q2
+        return q
+
+    def nn_q_value(self, obs, act):
         return self.q_net(torch.cat([obs, act], dim=-1))
 
 
@@ -364,105 +412,91 @@ class MPCActor(nn.Module):
         self.mpc = MPCPolicyFunction(env, gamma, model, **actor_config["mpc_config"])
 
         # Parameters
-        self.q_mpc = actor_config["q_mpc"]
-        self.r_mpc = actor_config["r_mpc"]
-        self.qt_mpc = actor_config["qt_mpc"]
-        self.back_off = actor_config["back_off"]
-        self.model_param = actor_config["model_param"]
-        self._init_param_val()
-        self.n_learnable_param = 0
-        for k in self.param_dict.keys():
-            self.n_learnable_param += self.param_dict[k].shape[0]
-        temp = np.concatenate(
-            (self.q_mpc, self.r_mpc, self.qt_mpc, self.back_off, self.model_param)
+        self.q_init = actor_config["q_mpc"]
+        self.r_init = actor_config["r_mpc"]
+        self.qt_init = actor_config["qt_mpc"]
+        self.back_off_init = actor_config["back_off"]
+        self.model_init = actor_config["model_param"]
+        self.q_param = nn.Parameter(torch.tensor(self.q_init, dtype=torch.float32))
+        self.r_param = nn.Parameter(torch.tensor(self.r_init, dtype=torch.float32))
+        self.qt_param = nn.Parameter(torch.tensor(self.qt_init, dtype=torch.float32))
+        self.model_param = nn.Parameter(
+            torch.tensor(self.model_init, dtype=torch.float32)
         )
-        self.mpc_param = nn.Parameter(torch.FloatTensor(temp))
-        # self.param_net = MLP(obs_dim, self.n_learnable_param, hidden_dims, activation)
-        # self.traj_param = nn.Parameter(torch.FloatTensor(self.mpc.traj))
-        self.traj_param = torch.FloatTensor(self.mpc.traj)
-        with torch.no_grad():
-            self.mpc_param.clamp_(1e-5, 100.0)
+        # self.back_off_param = nn.Parameter(
+        #     torch.tensor(self.back_off_init, dtype=torch.float32)
+        # )
+        self.register_buffer(
+            "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
+        )
 
         # Construct output action distribution.
         self.sigma_network = sigma_network
         self.tanh_squash = tanh_squash
-        self.log_std_min = -20
+        self.log_std_min = -4
         self.log_std_max = 2
         if self.sigma_network:
             self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
             self.log_std_layer = nn.Linear(hidden_dims[-1], act_dim)
         else:
-            self.log_std = nn.Parameter(exploration_init * torch.ones(act_dim))
+            self.logstd = nn.Parameter(exploration_init * torch.ones(act_dim))
         self.dist_fn = lambda mu, log_std: Normal(mu, log_std.exp())
 
         # action rescaling (from cleanrl)
-        self.action_scale = torch.tensor(
-            (action_space.high - action_space.low) / 2.0, dtype=torch.float32
-        ).flatten()
-        self.action_bias = torch.tensor(
-            (action_space.high + action_space.low) / 2.0, dtype=torch.float32
-        ).flatten()
+        self.register_buffer(
+            "action_scale",
+            torch.tensor(
+                (action_space.high - action_space.low) / 2.0, dtype=torch.float32
+            ).flatten(),
+        )
+        self.register_buffer(
+            "action_bias",
+            torch.tensor(
+                (action_space.high + action_space.low) / 2.0, dtype=torch.float32
+            ).flatten(),
+        )
 
     def forward(self, obs, deterministic=False, actor_info=None):
         theta = self.get_theta_param(obs)
         traj_param = self.get_references(actor_info)
         if obs.ndim > 1:
-            act, info, results_dict, optimal_flag = self.mpc.select_action_batch(
+            act, info, _, _ = self.mpc.select_action_batch(
                 obs, theta.numpy(), traj_param, actor_info
             )
         else:
-            act, info, results_dict, optimal_flag = self.mpc.select_action(
-                obs, theta.numpy(), traj_param
-            )
+            act, info, _, _ = self.mpc.select_action(obs, theta.numpy(), traj_param)
         act = torch.FloatTensor(np.array(act))
         # optimal_flag = torch.FloatTensor(np.array(optimal_flag))
-        if self.tanh_squash:
-            act = self.inverse_squashing(act)
 
         # action distribution
-        if self.sigma_network:
-            net_out = self.net(torch.FloatTensor(obs))
-            log_std = self.log_std_layer(net_out)
-        else:
-            log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
-        dist = self.dist_fn(act, log_std)
+        dist = self.dist_fn(act, self.logstd)
         if deterministic:
-            x_t = dist.mode()
+            action = dist.mode()
         else:
-            x_t = dist.rsample()
-        if self.tanh_squash:
-            # Squash the output
-            y_t = torch.tanh(x_t)
-            action = y_t * self.action_scale + self.action_bias
-        else:
-            action = x_t
+            action = dist.rsample()
         return action, info
 
-    def forward_train(self, obs, info, update_info=False, compute_sensitivities=True):
+    def forward_train(
+        self, obs, info, update_info=False, x0=None, pi_sensitivities=False
+    ):
         theta = self.get_theta_param(obs)
-        action, next_state, next_action, sensitivities_info, optimal_flag = (
+        action, q_mpc, sensitivities_info, optimal_flag = (
             self.mpc.select_action_batch_train(
                 obs,
                 theta.detach().numpy(),
                 info,
                 update_info=update_info,
-                compute_sensitivities=compute_sensitivities,
+                x0_init=x0,
+                pi_sensitivities=pi_sensitivities,
             )
         )
         action = torch.FloatTensor(action)
-        next_state = torch.FloatTensor(next_state)
-        next_action = torch.FloatTensor(next_action)
+        # q_mpc = torch.FloatTensor(q_mpc)
+        # x0 = torch.FloatTensor(sensitivities_info["x0"])
         nabla_pi_ref = torch.FloatTensor(np.array(sensitivities_info["nabla_pi_ref"]))
         nabla_pi_theta = torch.FloatTensor(
             np.array(sensitivities_info["nabla_pi_theta"])
         )
-        nabla_snext_theta = torch.FloatTensor(
-            np.array(sensitivities_info["nabla_snext_theta"])
-        )
-        nabla_pinext_theta = torch.FloatTensor(
-            np.array(sensitivities_info["nabla_pinext_theta"])
-        )
-
         optimal_flag = (
             torch.FloatTensor(optimal_flag).T
             if len(optimal_flag) > 0
@@ -471,84 +505,22 @@ class MPCActor(nn.Module):
         action.requires_grad_()
 
         # action distribution
-        if self.sigma_network:
-            net_out = self.net(torch.FloatTensor(obs))
-            log_std = self.log_std_layer(net_out)
-        else:
-            log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
-        if self.tanh_squash:
-            # Inverse squashing
-            z_t = self.inverse_squashing(action)
-            dist = self.dist_fn(z_t, log_std)
-        else:
-            dist = self.dist_fn(action, log_std)
-        x_t = dist.rsample()
-        logp = dist.log_prob(x_t)
-
-        # Squash the output
-        if self.tanh_squash:
-            y_t = torch.tanh(x_t)
-            act = y_t * self.action_scale + self.action_bias
-            logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
-                -1, keepdim=True
-            )
-        else:
-            act = x_t
+        dist = self.dist_fn(action, self.logstd)
+        act = dist.rsample()
+        logp = dist.log_prob(act)
         return (
             act,
             logp,
             action,
-            next_state,
-            next_action,
             nabla_pi_ref,
             nabla_pi_theta,
-            nabla_snext_theta,
-            nabla_pinext_theta,
+            q_mpc,
+            sensitivities_info["nabla_q_ref"],
+            sensitivities_info["nabla_q_theta"],
+            sensitivities_info["nabla_q_act_theta"],
             optimal_flag,
+            sensitivities_info["x0"],
         )
-
-    def forward_train_approx(
-        self, next_obs, obsnext, actnext, nabla_snext, nabla_pinext
-    ):
-        dx = next_obs[:, : obsnext.shape[1]] - obsnext
-        deltheta = torch.linalg.lstsq(nabla_snext, dx.unsqueeze(-1)).solution.squeeze(
-            -1
-        )
-        du = torch.einsum("bij,bj->bi", nabla_pinext, deltheta)
-        next_action = actnext + du
-
-        # action distribution
-        if self.sigma_network:
-            net_out = self.net(torch.FloatTensor(next_obs))
-            log_std = self.log_std_layer(net_out)
-        else:
-            log_std = torch.clamp(self.log_std, self.log_std_min, self.log_std_max)
-        if self.tanh_squash:
-            # Inverse squashing
-            z_t = self.inverse_squashing(next_action)
-            dist = self.dist_fn(z_t, log_std)
-        else:
-            dist = self.dist_fn(next_action, log_std)
-        x_t = dist.rsample()
-        logp = dist.log_prob(x_t)
-
-        # Squash the output
-        if self.tanh_squash:
-            y_t = torch.tanh(x_t)
-            next_act = y_t * self.action_scale + self.action_bias
-            logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
-                -1, keepdim=True
-            )
-        else:
-            next_act = x_t
-        return next_act, logp
-
-    def _init_param_val(self):
-        self.param_dict = {
-            "l": np.concatenate((self.q_mpc, self.r_mpc, self.qt_mpc)),
-            "b": np.array(self.back_off),
-            "f": np.array(self.model_param),
-        }
 
     def inverse_squashing(self, y):
         """Inverse of tanh squashing function."""
@@ -558,16 +530,22 @@ class MPCActor(nn.Module):
     def reset(self, idx=None):
         self.mpc.reset(idx)
 
+    def _build_mpc_param(self):
+        return torch.cat(
+            [
+                self.q_param,
+                self.r_param,
+                self.qt_param,
+                self.back_off_fixed,
+                self.model_param,
+            ],
+            dim=0,
+        )
+
     def get_theta_param(self, obs):
+        theta = self._build_mpc_param()
         if obs.ndim > 1:
-            theta = self.mpc_param.repeat(
-                obs.shape[0], 1
-            )  # + 0.0 * self.param_net.forward(torch.FloatTensor(obs))
-        else:
-            theta = self.mpc_param  # + 0.0 * self.param_net.forward(
-            #     torch.FloatTensor(obs)
-            # )
-        # theta += torch.rand_like(theta) * 1e-6
+            return theta.unsqueeze(0).repeat(obs.shape[0], 1)
         return theta
 
     def get_references(self, info_batch):
@@ -593,31 +571,6 @@ class MPCActor(nn.Module):
                 raise Exception("Reference for this mode is not implemented.")
             goal_states_batch.append(goal_states)
         return goal_states_batch  # list of (nx, T+1).
-
-    def get_ref_param(self, info_batch):
-        goal_states_batch = torch.FloatTensor()
-        if self.mpc.env.TASK == Task.TRAJ_TRACKING:
-            for info in info_batch:
-                traj_step = info["traj_step"]
-                # Slice trajectory for horizon steps, if not long enough, repeat last state.
-                start = min(traj_step, self.mpc.traj.shape[-1])
-                end = min(traj_step + self.mpc.T + 1, self.mpc.traj.shape[-1])
-                remain = max(0, self.mpc.T + 1 - (end - start))
-                goal_states = (
-                    torch.cat(
-                        (
-                            self.traj_param[:, start:end],
-                            torch.tile(self.traj_param[:, -1:], (1, remain)),
-                        ),
-                        -1,
-                    )
-                    .T.reshape(-1, 1)
-                    .T
-                )
-                goal_states_batch = torch.cat((goal_states_batch, goal_states), 0)
-        else:
-            raise Exception("Reference update for this mode is not implemented.")
-        return goal_states_batch  # (nx, T+1).
 
 
 class MPCPolicyFunction(MPCFunction):
@@ -645,35 +598,64 @@ class MPCPolicyFunction(MPCFunction):
             soft_constraints=soft_constraints,
             constraint_tol=constraint_tol,
             additional_constraints=additional_constraints,
-            n_parallel_solver=n_parallel_solver,
-            n_train_solver=n_train_solver,
             jit=jit,
             jit_options=jit_options,
         )
+        self.n_parallel_solver = n_parallel_solver
+        self.n_train_solver = n_train_solver
+        self.infos = [None] * self.n_parallel_solver
 
         # Parallel solvers
-        self.pi_solvers, self.rkkt_norm_fns, _, _ = self.get_parallel_solver(
+        self.pi_solvers, _, self.rkkt_norm_fns, _, _, _ = self.get_parallel_solver(
             self.n_parallel_solver
         )
-        self.pi_solvers_train, self.rkkt_norm_fns_train, _, self.all_solvers_train = (
-            self.get_parallel_solver(self.n_train_solver)
-        )
+        (
+            self.pi_solvers_train,
+            self.q_solver_train,
+            self.rkkt_norm_fns_train,
+            _,
+            self.all_solvers_train,
+            self.q_all_solvers_train,
+        ) = self.get_parallel_solver(self.n_train_solver)
+
+    def reset(self, idx=None):
+        super().reset()
+        if idx is not None:
+            self.infos[idx] = None
+        else:
+            self.infos = [None] * self.n_parallel_solver
 
     def setup_optimizer(self):
         super().setup_optimizer()
-        x_var, u_var, opt_vars = (
-            self.solver_dict["x_var"],
-            self.solver_dict["u_var"],
-            self.solver_dict["opt_vars"],
-        )
+        qz = self.solver_dict["qz"]
+        fixed_param = self.solver_dict["fixed_param"]
+        ref_param = self.solver_dict["ref_param"]
+        theta = self.solver_dict["theta_param"]
+        jit_opts = self.solver_dict["jit_options"]
+        dQdtheta = self.q_sensitivity_dict["dQdtheta"]
+        dqLdaP = self.q_sensitivity_dict["dqLdaP"]
+        start_time = time.time()
 
         # Next state function for training
-        opt_x_next_fn = cs.Function("opt_x_next_fun", [opt_vars], [x_var[:, 1]])
-        self.solver_dict["opt_x_next_fn"] = opt_x_next_fn
+        # opt_x_next_fn = cs.Function("opt_x_next_fun", [opt_vars], [x_var[:, 1]])
+        # self.solver_dict["opt_x_next_fn"] = opt_x_next_fn
 
         # Next action function for training
-        opt_act_next_fn = cs.Function("opt_act_fun", [opt_vars], [u_var[:, 1]])
-        self.solver_dict["opt_act_next_fn"] = opt_act_next_fn
+        # opt_act_next_fn = cs.Function("opt_act_fun", [opt_vars], [u_var[:, 1]])
+        # self.solver_dict["opt_act_next_fn"] = opt_act_next_fn
+
+        # Jitting the q sensitivity function for training
+        all_fn = cs.Function(
+            "all_fn",
+            [qz, fixed_param, ref_param, theta],
+            [dQdtheta, dqLdaP],
+            jit_opts,
+        )
+        # all_fn.save("all_fn.casadi")
+        print(
+            f"[MPC Setup] JIT compilation time: {time.time() - start_time:.3f} seconds."
+        )
+        self.q_sensitivity_dict["all_fn"] = all_fn
 
     def select_action_batch(self, obs_batch, theta, traj_ref, agent_info):
         if not obs_batch.ndim > 1:
@@ -682,10 +664,6 @@ class MPCPolicyFunction(MPCFunction):
         con_ubg = self.solver_dict["upper_bound"]
         opt_vars_fn = self.solver_dict["opt_vars_fn"]
         xus_fn = self.solver_dict["xus_fn"]
-        traj_step = self.traj_step
-        # goal_states = self.get_references(traj_step, traj_ref)
-        if self.mode == "tracking":
-            self.traj_step += 1
 
         # eval_data_batch = []
         x0, fixed_p, ref_p = [], [], []
@@ -695,7 +673,8 @@ class MPCPolicyFunction(MPCFunction):
         if not obs_batch.ndim > 1:
             obs_batch = obs_batch[None, :]
         for i, obs in enumerate(obs_batch):
-            fixed_param = obs[: self.model.nx]
+            fixed_param = np.zeros((self.model.nx + self.model.nu))
+            fixed_param[: self.model.nx] = obs[: self.model.nx]
             ref_param = traj_ref[i].T.reshape(-1, 1)[:, 0]
             opt_vars_init = np.zeros(self.solver_dict["opt_vars"].shape)
             if (
@@ -772,25 +751,32 @@ class MPCPolicyFunction(MPCFunction):
         theta,
         info_batch,
         update_info=False,
-        compute_sensitivities=True,
+        x0_init=None,
+        pi_sensitivities=False,
     ):
         con_lbg = self.solver_dict["lower_bound"]
         con_ubg = self.solver_dict["upper_bound"]
+        qcon_lbg = self.solver_dict["qlower_bound"]
+        qcon_ubg = self.solver_dict["qupper_bound"]
         opt_act_fn = self.solver_dict["opt_act_fn"]
         opt_vars_fn = self.solver_dict["opt_vars_fn"]
         xus_fn = self.solver_dict["xus_fn"]
-        x_next_fn = self.solver_dict["opt_x_next_fn"]
-        opt_next_act_fn = self.solver_dict["opt_act_next_fn"]
+        npl = self.solver_dict["theta_param"].shape[0]
 
         x0, fixed_p, ref_p = [], [], []
         lbg = con_lbg.full().repeat(obs_batch.shape[0], 1)
         ubg = con_ubg.full().repeat(obs_batch.shape[0], 1)
+        qlbg = qcon_lbg.full().repeat(obs_batch.shape[0], 1)
+        qubg = qcon_ubg.full().repeat(obs_batch.shape[0], 1)
         if not obs_batch.ndim > 1:
             obs_batch = obs_batch[None, :]
         for i, obs in enumerate(obs_batch):
             info = info_batch[i]
             opt_vars_init = info["opt_var"]
-            fixed_param = obs[: self.model.nx]
+            if x0_init is not None:
+                opt_vars_init = x0_init[:, i]
+            fixed_param = np.zeros((self.model.nx + self.model.nu))
+            fixed_param[: self.model.nx] = obs[: self.model.nx]
             ref_param = info["ref_param"]
             if update_info:
                 # update the optimization variable init
@@ -818,41 +804,46 @@ class MPCPolicyFunction(MPCFunction):
         soln_batch = self.pi_solvers_train(x0=x0, p=p, lbg=lbg, ubg=ubg)
         z = cs.vertcat(soln_batch["x"], soln_batch["lam_g"])
         action_batch = opt_act_fn(soln_batch["x"]).full().T
-        next_action_batch = opt_next_act_fn(soln_batch["x"]).full().T
-        next_state_batch = x_next_fn(soln_batch["x"]).full().T
+
+        # Forward pass for Q solver
+        qfixed_p = fixed_p.copy()
+        qfixed_p[self.model.nx :, :] = action_batch.T
+        qx0 = soln_batch["x"].full()
+        qp = np.concatenate((qfixed_p, ref_p, theta.T), axis=0)
+        qsoln_batch = self.q_solver_train(x0=qx0, p=qp, lbg=qlbg, ubg=qubg)
+        qz = cs.vertcat(qsoln_batch["x"], qsoln_batch["lam_g"])
+        q_mpc_batch = qsoln_batch["f"].full().T
 
         # Post-processing the solution
         nabla_pi_ref_batch, nabla_pi_theta_batch, optimal_batch = [], [], []
-        nabla_snext_theta_batch, nabla_pinext_theta_batch = [], []
-        if compute_sensitivities:
+        nabla_q_ref_batch, nabla_q_theta_batch, nabla_q_act_theta_batch = [], [], []
+        # nabla_snext_theta_batch, nabla_pinext_theta_batch = [], []
+        dq_cs, ddq_cs = self.q_all_solvers_train(qz, qfixed_p, ref_p, theta.T)
+        dq_cs = dq_cs.full()
+        ddq_cs = ddq_cs.full()
+        for i in range(obs_batch.shape[0]):
+            # nabla_q_ref_batch.append(dq_cs[:, npl * i : npl * i + self.model.nx])
+            nabla_q_theta_batch.append(
+                dq_cs[
+                    :,
+                    npl * i : npl * (i + 1),
+                ]
+            )
+            nabla_q_act_theta_batch.append(
+                ddq_cs[
+                    :,
+                    npl * i : npl * (i + 1),
+                ]
+            )
+        if pi_sensitivities:
+            # dpi_cs = dpi_fn_train(optimal_batch, z, fixed_p, ref_p, theta.T).full()
             rkkt_norm_batch, dpi_cs = self.all_solvers_train(z, fixed_p, ref_p, theta.T)
             optimal_batch = rkkt_norm_batch.full() < 1e-3
-            nabla_pi_ref_batch, nabla_pi_theta_batch = [], []
-            # dpi_cs = dpi_fn_train(optimal_batch, z, fixed_p, ref_p, theta.T).full()
-            nx, nu, npl = (
-                self.model.nx,
-                self.model.nu,
-                self.solver_dict["theta_param"].shape[0],
-            )
             for i in range(obs_batch.shape[0]):
                 nabla_pi_theta_batch.append(
                     int(optimal_batch[0, i])
                     * dpi_cs[
-                        nx : nx + nu,
-                        npl * i : npl * (i + 1),
-                    ]
-                )
-                nabla_snext_theta_batch.append(
-                    int(optimal_batch[0, i])
-                    * dpi_cs[
-                        2 * nx + nu : 3 * nx + nu,
-                        npl * i : npl * (i + 1),
-                    ]
-                )
-                nabla_pinext_theta_batch.append(
-                    int(optimal_batch[0, i])
-                    * dpi_cs[
-                        3 * nx + nu : 3 * nx + 2 * nu,
+                        :,
                         npl * i : npl * (i + 1),
                     ]
                 )
@@ -860,25 +851,32 @@ class MPCPolicyFunction(MPCFunction):
             rkkt_norm_batch = self.rkkt_norm_fns_train(z, fixed_p, ref_p, theta.T)
             optimal_batch = rkkt_norm_batch.full() < 1e-3
         sensitivities_info_batch = {
+            "x0": soln_batch["x"].full(),
             "nabla_pi_ref": nabla_pi_ref_batch,
             "nabla_pi_theta": nabla_pi_theta_batch,
-            "nabla_snext_theta": nabla_snext_theta_batch,
-            "nabla_pinext_theta": nabla_pinext_theta_batch,
+            "nabla_q_ref": nabla_q_ref_batch,
+            "nabla_q_theta": nabla_q_theta_batch,
+            "nabla_q_act_theta": nabla_q_act_theta_batch,
+            # "nabla_snext_theta": nabla_snext_theta_batch,
+            # "nabla_pinext_theta": nabla_pinext_theta_batch,
         }
         return (
             action_batch,
-            next_state_batch,
-            next_action_batch,
+            q_mpc_batch,
             sensitivities_info_batch,
             optimal_batch,
         )
 
     def get_parallel_solver(self, n_solvers):
         pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread")
-        rkkt_norm_fns = self.solver_dict["rkkt_norm_fn"].map(n_solvers, "thread")
-        dpi_fns = self.solver_dict["dpi_fn"].map(n_solvers, "thread")
-        all_fns = self.solver_dict["all_fn"].map(n_solvers, "thread")
-        return pi_solvers, rkkt_norm_fns, dpi_fns, all_fns
+        q_solver = self.solver_dict["qsolver"].map(n_solvers, "thread")
+        rkkt_norm_fns = self.pi_sensitivity_dict["rkkt_norm_fn"].map(
+            n_solvers, "thread"
+        )
+        dpi_fns = self.pi_sensitivity_dict["dpi_fn"].map(n_solvers, "thread")
+        all_fns = self.pi_sensitivity_dict["all_fn"].map(n_solvers, "thread")
+        q_all_fns = self.q_sensitivity_dict["all_fn"].map(n_solvers, "thread")
+        return pi_solvers, q_solver, rkkt_norm_fns, dpi_fns, all_fns, q_all_fns
 
 
 class SACBuffer(object):

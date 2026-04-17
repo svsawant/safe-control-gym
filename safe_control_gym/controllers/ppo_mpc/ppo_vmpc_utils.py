@@ -277,10 +277,10 @@ class PPO_VMPC_Agent:
 
             # optional: normalize columns
             # col_scale = np.maximum(np.linalg.norm(Av, axis=0, keepdims=True), 1e-8)
-            Avn = Av  # / col_scale
+            # Avn = Av  # / col_scale
 
-            AtA = Avn.T @ Avn
-            Atb = Avn.T @ bv
+            AtA = Av.T @ Av
+            Atb = Av.T @ bv
             w_scaled = np.linalg.solve(AtA + 1e-4 * np.eye(AtA.shape[0]), Atb)
             # w = (w_scaled / col_scale.T).squeeze(-1)
             w = w_scaled.squeeze(-1)

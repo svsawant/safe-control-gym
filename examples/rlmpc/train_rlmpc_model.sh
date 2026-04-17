@@ -10,11 +10,13 @@ TASK='track'
 
 # ALGO='ppo_mpc'
 # ALGO='appo_mpc'
-ALGO='ppo_vmpc'
+# ALGO='ppo_vmpc'
 # ALGO='sac_mpc'
+# ALGO='asac_mpc'
+ALGO='sac_qmpc'
 # ALGO='td3_mpc'
 
-EXP_NAME='test'
+EXP_NAME='quad_2d_track7'
 
 if [ "$SYS" == 'cartpole' ]; then
     SYS_NAME=$SYS

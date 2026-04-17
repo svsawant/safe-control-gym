@@ -669,7 +669,7 @@ class MPCFunction:
             + self.model.nu,
             :,
         ]
-        self.q_sensitivities_dict = {
+        self.q_sensitivity_dict = {
             "dQdtheta": dQdtheta,
             "dQdtheta_fn": dQdtheta_fn,
             "qrkkt_fn": qrkkt_fn,

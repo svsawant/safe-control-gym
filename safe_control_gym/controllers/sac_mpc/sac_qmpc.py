@@ -311,7 +311,10 @@ class SAC_QMPC(BaseController):
             )
         if self.total_steps < self.warm_up_steps:
             action = np.stack(
-                [self.env.action_space.sample() for _ in range(self.rollout_batch_size)]
+                [
+                    self.venv.envs[i].action_space.sample()
+                    for i in range(self.rollout_batch_size)
+                ]
             )
         next_obs, rew, done, info = self.venv.step(action)
         next_obs = self.obs_normalizer(next_obs)
@@ -527,8 +530,9 @@ class SAC_QMPC(BaseController):
             )
         # Print parameters and summary table
         print("MPC params:")
-        print(self.agent.ac.actor.mpc_param.detach().numpy())
+        mpc_param = self.agent.ac.actor._build_mpc_param()
+        print(mpc_param.cpu().detach().numpy())
         if not self.sigma_network:
             print("Policy logstd:")
-            print(self.agent.ac.actor.log_std.detach().numpy())
+            print(self.agent.ac.actor.logstd.detach().numpy())
         self.logger.dump_scalars()
