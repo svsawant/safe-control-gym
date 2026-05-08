@@ -252,7 +252,7 @@ class MPCFunction:
             x = cs.MX.sym("x", nx)
             u = cs.MX.sym("u", nu)
             sigma = cs.MX.sym("sigma", nx)
-            # append the casadi var to opt_Vars
+            # append the casadi var to opt_vars
             opt_vars.append(x)
             opt_vars.append(u)
             opt_vars.append(sigma)
@@ -260,6 +260,10 @@ class MPCFunction:
             x_var.append(x)
             u_var.append(u)
             sigma_var.append(sigma)
+            # special condition for initial action
+            # if i == 0:
+            #     sigma_u0 = cs.MX.sym("sigma_u0", nu)
+            #     opt_vars.append(sigma_u0)
         x = cs.MX.sym("x", nx)  # final state
         sigma = cs.MX.sym("sigma", nx)
         opt_vars.append(x)
@@ -291,13 +295,13 @@ class MPCFunction:
         Qt, th_qt, _ = _create_semi_definite_matrix(nx)
         # theta_param = cs.MX.sym("theta_var", nq + nr)
         cost_param = cs.vertcat(th_q, th_r, th_qt)
-        back_off_param = cs.MX.sym("back_off_param", nx)
+        back_off_param = cs.MX.zeros(nx)  # cs.MX.sym("back_off_param", nx)
         # Model
         model_param = cs.MX.sym("f_param", npl)
 
         # cost (cumulative)
         cost = 0
-        w = 1e3 * np.ones((1, nx))
+        w, wu0 = 1e3 * np.ones((1, nx)), 1e0
         cost_func = self.model.loss
         for i in range(T):
             cost += (
@@ -349,16 +353,6 @@ class MPCFunction:
         qmult.append(lm)
         qlamb.append(lm)
 
-        # initial action condition constraints
-        qcon_list.append(u_var[:, 0] - a_init)
-        lm = cs.MX.sym("lm", nu)
-        qcon_lbg.append(cs.DM.zeros(nu, 1))
-        qcon_ubg.append(cs.DM.zeros(nu, 1))
-        qcon_eq += [True] * nu
-        qH_eq.append(u_var[:, 0] - a_init)
-        qmult.append(lm)
-        qlamb.append(lm)
-
         for i in range(self.T):
             # Dynamics constraints.
             next_state = self.dynamics_func(
@@ -385,12 +379,8 @@ class MPCFunction:
             for sc_i, state_constraint in enumerate(self.state_constraints_sym):
                 cost += w @ sigma_var[:, i]
                 constraint = [
-                    state_constraint(x_var[:, i])[:nx]
-                    - sigma_var[:, i]
-                    + back_off_param,
-                    state_constraint(x_var[:, i])[nx:]
-                    - sigma_var[:, i]
-                    + back_off_param,
+                    state_constraint(x_var[:, i])[:nx] - sigma_var[:, i],
+                    state_constraint(x_var[:, i])[nx:] - sigma_var[:, i],
                     -sigma_var[:, i],
                 ]
                 con_list += constraint
@@ -412,32 +402,32 @@ class MPCFunction:
 
             # Action bounds
             for ic_i, input_constraint in enumerate(self.input_constraints_sym):
-                con_list.append(input_constraint(u_var[:, i]) + self.constraint_tol)
+                constraint = [
+                    input_constraint(u_var[:, i])[:nu] + self.constraint_tol,
+                    input_constraint(u_var[:, i])[nu:] + self.constraint_tol,
+                ]
+                con_list += constraint
                 con_lbg.append(-cs.DM.inf(2 * nu, 1))
                 con_ubg.append(cs.DM.zeros(2 * nu, 1))
                 con_eq += [False] * 2 * nu
-                if i != 0:  # initial action constraint is not added to Q function
-                    qcon_list.append(
-                        input_constraint(u_var[:, i]) + self.constraint_tol
-                    )
-                    qcon_lbg.append(-cs.DM.inf(2 * nu, 1))
-                    qcon_ubg.append(cs.DM.zeros(2 * nu, 1))
-                    qcon_eq += [False] * 2 * nu
+                qcon_list += constraint
+                qcon_lbg.append(-cs.DM.inf(2 * nu, 1))
+                qcon_ubg.append(cs.DM.zeros(2 * nu, 1))
+                qcon_eq += [False] * 2 * nu
 
-                H_ieq.append(input_constraint(u_var[:, i]) + self.constraint_tol)
+                H_ieq += constraint
                 lm = cs.MX.sym("lm", 2 * nu)
                 mult.append(lm)
                 mu.append(lm)
-                if i != 0:
-                    qH_ieq.append(input_constraint(u_var[:, i]) + self.constraint_tol)
-                    qmult.append(lm)
-                    qmu.append(lm)
+                qH_ieq += constraint
+                qmult.append(lm)
+                qmu.append(lm)
         # Final state constraints.
         for sc_i, state_constraint in enumerate(self.state_constraints_sym):
             cost += w @ sigma_var[:, -1]
             constraint = [
-                state_constraint(x_var[:, -1])[:nx] - sigma_var[:, -1] + back_off_param,
-                state_constraint(x_var[:, -1])[nx:] - sigma_var[:, -1] + back_off_param,
+                state_constraint(x_var[:, -1])[:nx] - sigma_var[:, -1],
+                state_constraint(x_var[:, -1])[nx:] - sigma_var[:, -1],
                 -sigma_var[:, -1],
             ]
             con_list += constraint
@@ -466,7 +456,7 @@ class MPCFunction:
         # z contains all variables of the lagrangian
         z = cs.vertcat(opt_vars, mult)
         qz = cs.vertcat(opt_vars, qmult)
-        theta = cs.vertcat(cost_param, back_off_param, model_param)
+        theta = cs.vertcat(cost_param, model_param)
         # lang_mult_fn = cs.Function("lang_mult_fn", [mult], [lamb, mu])
 
         # Create solver (FATROP solver in this version)
@@ -492,17 +482,17 @@ class MPCFunction:
         vnlp_prob = {
             "f": cost,
             "x": opt_vars,
-            "p": cs.vertcat(
-                fixed_param, ref_param, cost_param, back_off_param, model_param
-            ),
+            "p": cs.vertcat(fixed_param, ref_param, cost_param, model_param),
             "g": con_list,
         }
         pisolver = cs.nlpsol("pisolver", "fatrop", vnlp_prob, opts_setting)
 
         # Q function
+        qcost = cost + 0.5 * wu0 * cs.sumsqr(u_var[:, 0] - a_init)
         qopts_setting = deepcopy(opts_setting)
         qopts_setting.update({"equality": qcon_eq})
         qnlp_prob = deepcopy(vnlp_prob)
+        qnlp_prob["f"] = qcost
         qnlp_prob["g"] = qcon_list
         qsolver = cs.nlpsol("qsolver", "fatrop", qnlp_prob, qopts_setting)
         print(
@@ -575,6 +565,7 @@ class MPCFunction:
         [dRdz, dRdP_ref, dRdP_theta] = dR_sensfunc(z, fixed_param, ref_param, theta)
         # dRdP = cs.horzcat(dRdP_ref, dRdP_theta)
         dRdP = cs.horzcat(dRdP_theta)  # only learnable param
+        dRdz_fn = cs.Function("dRdz", [z, fixed_param, ref_param, theta], [dRdz])
         print(
             f"[MPC Setup] KKT matrix setup time: {time.time() - start_time:.3f} seconds."
         )
@@ -604,6 +595,9 @@ class MPCFunction:
             "R_kkt": R_kkt,
             "rkkt_fn": rkkt_fn,
             "rkkt_norm_fn": rkkt_norm_fn,
+            "dRdz": dRdz,
+            "dRdP": dRdP,
+            "dRdz_fn": dRdz_fn,
             "dpi_fn": dPi_fn,
             "jit_options": jit_opts,
         }
@@ -613,19 +607,7 @@ class MPCFunction:
         start_time = time.time()
 
         #### Sensitivities for Q function
-        qalambda_fn = cs.Function(
-            "qalambda_fn",
-            [qz],
-            [
-                qz[
-                    opt_vars.shape[0]
-                    + self.model.nx : opt_vars.shape[0]
-                    + self.model.nx
-                    + self.model.nu
-                ]
-            ],
-        )
-        qlagrangian = cost + cs.transpose(qlamb) @ qH_eq + cs.transpose(qmu) @ qH_ieq
+        qlagrangian = qcost + cs.transpose(qlamb) @ qH_eq + cs.transpose(qmu) @ qH_ieq
         dqlag_dw = cs.jacobian(qlagrangian, opt_vars)
         qR_kkt = cs.vertcat(
             cs.transpose(dqlag_dw),
@@ -638,6 +620,8 @@ class MPCFunction:
         dqlag_fn = qlagrangian_fn.factory(
             "dQ", ["i0", "i1", "i2", "i3"], ["jac:o0:i2", "jac:o0:i3"]
         )
+        dQda = cs.jacobian(qlagrangian, a_init)
+        dQdu0 = cs.jacobian(qlagrangian, u_var[:, 0])
         [_, dQdtheta] = dqlag_fn(qz, fixed_param, ref_param, theta)
         # Sensitivity against theta
         dQdtheta_fn = cs.Function(
@@ -654,28 +638,38 @@ class MPCFunction:
         )
         # Sensitivity of the KKT matrix for Q function for second order sensitivity
         dqR_sensfunc = qrkkt_fn.factory(
-            "dR", ["i0", "i1", "i2", "i3"], ["jac:o0:i0", "jac:o0:i2", "jac:o0:i3"]
+            "dR",
+            ["i0", "i1", "i2", "i3"],
+            ["jac:o0:i0", "jac:o0:i1", "jac:o0:i2", "jac:o0:i3"],
         )
-        [dqRdz, dqRdP_ref, dqRdP_theta] = dqR_sensfunc(
+        [dqRdz, dqRdf, dqRdP_ref, dqRdP_theta] = dqR_sensfunc(
             qz, fixed_param, ref_param, theta
         )
-        # dRdP = cs.horzcat(dRdP_ref, dRdP_theta)
-        dqRdP = cs.horzcat(dqRdP_theta)  # only learnable
+        dqRdP = cs.horzcat(
+            dqRdP_theta, dqRdf
+        )  # learnable param + fixed param (for sensitivity of the value function)
+        dqRdz_fn = cs.Function("dqRdz", [qz, fixed_param, ref_param, theta], [dqRdz])
         dqzdP = -cs.solve(dqRdz, dqRdP)
-        dqLdaP = dqzdP[
-            opt_vars.shape[0]
-            + self.model.nx : opt_vars.shape[0]
-            + self.model.nx
-            + self.model.nu,
-            :,
-        ]
+        du0dP = dqzdP[
+            nx : nx + nu, : theta.shape[0]
+        ]  # sensitivity of the optimal action w.r.t. parameters
+        du0da = dqzdP[
+            nx : nx + nu, theta.shape[0] + nx : theta.shape[0] + nx + nu
+        ]  # sensitivity of the optimal action w.r.t. initial action condition
+        dqdaP = -wu0 * du0dP
+        dqdaa = wu0 * (cs.DM.eye(nu) - du0da)
         self.q_sensitivity_dict = {
+            "dQda": dQda,
+            "dQdu0": dQdu0,
             "dQdtheta": dQdtheta,
             "dQdtheta_fn": dQdtheta_fn,
             "qrkkt_fn": qrkkt_fn,
             "qrkkt_norm_fn": qrkkt_norm_fn,
-            "qalambda_fn": qalambda_fn,
-            "dqLdaP": dqLdaP,
+            "dqRdz": dqRdz,
+            "dqRdP": dqRdP,
+            "dqRdz_fn": dqRdz_fn,
+            "dqdaP": dqdaP,
+            "dqdaa": dqdaa,
         }
         print(
             f"[MPC Setup] Q sensitivity setup time: {time.time() - start_time:.3f} seconds."

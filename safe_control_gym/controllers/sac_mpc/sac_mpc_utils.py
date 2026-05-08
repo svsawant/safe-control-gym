@@ -7,6 +7,7 @@ import casadi as cs
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from gymnasium.spaces import Box
 
 from safe_control_gym.controllers.ppo_mpc.rlmpc_utils import (
@@ -147,8 +148,9 @@ class SAC_MPC_Agent:
         entropy_loss = torch.zeros(1)
         if self.use_entropy_tuning:
             entropy_loss = -(self.log_alpha * (logp + self.target_entropy).detach())
+            logp_loss = (logp + self.target_entropy).detach().mean()
             entropy_loss = torch.where(optimal > 0.9, entropy_loss, torch.nan).nanmean()
-        return policy_loss, entropy_loss
+        return policy_loss, entropy_loss, logp_loss
 
     def compute_q_loss(
         self, batch, batch_th
@@ -193,12 +195,6 @@ class SAC_MPC_Agent:
 
         # actor update
         if self.count % self.update_freq == 0:
-            # Set requires_grad to False for critic networks so that the gradients can be passed through the mpc to actor parameters.
-            for p in self.ac.q1.parameters():
-                p.requires_grad = False
-            for p in self.ac.q2.parameters():
-                p.requires_grad = False
-
             # MPC forward and backward
             obs_th = batch_th["obs"]
             obs, info = batch["obs"], batch["info"]
@@ -211,7 +207,7 @@ class SAC_MPC_Agent:
                 optimal,
             ) = self.ac.actor.forward_train(obs, info)
 
-            policy_loss, entropy_loss = self.compute_policy_loss(
+            policy_loss, entropy_loss, logp_loss = self.compute_policy_loss(
                 obs_th, act_th, logp, optimal
             )
             self.actor_opt.zero_grad()
@@ -233,9 +229,10 @@ class SAC_MPC_Agent:
                 self.ac.actor.model_param.clamp_(1e-5, 100.0)
                 # self.ac.actor.back_off_fixed.clamp_(1e-5, 100.0)
                 # self.ac.actor.mpc_param.clamp_(1e-5, 100.0)
-                self.ac.actor.logstd.clamp_(
-                    self.ac.actor.log_std_min, self.ac.actor.log_std_max
-                )
+                if not self.ac.actor.sigma_network:
+                    self.ac.actor.logstd.clamp_(
+                        self.ac.actor.log_std_min, self.ac.actor.log_std_max
+                    )
 
             if self.use_entropy_tuning:
                 self.alpha_opt.zero_grad()
@@ -246,13 +243,8 @@ class SAC_MPC_Agent:
             results["entropy_loss"] = entropy_loss.item()
             results["alpha"] = self.alpha.item()
             results["theta_loss"] = theta_loss.item()
+            results["logp_loss"] = logp_loss.item()
             # results['exploration_std'] = self.ac.actor.logstd.exp().mean().item()
-
-            # Set requires_grad back to True for critic networks for next update step.
-            for p in self.ac.q1.parameters():
-                p.requires_grad = True
-            for p in self.ac.q2.parameters():
-                p.requires_grad = True
 
         # update target networks
         # soft_update(self.ac, self.ac_targ, self.tau)
@@ -375,9 +367,9 @@ class MPCActor(nn.Module):
         # self.back_off_param = nn.Parameter(
         #     torch.tensor(self.back_off_init, dtype=torch.float32)
         # )
-        self.register_buffer(
-            "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
-        )
+        # self.register_buffer(
+        #     "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
+        # )
 
         # Construct output action distribution.
         self.sigma_network = sigma_network
@@ -480,8 +472,11 @@ class MPCActor(nn.Module):
         if self.tanh_squash:
             y_t = torch.tanh(x_t)
             act = y_t * self.action_scale + self.action_bias
-            logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
-                -1, keepdim=True
+            # logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
+            #     -1, keepdim=True
+            # )
+            logp -= (2 * (np.log(2) - x_t - F.softplus(-2 * x_t))).sum(
+                axis=1, keepdim=True
             )
         else:
             act = x_t
@@ -508,7 +503,7 @@ class MPCActor(nn.Module):
                 self.q_param,
                 self.r_param,
                 self.qt_param,
-                self.back_off_fixed,
+                # self.back_off_fixed,
                 self.model_param,
             ],
             dim=0,
@@ -546,6 +541,7 @@ class MPCActor(nn.Module):
 
 
 class MPCPolicyFunction(MPCFunction):
+
     def __init__(
         self,
         env_fun,
@@ -612,21 +608,24 @@ class MPCPolicyFunction(MPCFunction):
             fixed_param[: self.model.nx] = obs[: self.model.nx]
             ref_param = traj_ref[i].T.reshape(-1, 1)[:, 0]
             opt_vars_init = np.zeros(self.solver_dict["opt_vars"].shape)
-            if (
-                self.infos[i] is not None
-            ):  # shift previous solutions by 1 step based on last soln
+
+            # shift previous solutions by 1 step based on last soln
+            info = agent_info[i]["soln_info"]
+            if info is not None:
+                opt_vars_init = info["opt_var"]
+            elif self.infos[i] is not None:
                 opt_vars_init = self.infos[i]["opt_var"]
-                x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
-                x_prev, u_prev, sigma_prev = (
-                    x_prev.full(),
-                    u_prev.full(),
-                    sigma_prev.full(),
-                )
-                opt_vars_init = update_initial_guess(
-                    x_prev, u_prev, sigma_prev, opt_vars_fn
-                )
-                if agent_info[i]["current_step"] == 0:
-                    opt_vars_init = np.zeros_like(opt_vars_init)
+            else:
+                opt_vars_init = np.zeros_like(opt_vars_init)
+            x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
+            x_prev, u_prev, sigma_prev = (
+                x_prev.full(),
+                u_prev.full(),
+                sigma_prev.full(),
+            )
+            opt_vars_init = update_initial_guess(
+                x_prev, u_prev, sigma_prev, opt_vars_fn
+            )
 
             x0.append(opt_vars_init[:, 0])
             fixed_p.append(fixed_param)

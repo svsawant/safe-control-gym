@@ -207,6 +207,8 @@ class PPO_MPC_Agent:
                     theta_loss_epoch += theta_loss.item()
                     # ref_loss_epoch += ref_loss.sum().item()
                     n_actor_updates += 1
+                else:
+                    break
 
                 # Critic update.
                 value_loss = self.compute_value_loss(batch_th)
@@ -341,9 +343,9 @@ class MPCActor(nn.Module):
         # self.back_off_param = nn.Parameter(
         #     torch.tensor(self.back_off_init, dtype=torch.float32)
         # )
-        self.register_buffer(
-            "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
-        )
+        # self.register_buffer(
+        #     "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
+        # )
 
         # Construct output action distribution.
         self.logstd = nn.Parameter(exploration_init * torch.ones(act_dim))
@@ -394,7 +396,7 @@ class MPCActor(nn.Module):
                 self.q_param,
                 self.r_param,
                 self.qt_param,
-                self.back_off_fixed,
+                # self.back_off_fixed,
                 self.model_param,
             ],
             dim=0,
@@ -478,7 +480,7 @@ class MPCPolicyFunction(MPCFunction):
         else:
             self.infos = [None] * self.n_parallel_solver
 
-    def select_action_batch(self, obs_batch, theta, traj_ref, actor_info):
+    def select_action_batch(self, obs_batch, theta, traj_ref, agent_info):
         if not obs_batch.ndim > 1:
             obs_batch = obs_batch[None, :]
         con_lbg = self.solver_dict["lower_bound"]
@@ -498,19 +500,22 @@ class MPCPolicyFunction(MPCFunction):
             opt_vars_init = np.zeros(self.solver_dict["opt_vars"].shape)
 
             # shift previous solutions by 1 step based on last soln, if available
-            if self.infos[i] is not None:
+            info = agent_info[i]["soln_info"]
+            if info is not None:
+                opt_vars_init = info["opt_var"]
+            elif self.infos[i] is not None:
                 opt_vars_init = self.infos[i]["opt_var"]
-                x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
-                x_prev, u_prev, sigma_prev = (
-                    x_prev.full(),
-                    u_prev.full(),
-                    sigma_prev.full(),
-                )
-                opt_vars_init = update_initial_guess(
-                    x_prev, u_prev, sigma_prev, opt_vars_fn
-                )
-                if actor_info[i]["current_step"] == 0:
-                    opt_vars_init = np.zeros_like(opt_vars_init)
+            else:
+                opt_vars_init = np.zeros_like(opt_vars_init)
+            x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
+            x_prev, u_prev, sigma_prev = (
+                x_prev.full(),
+                u_prev.full(),
+                sigma_prev.full(),
+            )
+            opt_vars_init = update_initial_guess(
+                x_prev, u_prev, sigma_prev, opt_vars_fn
+            )
 
             x0.append(opt_vars_init[:, 0])
             fixed_p.append(fixed_param)
@@ -553,8 +558,8 @@ class MPCPolicyFunction(MPCFunction):
                 "fixed_param": deepcopy(fixed_p[:, i]),
                 "ref_param": deepcopy(ref_p[:, i]),
                 "theta_param": deepcopy(theta[i, :]),
-                "traj_step": deepcopy(actor_info[i]["current_step"]),
-                "x_ref": deepcopy(actor_info[i]["x_ref"]),
+                "traj_step": deepcopy(agent_info[i]["current_step"]),
+                "x_ref": deepcopy(agent_info[i]["x_ref"]),
             }
 
             # result batch

@@ -1139,7 +1139,7 @@ class Quadrotor(BaseAviary):
         # RL cost.
         if self.COST == Cost.RL_REWARD:
             state = self.state
-            act = np.asarray(self.current_noisy_physical_action)
+            act = np.asarray(self.current_physical_action)
             act_error = act - self.U_GOAL
             # Quadratic costs w.r.t state and action
             # TODO: consider using multiple future goal states for cost in tracking
@@ -1168,7 +1168,7 @@ class Quadrotor(BaseAviary):
                     * self.symbolic.loss(
                         x=self.state,
                         Xr=self.X_GOAL,
-                        u=self.current_clipped_action,
+                        u=self.current_physical_action,
                         Ur=self.U_GOAL,
                         Q=self.Q,
                         R=self.R,
@@ -1182,7 +1182,7 @@ class Quadrotor(BaseAviary):
                         Xr=self.X_GOAL[
                             self.ctrl_step_counter + 1, :
                         ],  # +1 because state has already advanced but counter not incremented.
-                        u=self.current_clipped_action,
+                        u=self.current_physical_action,
                         Ur=self.U_GOAL,
                         Q=self.Q,
                         R=self.R,

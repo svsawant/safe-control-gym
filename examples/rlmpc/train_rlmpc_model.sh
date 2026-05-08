@@ -11,12 +11,13 @@ TASK='track'
 # ALGO='ppo_mpc'
 # ALGO='appo_mpc'
 # ALGO='ppo_vmpc'
-# ALGO='sac_mpc'
+ALGO='sac_mpc'
 # ALGO='asac_mpc'
-ALGO='sac_qmpc'
+# ALGO='sac_qmpc'
 # ALGO='td3_mpc'
 
-EXP_NAME='quad_2d_track7'
+EXP_NAME='quad_2d_track'
+TAG=${SYS}_${ALGO}
 
 if [ "$SYS" == 'cartpole' ]; then
     SYS_NAME=$SYS
@@ -25,7 +26,7 @@ else
 fi
 
 # Train the unsafe controller/agent.
-for SEED in {0..0}
+for SEED in {0..2}
 do
     echo "Training ${ALGO} on ${SYS_NAME} with seed ${SEED}"
     python3 ../../safe_control_gym/experiments/train_rl_controller.py \
@@ -35,9 +36,12 @@ do
             ./config_overrides/${SYS}/${ALGO}_${SYS}.yaml \
             ./config_overrides/${SYS}/${SYS}_${TASK}.yaml \
         --output_dir ./Results/${EXP_NAME} \
-        --tag ${SYS}_${ALGO} \
+        --tag ${TAG} \
         --seed ${SEED} \
         --kv_overrides \
             task_config.randomized_init=True \
-            task_config.rew_exponential=False
+            task_config.rew_exponential=False 
 done
+wait
+
+tb-reducer ./Results/${EXP_NAME}/${TAG}/seed* -o ./Results/${EXP_NAME}/${TAG}/ -r mean

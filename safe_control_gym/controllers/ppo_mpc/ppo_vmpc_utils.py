@@ -235,6 +235,8 @@ class PPO_VMPC_Agent:
                     # ref_loss_epoch += ref_loss.sum().item()
                     # v_theta_loss_epoch += v_theta_loss.item()
                     n_actor_updates += 1
+                else:
+                    break
 
                 # NN Critic update.
                 # value_loss = self.compute_value_loss(batch_th)
@@ -432,9 +434,9 @@ class MPCActor(nn.Module):
         # self.back_off_param = nn.Parameter(
         #     torch.tensor(self.back_off_init, dtype=torch.float32)
         # )
-        self.register_buffer(
-            "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
-        )
+        # self.register_buffer(
+        #     "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
+        # )
 
         # Construct output action distribution.
         self.logstd = nn.Parameter(exploration_init * torch.ones(act_dim))
@@ -499,7 +501,7 @@ class MPCActor(nn.Module):
                 self.q_param,
                 self.r_param,
                 self.qt_param,
-                self.back_off_fixed,
+                # self.back_off_fixed,
                 self.model_param,
             ],
             dim=0,
