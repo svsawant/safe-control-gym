@@ -124,6 +124,15 @@ class APPO_MPC(BaseController):
             self.total_steps = 0
             obs, _ = self.venv.reset()
             self.obs = self.obs_normalizer(obs)
+            self.agent_info = []
+            for env in self.venv.envs:
+                self.agent_info.append(
+                    {
+                        "current_step": env.ctrl_step_counter,
+                        "x_ref": env.X_GOAL,
+                        "soln_info": None,
+                    }
+                )
         else:
             # Add episodic stats to be tracked.
             self.env.add_tracker("constraint_violation", 0, mode="queue")
@@ -287,15 +296,17 @@ class APPO_MPC(BaseController):
         )
         obs = self.obs
         start = time.time()
-        agent_info = []
-        for env in self.venv.envs:
-            agent_info.append(
-                {"current_step": env.ctrl_step_counter, "x_ref": env.X_GOAL}
-            )
+        # agent_info = []
+        # for env in self.venv.envs:
+        #     agent_info.append(
+        #         {"current_step": env.ctrl_step_counter, "x_ref": env.X_GOAL}
+        #     )
         for _ in range(self.rollout_steps):
             with torch.no_grad():
-                act, v, logp, mpc_act, nabla_pi_theta, optimal = self.agent.ac.step(
-                    torch.FloatTensor(obs).to(self.device), info=agent_info
+                act, v, logp, mpc_act, nabla_pi_theta, soln_info, optimal = (
+                    self.agent.ac.step(
+                        torch.FloatTensor(obs).to(self.device), info=self.agent_info
+                    )
                 )
             next_obs, rew, done, info = self.venv.step(act)
             next_obs = self.obs_normalizer(next_obs)
@@ -305,12 +316,14 @@ class APPO_MPC(BaseController):
             # Time truncation is not the same as true termination.
             terminal_v = np.zeros_like(v)
             for idx, inf in enumerate(info["n"]):
-                agent_info[idx] = {
+                self.agent_info[idx] = {
                     "current_step": inf["current_step"],
                     "x_ref": self.venv.envs[idx].X_GOAL,
+                    "soln_info": soln_info[idx],
                 }
                 if done[idx]:
                     self.agent.reset(idx)
+                    self.agent_info[idx]["soln_info"] = None
                 if "terminal_info" not in inf:
                     continue
                 inff = inf["terminal_info"]
@@ -385,9 +398,11 @@ class APPO_MPC(BaseController):
         if hasattr(env, "envs"):
             agent_info = []
             for e in env.envs:
-                agent_info.append({"current_step": 0, "x_ref": e.X_GOAL})
+                agent_info.append(
+                    {"current_step": 0, "x_ref": e.X_GOAL, "soln_info": None}
+                )
         else:
-            agent_info = [{"current_step": 0, "x_ref": env.X_GOAL}]
+            agent_info = [{"current_step": 0, "x_ref": env.X_GOAL, "soln_info": None}]
 
         while len(ep_returns) < n_episodes:
             action = self.select_action(obs=obs, info=agent_info)
@@ -411,6 +426,7 @@ class APPO_MPC(BaseController):
                     agent_info[idx] = {
                         "current_step": inf["current_step"],
                         "x_ref": env.envs[idx].X_GOAL,
+                        "soln_info": None,
                     }
             else:
                 if done:
@@ -426,6 +442,7 @@ class APPO_MPC(BaseController):
                 agent_info[0] = {
                     "current_step": info["current_step"],
                     "x_ref": env.X_GOAL,
+                    "soln_info": None,
                 }
             obs = self.obs_normalizer(obs)
         # Collect evaluation results.

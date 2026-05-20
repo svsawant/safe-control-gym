@@ -189,6 +189,8 @@ class APPO_MPC_Agent:
                     e_loss_epoch += entropy_loss.item()
                     kl_epoch += approx_kl.item()
                     n_actor_updates += 1
+                else:
+                    break
 
                 # Critic update.
                 value_loss = self.compute_value_loss(batch)
@@ -255,7 +257,7 @@ class MLPActorCritic(nn.Module):
         self.critic = MLPCritic(obs_dim, hidden_dims, activation)
 
     def step(self, obs, info=None):
-        dist, _, mpc_act, nabla_pi_theta, optimal_flag = self.actor(
+        dist, _, mpc_act, nabla_pi_theta, soln_info, optimal_flag = self.actor(
             obs, actor_info=info
         )
         mpc_act = np.array(mpc_act)
@@ -269,11 +271,12 @@ class MLPActorCritic(nn.Module):
             logp_a.cpu().numpy(),
             mpc_act,
             nabla_pi_theta,
+            soln_info,
             optimal_flag,
         )
 
     def act(self, obs, info=None):
-        dist, _, _, _, _ = self.actor(obs, actor_info=info)
+        dist, _, _, _, _, _ = self.actor(obs, actor_info=info)
         a = dist.mode()
         return a.cpu().numpy()
 
@@ -326,9 +329,9 @@ class MPCActor(nn.Module):
         # self.back_off_param = nn.Parameter(
         #     torch.tensor(self.back_off_init, dtype=torch.float32)
         # )
-        self.register_buffer(
-            "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
-        )
+        # self.register_buffer(
+        #     "back_off_fixed", torch.tensor(self.back_off_init, dtype=torch.float32)
+        # )
 
         # Construct output action distribution.
         self.logstd = nn.Parameter(exploration_init * torch.ones(act_dim))
@@ -340,21 +343,21 @@ class MPCActor(nn.Module):
         theta = self.get_theta_param(obs)
         traj_param = self.get_references(actor_info)
         if obs.ndim > 1:
-            mpc_act, nabla_pi_theta, optimal_flag = self.mpc.select_action_batch(
+            mpc_act, nabla_pi_theta, info, optimal_flag = self.mpc.select_action_batch(
                 obs.cpu().numpy(), theta.cpu().numpy(), traj_param, actor_info
             )
         else:
-            mpc_act, _, _, optimal_flag = self.mpc.select_action(
+            mpc_act, info, results_dict, optimal_flag = self.mpc.select_action(
                 obs.cpu().numpy(), theta.cpu().numpy(), traj_param
             )
             nabla_pi_theta = None
-        action = torch.FloatTensor(np.array(mpc_act))
-        optimal_flag = torch.FloatTensor(np.array(optimal_flag))
+        action = torch.tensor(np.array(mpc_act), device=obs.device)
+        optimal_flag = torch.tensor(np.array(optimal_flag))
         dist = self.dist_fn(action)
         logp_a = None
         if act is not None:
             logp_a = dist.log_prob(act)
-        return dist, logp_a, mpc_act, nabla_pi_theta, optimal_flag
+        return dist, logp_a, mpc_act, nabla_pi_theta, info, optimal_flag
 
     def forward_train(self, obs, act, theta_old, mpc_act, nabla_pi_theta):
         theta = self.get_theta_param(obs)
@@ -375,7 +378,7 @@ class MPCActor(nn.Module):
                 self.q_param,
                 self.r_param,
                 self.qt_param,
-                self.back_off_fixed,
+                # self.back_off_fixed,
                 self.model_param,
             ],
             dim=0,
@@ -410,31 +413,6 @@ class MPCActor(nn.Module):
                 raise Exception("Reference for this mode is not implemented.")
             goal_states_batch.append(goal_states)
         return goal_states_batch  # list of (nx, T+1).
-
-    def get_ref_param(self, info_batch):
-        goal_states_batch = torch.FloatTensor()
-        if self.mpc.env.TASK == Task.TRAJ_TRACKING:
-            for info in info_batch:
-                traj_step = info["traj_step"]
-                # Slice trajectory for horizon steps, if not long enough, repeat last state.
-                start = min(traj_step, self.mpc.traj.shape[-1])
-                end = min(traj_step + self.mpc.T + 1, self.mpc.traj.shape[-1])
-                remain = max(0, self.mpc.T + 1 - (end - start))
-                goal_states = (
-                    torch.cat(
-                        (
-                            self.traj_param[:, start:end],
-                            torch.tile(self.traj_param[:, -1:], (1, remain)),
-                        ),
-                        -1,
-                    )
-                    .T.reshape(-1, 1)
-                    .T
-                )
-                goal_states_batch = torch.cat((goal_states_batch, goal_states), 0)
-        else:
-            raise Exception("Reference update for this mode is not implemented.")
-        return goal_states_batch  # (nx, T+1).
 
 
 class MPCPolicyFunction(MPCFunction):
@@ -479,7 +457,7 @@ class MPCPolicyFunction(MPCFunction):
         else:
             self.infos = [None] * self.n_parallel_solver
 
-    def select_action_batch(self, obs_batch, theta, traj_ref, actor_info):
+    def select_action_batch(self, obs_batch, theta, traj_ref, agent_info):
         if not obs_batch.ndim > 1:
             obs_batch = obs_batch[None, :]
         con_lbg = self.solver_dict["lower_bound"]
@@ -498,20 +476,23 @@ class MPCPolicyFunction(MPCFunction):
             ref_param = traj_ref[i].T.reshape(-1, 1)[:, 0]
             opt_vars_init = np.zeros(self.solver_dict["opt_vars"].shape)
 
-            # shift previous solutions by 1 step based on last soln
-            if self.infos[i] is not None:
+            # shift previous solutions by 1 step based on last soln, if available
+            info = agent_info[i]["soln_info"]
+            if info is not None:
+                opt_vars_init = info["opt_var"]
+            elif self.infos[i] is not None:
                 opt_vars_init = self.infos[i]["opt_var"]
-                x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
-                x_prev, u_prev, sigma_prev = (
-                    x_prev.full(),
-                    u_prev.full(),
-                    sigma_prev.full(),
-                )
-                opt_vars_init = update_initial_guess(
-                    x_prev, u_prev, sigma_prev, opt_vars_fn
-                )
-                if actor_info[i]["current_step"] == 0:
-                    opt_vars_init = np.zeros_like(opt_vars_init)
+            else:
+                opt_vars_init = np.zeros_like(opt_vars_init)
+            x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
+            x_prev, u_prev, sigma_prev = (
+                x_prev.full(),
+                u_prev.full(),
+                sigma_prev.full(),
+            )
+            opt_vars_init = update_initial_guess(
+                x_prev, u_prev, sigma_prev, opt_vars_fn
+            )
 
             x0.append(opt_vars_init[:, 0])
             fixed_p.append(fixed_param)
@@ -556,8 +537,8 @@ class MPCPolicyFunction(MPCFunction):
                 "fixed_param": deepcopy(fixed_p[:, i]),
                 "ref_param": deepcopy(ref_p[:, i]),
                 "theta_param": deepcopy(theta[i, :]),
-                "traj_step": deepcopy(actor_info[i]["current_step"]),
-                "x_ref": deepcopy(actor_info[i]["x_ref"]),
+                "traj_step": deepcopy(agent_info[i]["current_step"]),
+                "x_ref": deepcopy(agent_info[i]["x_ref"]),
                 "dpidp": deepcopy(
                     int(optimal_batch[0, i])
                     * dpidp_batch[:, ntheta * i : ntheta * (i + 1)]
@@ -574,7 +555,7 @@ class MPCPolicyFunction(MPCFunction):
             )
             info_batch.append(info)
         self.infos = deepcopy(info_batch)
-        return action_batch, nabla_pi_theta_batch, optimal_batch.T
+        return action_batch, nabla_pi_theta_batch, info_batch, optimal_batch.T
 
     def get_parallel_solver(self, n_solvers):
         pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread")

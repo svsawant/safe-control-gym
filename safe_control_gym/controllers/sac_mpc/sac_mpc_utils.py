@@ -470,14 +470,15 @@ class MPCActor(nn.Module):
 
         # Squash the output
         if self.tanh_squash:
-            y_t = torch.tanh(x_t)
-            act = y_t * self.action_scale + self.action_bias
             # logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
             #     -1, keepdim=True
             # )
             logp -= (2 * (np.log(2) - x_t - F.softplus(-2 * x_t))).sum(
                 axis=1, keepdim=True
             )
+            logp -= torch.log(self.action_scale).sum()
+            y_t = torch.tanh(x_t)
+            act = y_t * self.action_scale + self.action_bias
         else:
             act = x_t
         return (
@@ -492,7 +493,7 @@ class MPCActor(nn.Module):
     def inverse_squashing(self, y):
         """Inverse of tanh squashing function."""
         y = (y - self.action_bias) / self.action_scale
-        return torch.atanh(torch.clamp(y, -1.0 + 1e-6, 1.0 - 1e-6))
+        return torch.atanh(torch.clamp(y, -1.0 + 1e-4, 1.0 - 1e-4))
 
     def reset(self, idx=None):
         self.mpc.reset(idx)
@@ -617,14 +618,15 @@ class MPCPolicyFunction(MPCFunction):
                 opt_vars_init = self.infos[i]["opt_var"]
             else:
                 opt_vars_init = np.zeros_like(opt_vars_init)
-            x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
-            x_prev, u_prev, sigma_prev = (
+            x_prev, u_prev, sigma_prev, sigma_u0_prev = xus_fn(opt_vars_init)
+            x_prev, u_prev, sigma_prev, sigma_u0_prev = (
                 x_prev.full(),
                 u_prev.full(),
                 sigma_prev.full(),
+                sigma_u0_prev.full(),
             )
             opt_vars_init = update_initial_guess(
-                x_prev, u_prev, sigma_prev, opt_vars_fn
+                x_prev, u_prev, sigma_prev, sigma_u0_prev, opt_vars_fn
             )
 
             x0.append(opt_vars_init[:, 0])
@@ -643,14 +645,16 @@ class MPCPolicyFunction(MPCFunction):
         action_batch, results_dict_batch, info_batch = [], [], []
         for i, obs in enumerate(obs_batch):
             opt_vars = soln_batch["x"].full()[:, i]
-            x_val, u_val, sigma_val = xus_fn(opt_vars)
+            x_val, u_val, sigma_val, sigma_u0_val = xus_fn(opt_vars)
             x_prev = x_val.full()
             u_prev = u_val.full()
             sigma_prev = sigma_val.full()
+            sigma_u0_prev = sigma_u0_val.full()
             results_dict = {
                 "horizon_states": deepcopy(x_prev),
                 "horizon_inputs": deepcopy(u_prev),
                 "horizon_slacks": deepcopy(sigma_prev),
+                "horizon_u0_slacks": deepcopy(sigma_u0_prev),
                 "goal_states": deepcopy(ref_p[:, i]),
             }
             # results_dict['t_wall'].append(opti.stats()['t_wall_total'])
@@ -706,14 +710,15 @@ class MPCPolicyFunction(MPCFunction):
             ref_param = info["ref_param"]
             if update_info:
                 # update the optimization variable init
-                x_prev, u_prev, sigma_prev = xus_fn(opt_vars_init)
-                x_prev, u_prev, sigma_prev = (
+                x_prev, u_prev, sigma_prev, sigma_u0_prev = xus_fn(opt_vars_init)
+                x_prev, u_prev, sigma_prev, sigma_u0_prev = (
                     x_prev.full(),
                     u_prev.full(),
                     sigma_prev.full(),
+                    sigma_u0_prev.full(),
                 )
                 opt_vars_init = update_initial_guess(
-                    x_prev, u_prev, sigma_prev, opt_vars_fn
+                    x_prev, u_prev, sigma_prev, sigma_u0_prev, opt_vars_fn
                 )[:, 0]
                 # update the reference parameter
                 ref_param = self.get_references(

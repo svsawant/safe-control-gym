@@ -83,6 +83,8 @@ class SAC_QMPC(BaseController):
             entropy_lr=self.entropy_lr,
             activation=self.activation,
             update_freq=self.update_freq,
+            sigma_network=self.sigma_network,
+            tanh_squash=self.tanh_squash,
         )
         self.agent.to(self.device)
 
