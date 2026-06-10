@@ -152,9 +152,7 @@ class SAC_MPC_Agent:
             entropy_loss = torch.where(optimal > 0.9, entropy_loss, torch.nan).nanmean()
         return policy_loss, entropy_loss, logp_loss
 
-    def compute_q_loss(
-        self, batch, batch_th
-    ):  # , next_state_th, next_action_th, nabla_snext_theta, nabla_pinext_theta, optimal):
+    def compute_q_loss(self, batch, batch_th):
         """Returns q-value loss(es) given batch of data."""
         obs, act, next_obs = batch_th["obs"], batch_th["act"], batch_th["next_obs"]
         rew, mask = batch_th["rew"], batch_th["mask"]
@@ -164,7 +162,7 @@ class SAC_MPC_Agent:
         q2 = self.ac.q2(obs, act)
 
         with torch.no_grad():
-            next_act, next_logp, _, _, _, optimal = self.ac.actor.forward_train(
+            next_act, next_logp, _, _, _, _, optimal = self.ac.actor.forward_train(
                 next_obs_np,
                 info,
                 update_info=True,
@@ -202,6 +200,7 @@ class SAC_MPC_Agent:
                 act_th,
                 logp,
                 action_th,
+                log_std,
                 _,
                 nabla_pi_theta,
                 optimal,
@@ -221,6 +220,7 @@ class SAC_MPC_Agent:
             # traj_ref = self.ac.actor.get_ref_param(batch['info'])
             # ref_loss = action_th.grad.unsqueeze(1) @ nabla_pi_ref @ traj_ref.unsqueeze(2)
             theta_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.ac.actor.parameters(), max_norm=10.0)
             self.actor_opt.step()
             with torch.no_grad():
                 self.ac.actor.q_param.clamp_(1e-5, 100.0)
@@ -244,7 +244,6 @@ class SAC_MPC_Agent:
             results["alpha"] = self.alpha.item()
             results["theta_loss"] = theta_loss.item()
             results["logp_loss"] = logp_loss.item()
-            # results['exploration_std'] = self.ac.actor.logstd.exp().mean().item()
 
         # update target networks
         # soft_update(self.ac, self.ac_targ, self.tau)
@@ -374,7 +373,7 @@ class MPCActor(nn.Module):
         # Construct output action distribution.
         self.sigma_network = sigma_network
         self.tanh_squash = tanh_squash
-        self.log_std_min = -4
+        self.log_std_min = -20
         self.log_std_max = 2
         if self.sigma_network:
             self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
@@ -384,6 +383,7 @@ class MPCActor(nn.Module):
         self.dist_fn = lambda mu, log_std: Normal(mu, log_std.exp())
 
         # action rescaling (from cleanrl)
+        self.action_space = action_space
         self.register_buffer(
             "action_scale",
             torch.tensor(
@@ -457,6 +457,7 @@ class MPCActor(nn.Module):
         if self.sigma_network:
             net_out = self.net(torch.FloatTensor(obs))
             log_std = self.log_std_layer(net_out)
+            log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
         else:
             log_std = self.logstd
         if self.tanh_squash:
@@ -470,21 +471,22 @@ class MPCActor(nn.Module):
 
         # Squash the output
         if self.tanh_squash:
-            # logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
-            #     -1, keepdim=True
-            # )
-            logp -= (2 * (np.log(2) - x_t - F.softplus(-2 * x_t))).sum(
-                axis=1, keepdim=True
-            )
-            logp -= torch.log(self.action_scale).sum()
             y_t = torch.tanh(x_t)
             act = y_t * self.action_scale + self.action_bias
+            logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
+                -1, keepdim=True
+            )
+            # logp -= (2 * (np.log(2) - x_t - F.softplus(-2 * x_t))).sum(
+            #     axis=1, keepdim=True
+            # )
+            # logp -= torch.log(self.action_scale).sum()
         else:
             act = x_t
         return (
             act,
             logp,
             action,
+            log_std,
             nabla_pi_ref,
             nabla_pi_theta,
             optimal_flag,

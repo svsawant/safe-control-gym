@@ -389,6 +389,8 @@ class SAC_QMPC(BaseController):
                 for k, v in res.items():
                     train_results[k].append(v)
             train_results = {k: sum(v) / len(v) for k, v in train_results.items()}
+            # train_results = self.agent.update(self.buffer, self.train_batch_size, self.device, num_updates=self.train_interval)
+            # train_results = {k: sum(v) / len(v) for k, v in train_results.items()}
             results["train"] = train_results
         # results = {k: sum(v) / len(v) for k, v in results.items()}
         results.update({"step": self.total_steps, "elapsed_time": time.time() - start})
@@ -546,5 +548,5 @@ class SAC_QMPC(BaseController):
         print("Policy logstd:")
         print(self.agent.ac.actor.logstd.detach().numpy())
         print("Q params:")
-        print(self.agent.ac.q1.weights.numpy())
+        print(self.agent.ac.q1.weights.detach().numpy())
         self.logger.dump_scalars()

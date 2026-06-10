@@ -1,6 +1,6 @@
 """SAC utilities."""
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from copy import deepcopy
 import time
 
@@ -197,15 +197,20 @@ class SAC_QMPC_Agent:
                 )
 
                 # LSTDQ for linear Q-function approximation
+                # A1 = (
+                #     -nabla_q_theta[i][0, :] - da1 @ nabla_q_act_theta[i]
+                #     + mask[i] * self.gamma * (nabla_q_theta_next[i][0, :] + da2 @ nabla_q_act_theta_next[i])
+                # )
                 A1 = (
                     -nabla_q_theta[i][0, :]
-                    - da1 @ nabla_q_act_theta[i]
-                    + mask[i]
-                    * self.gamma
-                    * (nabla_q_theta_next[i][0, :] + da2 @ nabla_q_act_theta_next[i])
+                    + mask[i] * self.gamma * nabla_q_theta_next[i][0, :]
+                )
+                A2 = -da1 @ nabla_q_act_theta[i] + mask[i] * self.gamma * (
+                    da2 @ nabla_q_act_theta_next[i]
                 )
                 # A2 = - nabla_q_act[i] @ da1 + mask[i] * self.gamma * (nabla_q_act_next[i] @ da2)
-                A3 = (
+                # A3 = -nabla_q_act[i][0, :] * da1 + mask[i] * self.gamma * (nabla_q_act_next[i][0, :] * da2)
+                A4 = (
                     -0.5 * da1[None, :] @ nabla_q_aa * da1
                     + mask[i]
                     * self.gamma
@@ -215,65 +220,83 @@ class SAC_QMPC_Agent:
                 #     -0.5 * sigma_sq * hessian_diag # - nabla_q_act[i][0, :] * da1
                 #     + mask[i] * self.gamma * (0.5 * sigma_sq * hessian_diag_next) # + nabla_q_act_next[i][0, :] * da2)
                 # )
-                A = np.concatenate([A1, A3], axis=0)
+                A = np.concatenate([A1, A2, A4], axis=0)
                 b = (
                     q_targ + q_mpc[i]
-                )  # + 0.5 * da1[None, :] @ nabla_q_aa @ da1 + nabla_q_act[i] @ da1
+                )  # + 0.5 * da1[None, :] @ nabla_q_aa @ da1  #+ nabla_q_act[i] @ da1
                 Aq.append(A)
                 bq.append(b)
-        if len(Aq) > 0:
-            Aq = np.asarray(Aq, dtype=np.float64)
-            bq = np.asarray(bq, dtype=np.float64).reshape(-1, 1)
+        return Aq, bq
 
-            AtA = Aq.T @ Aq
-            Atb = Aq.T @ bq
-            w = np.linalg.solve(AtA + 1e-5 * np.eye(AtA.shape[0]), Atb)
-            self.ac.q1.weights.copy_(
-                torch.as_tensor(w.squeeze(-1), dtype=torch.float32)
-            )
-
-            resid = Aq @ w.reshape(-1, 1) - bq
-            linear_q_loss = 0.5 * np.mean(resid**2)
-        else:
-            linear_q_loss = 0.0
-        return linear_q_loss
-
-    def update(self, batch, batch_th, device="cpu"):
+    def update(self, batch, batch_th):
         """Updates model parameters based on current training batch."""
         results = defaultdict(list)
+        pip_sens_flag = True if self.count % self.update_freq == 0 else False
+
+        # MPC forward and backward
+        obs, obs_th, info = batch["obs"], batch_th["obs"], batch["info"]
+        (
+            new_act,
+            logp,
+            new_mpc_act,
+            _,
+            nabla_pi_theta,
+            q_mpc,
+            _,
+            nabla_q_act,
+            nabla_q_theta,
+            nabla_q_act_theta,
+            nabla_q_act_act,
+            optimal,
+            x0,
+        ) = self.ac.actor.forward_train(obs, info, pi_sensitivities=pip_sens_flag)
+
+        # critic update
+        Aq_t, bq_t = self.compute_q_loss(
+            batch,
+            new_mpc_act,
+            q_mpc,
+            nabla_q_act,
+            nabla_q_theta,
+            nabla_q_act_theta,
+            nabla_q_act_act,
+            x0,
+            optimal,
+        )
+        self.ac.q1.Aq.extend(Aq_t)
+        self.ac.q1.bq.extend(bq_t)
 
         if self.count % self.update_freq == 0:
-            # MPC forward and backward
-            obs, obs_th, info = batch["obs"], batch_th["obs"], batch["info"]
-            (
-                new_act,
-                logp,
-                new_mpc_act,
-                _,
-                nabla_pi_theta,
-                q_mpc,
-                _,
-                nabla_q_act,
-                nabla_q_theta,
-                nabla_q_act_theta,
-                nabla_q_act_act,
-                optimal,
-                x0,
-            ) = self.ac.actor.forward_train(obs, info, pi_sensitivities=True)
-
             # critic update
-            q_loss = self.compute_q_loss(
-                batch,
-                new_mpc_act,
-                q_mpc,
-                nabla_q_act,
-                nabla_q_theta,
-                nabla_q_act_theta,
-                nabla_q_act_act,
-                x0,
-                optimal,
-            )
-            results["critic_loss"] = q_loss
+            if len(self.ac.q1.Aq) > 0:
+                AAq = np.asarray(self.ac.q1.Aq, dtype=np.float64)
+                bbq = np.asarray(self.ac.q1.bq, dtype=np.float64).reshape(-1, 1)
+                AAq = torch.FloatTensor(AAq)
+                bbq = torch.FloatTensor(bbq)
+
+                AtA = AAq.T @ AAq
+                Atb = AAq.T @ bbq
+                w = torch.linalg.solve(AtA + 1e-4 * torch.eye(AtA.shape[0]), Atb)
+                self.ac.q1.weights.copy_(
+                    torch.as_tensor(w.squeeze(-1), dtype=torch.float32)
+                )
+
+                resid = AAq @ w.reshape(-1, 1) - bbq
+                linear_q_loss = 0.5 * torch.mean(resid**2)
+
+                # linear_q1_loss = F.mse_loss(AAq @ self.ac.q1.weights.unsqueeze(-1), bbq)
+                # linear_q2_loss = F.mse_loss(AAq @ self.ac.q2.weights.unsqueeze(-1), bbq)
+                # linear_q_loss = linear_q1_loss + linear_q2_loss
+            else:
+                # linear_q_loss = 0.0
+                linear_q_loss = torch.tensor(0.0)
+            # self.critic_opt.zero_grad()
+            # linear_q_loss.backward()
+            # torch.nn.utils.clip_grad_norm_(
+            #     list(self.ac.q1.parameters()) + list(self.ac.q2.parameters()), max_norm=10.0
+            # )
+            # self.critic_opt.step()
+            results["critic_loss"] = linear_q_loss.item()
 
             # actor update
             # compute policy loss and gradients
@@ -282,9 +305,13 @@ class SAC_QMPC_Agent:
             nabla_q_t = torch.FloatTensor(np.array(nabla_q_theta))
             nabla_q_at = torch.FloatTensor(np.array(nabla_q_act_theta))
             nabla_q_aa = torch.FloatTensor(np.array(nabla_q_act_act))
+            nabla_q_aa_inv = torch.linalg.inv(
+                nabla_q_aa + 1e-4 * torch.eye(nabla_q_aa.shape[-1])
+            )
+            # nabla_pi_t = -nabla_q_aa_inv @ nabla_q_at
+            nabla_pi_t = nabla_pi_theta
 
-            # nabla_q_aa_psd = 0.5 * (nabla_q_aa + nabla_q_aa.transpose(1, 2))
-            # hessian_diag = torch.diagonal(nabla_q_aa_psd, dim1=-2, dim2=-1)
+            # hessian_diag = torch.diagonal(nabla_q_aa, dim1=-2, dim2=-1)
             # sigma_sq = torch.exp(self.ac.actor.logstd * 2)
             # curvature_term = -0.5 * (sigma_sq * hessian_diag) @ self.ac.q1.weights[-self.act_space.shape[0]:]
 
@@ -298,7 +325,8 @@ class SAC_QMPC_Agent:
                 nabla_q_at,
                 nabla_q_aa,
             )
-            policy_loss = self.alpha.detach() * logp - q_val
+            # q_val = torch.min(q1_val, q2_val)
+            policy_loss = self.alpha.detach() * logp - q_val  # - curvature_term)
             policy_loss = torch.where(optimal > 0.9, policy_loss, torch.nan).nanmean()
             self.actor_opt.zero_grad()
             policy_loss.backward()
@@ -306,9 +334,10 @@ class SAC_QMPC_Agent:
             # Passing the gradients through the mpc
             theta = self.ac.actor.get_theta_param(batch_th["obs"])
             theta_loss = (
-                new_mpc_act.grad.unsqueeze(1) @ nabla_pi_theta @ theta.unsqueeze(-1)
+                new_mpc_act.grad.unsqueeze(1) @ nabla_pi_t @ theta.unsqueeze(-1)
             ).sum()
             theta_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.ac.actor.parameters(), max_norm=10.0)
             self.actor_opt.step()
             with torch.no_grad():
                 self.ac.actor.q_param.clamp_(1e-5, 100.0)
@@ -318,6 +347,10 @@ class SAC_QMPC_Agent:
                 self.ac.actor.logstd.clamp_(
                     self.ac.actor.log_std_min, self.ac.actor.log_std_max
                 )
+
+            results["policy_loss"] = policy_loss.item()
+            results["theta_loss"] = theta_loss.item()
+            # soft_update(self.ac.q1, self.ac_targ.q1, self.tau)
 
             # compute entropy loss
             entropy_loss = torch.zeros(1)
@@ -330,14 +363,9 @@ class SAC_QMPC_Agent:
                 self.alpha_opt.zero_grad()
                 entropy_loss.backward()
                 self.alpha_opt.step()
-
-            results["policy_loss"] = policy_loss.item()
-            results["entropy_loss"] = entropy_loss.item()
             results["alpha"] = self.alpha.item()
-            results["theta_loss"] = theta_loss.item()
+            results["entropy_loss"] = entropy_loss.item()
             results["logp_loss"] = logp_loss.item()
-
-            # soft_update(self.ac.q1, self.ac_targ.q1, self.tau)
         self.count += 1
         return results
 
@@ -375,7 +403,7 @@ class MLPActorCritic(nn.Module):
             act_dim = act_space.shape[0]
         else:
             raise Exception(
-                "SAC-MPC is currently only implemented for continuous action spaces"
+                "SAC-QMPC is currently only implemented for continuous action spaces"
             )
         # Policy.
         self.actor = MPCActor(
@@ -395,7 +423,7 @@ class MLPActorCritic(nn.Module):
         mpc_param = self.actor._build_mpc_param()
         # Q functions
         self.q1 = Critic(obs_dim, act_dim, mpc_param.shape[0], hidden_dims, activation)
-        # self.q2 = Critic(obs_dim, act_dim, input_dim, hidden_dims, activation)
+        # self.q2 = Critic(obs_dim, act_dim, mpc_param.shape[0], hidden_dims, activation)
 
     def step(self, obs, info=None):
         a, soln_info = self.actor(obs, actor_info=info)
@@ -414,9 +442,11 @@ class Critic(nn.Module):
 
     def __init__(self, obs_dim, act_dim, input_dim, hidden_dims, activation):
         super().__init__()
+        self.input_dim = input_dim
         self.act_dim = act_dim
+        self.Aq, self.bq = deque(maxlen=32 * 20), deque(maxlen=32 * 20)
         self.weights = nn.Parameter(
-            torch.zeros(input_dim + act_dim), requires_grad=False
+            torch.zeros(2 * input_dim + self.act_dim), requires_grad=False
         )
 
     def forward(
@@ -433,11 +463,11 @@ class Critic(nn.Module):
         da = act - mpc_act
         q1 = (
             -q_mpc.unsqueeze(-1)
-            - nabla_q_theta @ self.weights[: -self.act_dim].unsqueeze(-1)
+            - nabla_q_theta @ self.weights[: self.input_dim].unsqueeze(-1)
             - da.unsqueeze(1)
             @ nabla_q_act_theta
-            @ self.weights[: -self.act_dim].unsqueeze(-1)
-            # - self.weights[-2] * nabla_q_act @ da.unsqueeze(-1)
+            @ self.weights[self.input_dim : 2 * self.input_dim].unsqueeze(-1)
+            # - nabla_q_act * da.unsqueeze(1) @ self.weights[2*self.input_dim:2*self.input_dim+self.act_dim].unsqueeze(-1)
             # - (nabla_q_act * da.unsqueeze(-2)) @ self.weights[-self.act_dim:].unsqueeze(-1)
             # - 0.5 * self.weights[-1] * da.unsqueeze(1) @ nabla_q_act_act @ da.unsqueeze(-1)
             - 0.5
@@ -491,8 +521,8 @@ class MPCActor(nn.Module):
         # Construct output action distribution.
         self.sigma_network = sigma_network
         self.tanh_squash = tanh_squash
-        self.log_std_min = -4
-        self.log_std_max = 2
+        self.log_std_min = -10.0
+        self.log_std_max = 0.5
         if self.sigma_network:
             self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
             self.log_std_layer = nn.Linear(hidden_dims[-1], act_dim)
@@ -594,12 +624,12 @@ class MPCActor(nn.Module):
         if self.tanh_squash:
             y_t = torch.tanh(x_t)
             act = y_t * self.action_scale + self.action_bias
-            # logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
-            #     -1, keepdim=True
-            # )
-            logp -= (2 * (np.log(2) - x_t - F.softplus(-2 * x_t))).sum(
-                axis=1, keepdim=True
+            logp -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6).sum(
+                -1, keepdim=True
             )
+            # logp -= (2 * (np.log(2) - x_t - F.softplus(-2 * x_t))).sum(
+            #     dim=1, keepdim=True
+            # )
             # logp -= torch.log(self.action_scale).sum()
         else:
             act = x_t
@@ -622,7 +652,7 @@ class MPCActor(nn.Module):
     def inverse_squashing(self, y):
         """Inverse of tanh squashing function."""
         y = (y - self.action_bias) / self.action_scale
-        return torch.atanh(torch.clamp(y, -1.0 + 1e-6, 1.0 - 1e-6))
+        return torch.atanh(torch.clamp(y, -1.0 + 1e-2, 1.0 - 1e-2))
 
     def reset(self, idx=None):
         self.mpc.reset(idx)
@@ -859,7 +889,7 @@ class MPCPolicyFunction(MPCFunction):
         opt_vars_fn = self.solver_dict["opt_vars_fn"]
         xus_fn = self.solver_dict["xus_fn"]
         npl = self.solver_dict["theta_param"].shape[0]
-        nu = self.model.nu
+        nx, nu = self.model.nx, self.model.nu
 
         x0, fixed_p, ref_p = [], [], []
         lbg = con_lbg.full().repeat(obs_batch.shape[0], 1)
@@ -917,7 +947,6 @@ class MPCPolicyFunction(MPCFunction):
         nabla_pi_ref_batch, nabla_pi_theta_batch, optimal_batch = [], [], []
         nabla_q_ref_batch, nabla_q_theta_batch, nabla_q_act_theta_batch = [], [], []
         nabla_q_act_batch, nabla_q_act_act_batch = [], []
-        # nabla_snext_theta_batch, nabla_pinext_theta_batch = [], []
         dqa_cs, dqt_cs, dqdaa_cs, dqdat_cs = self.q_all_solvers_train(
             qz, qfixed_p, ref_p, theta.T
         )

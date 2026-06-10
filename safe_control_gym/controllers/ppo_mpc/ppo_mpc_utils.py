@@ -157,9 +157,9 @@ class PPO_MPC_Agent:
         )
         # assert if num_mini_batch is 0
         assert num_mini_batch != 0, "num_mini_batch is 0"
-        n_actor_updates = 0
+
         for _ in range(self.opt_epochs):
-            p_loss_epoch, e_loss_epoch, kl_epoch = 0, 0, 0
+            p_loss_epoch, e_loss_epoch, kl_epoch, n_updates = 0, 0, 0, 0
             v_loss_epoch, theta_loss_epoch = 0, 0
             for batch, batch_th in rollouts.sampler(self.mini_batch_size, device):
                 # Actor update.
@@ -206,7 +206,7 @@ class PPO_MPC_Agent:
                     kl_epoch += approx_kl.item()
                     theta_loss_epoch += theta_loss.item()
                     # ref_loss_epoch += ref_loss.sum().item()
-                    n_actor_updates += 1
+                    n_updates += 1
                 else:
                     break
 
@@ -216,11 +216,11 @@ class PPO_MPC_Agent:
                 value_loss.backward()
                 self.critic_opt.step()
                 v_loss_epoch += value_loss.item()
-            results["policy_loss"].append(p_loss_epoch / max(n_actor_updates, 1))
-            results["value_loss"].append(v_loss_epoch / num_mini_batch)
-            results["entropy_loss"].append(e_loss_epoch / max(n_actor_updates, 1))
-            results["approx_kl"].append(kl_epoch / max(n_actor_updates, 1))
-            results["theta_loss"].append(theta_loss_epoch / max(n_actor_updates, 1))
+            results["policy_loss"].append(p_loss_epoch / max(n_updates, 1))
+            results["value_loss"].append(v_loss_epoch / max(n_updates, 1))
+            results["entropy_loss"].append(e_loss_epoch / max(n_updates, 1))
+            results["approx_kl"].append(kl_epoch / max(n_updates, 1))
+            results["theta_loss"].append(theta_loss_epoch / max(n_updates, 1))
         results = {k: sum(v) / len(v) for k, v in results.items()}
         return results
 

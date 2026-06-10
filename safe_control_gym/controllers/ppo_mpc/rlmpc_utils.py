@@ -305,7 +305,7 @@ class MPCFunction:
 
         # cost (cumulative)
         cost = 0
-        w, wu0 = 1e3 * np.ones((1, nx)), 1e3 * np.ones(
+        w, wu0 = 1e3 * np.ones((1, nx)), 1e-1 * np.ones(
             (1, nu)
         )  # weights for constraint violation penalties
         cost_func = self.model.loss
@@ -359,6 +359,17 @@ class MPCFunction:
         qmult.append(lm)
         qlamb.append(lm)
 
+        # initial action condition constraints
+        qcon_list.append(u_var[:, 0] - a_init)
+        qcon_lbg.append(cs.DM.zeros(nu, 1))
+        qcon_ubg.append(cs.DM.zeros(nu, 1))
+        qcon_eq += [True] * nu
+
+        lm = cs.MX.sym("lm", nu)
+        qH_eq.append(u_var[:, 0] - a_init)
+        qmult.append(lm)
+        qlamb.append(lm)
+
         for i in range(self.T):
             # Dynamics constraints.
             next_state = self.dynamics_func(
@@ -408,71 +419,81 @@ class MPCFunction:
 
             # Action bounds
             for ic_i, input_constraint in enumerate(self.input_constraints_sym):
-                # if i == 0:  # additional cost for initial action constraint violation
-                #     cost += wu0 @ sigma_u0
-                #     constraint = [
-                #         input_constraint(u_var[:, i])[:nu] + self.constraint_tol - sigma_u0,
-                #         input_constraint(u_var[:, i])[nu:] + self.constraint_tol - sigma_u0,
-                #         -sigma_u0,
-                #     ]
-                # else:
-                constraint = [
-                    input_constraint(u_var[:, i])[:nu] + self.constraint_tol,
-                    input_constraint(u_var[:, i])[nu:] + self.constraint_tol,
-                ]
+                if i == 0:  # additional cost for initial action constraint violation
+                    cost += wu0 @ sigma_u0
+                    constraint = [
+                        input_constraint(u_var[:, i])[:nu] + self.constraint_tol,
+                        input_constraint(u_var[:, i])[nu:] + self.constraint_tol,
+                        -sigma_u0,
+                    ]
+                    qconstraint = [
+                        input_constraint(u_var[:, i])[:nu]
+                        + self.constraint_tol
+                        - sigma_u0,
+                        input_constraint(u_var[:, i])[nu:]
+                        + self.constraint_tol
+                        - sigma_u0,
+                        -sigma_u0,
+                    ]
+                else:
+                    constraint = [
+                        input_constraint(u_var[:, i])[:nu] + self.constraint_tol,
+                        input_constraint(u_var[:, i])[nu:] + self.constraint_tol,
+                    ]
+                    qconstraint = constraint
                 con_list += constraint
                 con_lbg.append(-cs.DM.inf(len(constraint) * nu, 1))
                 con_ubg.append(cs.DM.zeros(len(constraint) * nu, 1))
                 con_eq += [False] * len(constraint) * nu
-                qcon_list += constraint
-                qcon_lbg.append(-cs.DM.inf(len(constraint) * nu, 1))
-                qcon_ubg.append(cs.DM.zeros(len(constraint) * nu, 1))
-                qcon_eq += [False] * len(constraint) * nu
+                qcon_list += qconstraint
+                qcon_lbg.append(-cs.DM.inf(len(qconstraint) * nu, 1))
+                qcon_ubg.append(cs.DM.zeros(len(qconstraint) * nu, 1))
+                qcon_eq += [False] * len(qconstraint) * nu
 
                 H_ieq += constraint
                 lm = cs.MX.sym("lm", len(constraint) * nu)
                 mult.append(lm)
                 mu.append(lm)
-                qH_ieq += constraint
+                qH_ieq += qconstraint
                 qmult.append(lm)
                 qmu.append(lm)
 
-                if i == 0:  # additional constraints for initial action condition
-                    cost += wu0 @ sigma_u0
-                    constraint = [-sigma_u0]
-                    con_list += constraint
-                    con_lbg.append(-cs.DM.inf(nu, 1))
-                    con_ubg.append(cs.DM.zeros(nu, 1))
-                    con_eq += [False] * nu
-                    lm = cs.MX.sym("lm", nu)
-                    H_ieq += constraint
-                    mult.append(lm)
-                    mu.append(lm)
+                # if i == 0:  # additional constraints for initial action condition
+                #     cost += wu0 @ sigma_u0
+                #     constraint = [-sigma_u0]
+                #     con_list += constraint
+                #     con_lbg.append(-cs.DM.inf(nu, 1))
+                #     con_ubg.append(cs.DM.zeros(nu, 1))
+                #     con_eq += [False] * nu
+                #     lm = cs.MX.sym("lm", nu)
+                #     H_ieq += constraint
+                #     mult.append(lm)
+                #     mu.append(lm)
 
-                    constraint = [
-                        u_var[:, i] - a_init - sigma_u0,
-                        -u_var[:, i] + a_init - sigma_u0,
-                        -sigma_u0,
-                    ]
-                    qcon_list += constraint
-                    qcon_lbg.append(-cs.DM.inf(3 * nu, 1))
-                    qcon_ubg.append(cs.DM.zeros(3 * nu, 1))
-                    qcon_eq += [False] * 3 * nu
-                    lm = cs.MX.sym("lm", 3 * nu)
-                    qH_ieq += constraint
-                    qmult.append(lm)
-                    qmu.append(lm)
+                #     constraint = [
+                #         u_var[:, i] - a_init - sigma_u0,
+                #         -u_var[:, i] + a_init - sigma_u0,
+                #         -sigma_u0,
+                #     ]
+                #     qcon_list += constraint
+                #     qcon_lbg.append(-cs.DM.inf(3*nu, 1))
+                #     qcon_ubg.append(cs.DM.zeros(3*nu, 1))
+                #     qcon_eq += [False] * 3*nu
+                #     lm = cs.MX.sym("lm", 3*nu)
+                #     qH_ieq += constraint
+                #     qmult.append(lm)
+                #     qmu.append(lm)
 
-                    # initial action condition constraints (can be relaxed with slack variable)
-                    # constraint = [u_var[:, 0] - a_init]
-                    # qcon_list += constraint
-                    # qcon_lbg.append(cs.DM.zeros(nu, 1))
-                    # qcon_ubg.append(cs.DM.zeros(nu, 1))
-                    # qcon_eq += [True] * nu
-                    # qH_eq += constraint
-                    # lm = cs.MX.sym("lm", nu)
-                    # qmult.append(lm)
-                    # qlamb.append(lm)
+                #     # initial action condition constraints (can be relaxed with slack variable)
+                #     # constraint = [u_var[:, 0] - a_init]
+                #     # qcon_list += constraint
+                #     # qcon_lbg.append(cs.DM.zeros(nu, 1))
+                #     # qcon_ubg.append(cs.DM.zeros(nu, 1))
+                #     # qcon_eq += [True] * nu
+                #     # qH_eq += constraint
+                #     # lm = cs.MX.sym("lm", nu)
+                #     # qmult.append(lm)
+                #     # qlamb.append(lm)
         # Final state constraints.
         for sc_i, state_constraint in enumerate(self.state_constraints_sym):
             cost += w @ sigma_var[:, -1]
@@ -539,9 +560,7 @@ class MPCFunction:
         pisolver = cs.nlpsol("pisolver", "fatrop", vnlp_prob, opts_setting)
 
         # Q function
-        qcost = (
-            cost  # + wu0 @ sigma_u0  # + 0.5 * wu0 * cs.sumsqr(u_var[:, 0] - a_init)
-        )
+        qcost = cost
         qopts_setting = deepcopy(opts_setting)
         qopts_setting.update({"equality": qcon_eq})
         qnlp_prob = deepcopy(vnlp_prob)
@@ -676,6 +695,7 @@ class MPCFunction:
         )
         dQda = cs.jacobian(qlagrangian, a_init)
         dQdu0 = cs.jacobian(qlagrangian, u_var[:, 0])
+        dQdqz = cs.jacobian(qlagrangian, qz)
         [_, dQdtheta] = dqlag_fn(qz, fixed_param, ref_param, theta)
         # Sensitivity against theta
         dQdtheta_fn = cs.Function(
@@ -703,49 +723,39 @@ class MPCFunction:
             dqRdP_theta, dqRdf
         )  # learnable param + fixed param (for sensitivity of the value function)
         dqRdz_fn = cs.Function("dqRdz", [qz, fixed_param, ref_param, theta], [dqRdz])
-        dqzdP = -cs.solve(dqRdz, dqRdP)
+        # dqzdP = -cs.solve(dqRdz, dqRdP)
+        S = cs.DM.zeros(nu, dqRdz.shape[0])
+        for i in range(nu):
+            S[i, opt_vars.shape[0] + nx + i] = 1.0
+        dqz_prime = cs.solve(dqRdz.T, S.T).T
+        dqzdP = -(dqz_prime @ dqRdP)
+
         # # sensitivity of the action condition multiplier w.r.t. parameters
         # dqdaP = dqzdP[opt_vars.shape[0] + 5*nx+3*nu: opt_vars.shape[0] + 5*nx+4*nu, :theta.shape[0]]
         # # sensitivity of the action condition multiplier w.r.t. initial action
         # dqdaa = dqzdP[opt_vars.shape[0] + 5*nx+3*nu: opt_vars.shape[0] + 5*nx+4*nu, theta.shape[0] + nx: theta.shape[0] + nx + nu]
+
         # sensitivity of the action condition multiplier w.r.t. parameters
-        dqdaP = (
-            -dqzdP[
-                opt_vars.shape[0]
-                + 5 * nx
-                + 2 * nu : opt_vars.shape[0]
-                + 5 * nx
-                + 3 * nu,
-                : theta.shape[0],
-            ]
-            + dqzdP[
-                opt_vars.shape[0]
-                + 5 * nx
-                + 3 * nu : opt_vars.shape[0]
-                + 5 * nx
-                + 4 * nu,
-                : theta.shape[0],
-            ]
-        )
+        # dqdaP = (
+        #     - dqzdP[opt_vars.shape[0] + 5*nx + 2*nu: opt_vars.shape[0] + 5*nx + 3*nu, :theta.shape[0]]
+        #     + dqzdP[opt_vars.shape[0] + 5*nx + 3*nu: opt_vars.shape[0] + 5*nx + 4*nu, :theta.shape[0]]
+        # )
+        # # sensitivity of the action condition multiplier w.r.t. initial action
+        # dqdaa = (
+        #     - dqzdP[opt_vars.shape[0] + 5*nx + 2*nu: opt_vars.shape[0] + 5*nx + 3*nu, theta.shape[0] + nx: theta.shape[0] + nx + nu]
+        #     + dqzdP[opt_vars.shape[0] + 5*nx + 3*nu: opt_vars.shape[0] + 5*nx + 4*nu, theta.shape[0] + nx: theta.shape[0] + nx + nu]
+        # )
+
+        # sensitivity of the action condition multiplier w.r.t. parameters
+        # dqdaP = -dqzdP[opt_vars.shape[0] + nx : opt_vars.shape[0] + nx + nu, :theta.shape[0]]
+        # # sensitivity of the action condition multiplier w.r.t. initial action
+        # dqdaa = -dqzdP[opt_vars.shape[0] + nx : opt_vars.shape[0] + nx + nu, theta.shape[0] + nx : theta.shape[0] + nx + nu]
+
+        # sensitivity of the action condition multiplier w.r.t. parameters
+        dqdaP = dqzdP[:, : theta.shape[0]]
         # sensitivity of the action condition multiplier w.r.t. initial action
-        dqdaa = (
-            -dqzdP[
-                opt_vars.shape[0]
-                + 5 * nx
-                + 2 * nu : opt_vars.shape[0]
-                + 5 * nx
-                + 3 * nu,
-                theta.shape[0] + nx : theta.shape[0] + nx + nu,
-            ]
-            + dqzdP[
-                opt_vars.shape[0]
-                + 5 * nx
-                + 3 * nu : opt_vars.shape[0]
-                + 5 * nx
-                + 4 * nu,
-                theta.shape[0] + nx : theta.shape[0] + nx + nu,
-            ]
-        )
+        dqdaa = dqzdP[:, theta.shape[0] + nx : theta.shape[0] + nx + nu]
+
         # # sensitivity of the optimal action w.r.t. parameters
         # du0dP = dqzdP[ nx: nx + nu, :theta.shape[0]]
         # # sensitivity of the optimal action w.r.t. initial action condition
@@ -755,6 +765,7 @@ class MPCFunction:
         self.q_sensitivity_dict = {
             "dQda": dQda,
             "dQdu0": dQdu0,
+            "dQdqz": dQdqz,
             "dQdtheta": dQdtheta,
             "dQdtheta_fn": dQdtheta_fn,
             "qrkkt_fn": qrkkt_fn,
@@ -762,6 +773,7 @@ class MPCFunction:
             "dqRdz": dqRdz,
             "dqRdP": dqRdP,
             "dqRdz_fn": dqRdz_fn,
+            "dqzdP": dqzdP,
             "dqdaP": dqdaP,
             "dqdaa": dqdaa,
         }

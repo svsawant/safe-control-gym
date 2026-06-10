@@ -508,7 +508,8 @@ class PPO_MPC(BaseController):
             eval_ep_lengths = results["eval"]["ep_lengths"]
             eval_ep_returns = results["eval"]["ep_returns"]
             eval_constraint_violation = results["eval"]["constraint_violation"]
-            eval_ep_rmse = results["eval"]["ep_rmse"]
+            eval_rmse = results["eval"]["rmse"]
+            eval_rmse_std = results["eval"]["rmse_std"]
             self.logger.add_scalars(
                 {
                     "ep_length": eval_ep_lengths.mean(),
@@ -516,8 +517,8 @@ class PPO_MPC(BaseController):
                     "ep_return_std": eval_ep_returns.std(),
                     "ep_reward": (eval_ep_returns / eval_ep_lengths).mean(),
                     "constraint_violation": eval_constraint_violation.mean(),
-                    "rmse": np.array(eval_ep_rmse).mean(),
-                    "rmse_std": np.array(eval_ep_rmse).std(),
+                    "rmse": eval_rmse,
+                    "rmse_std": eval_rmse_std,
                 },
                 step,
                 prefix="stat_eval",

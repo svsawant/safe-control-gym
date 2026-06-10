@@ -202,7 +202,13 @@ class SACAgent:
 class MLPActor(nn.Module):
 
     def __init__(
-        self, obs_dim, act_dim, hidden_dims, activation, postprocess_fn=lambda x: x
+        self,
+        obs_dim,
+        act_dim,
+        hidden_dims,
+        activation,
+        postprocess_fn=lambda x: x,
+        action_scale=None,
     ):
         super().__init__()
         self.net = MLP(obs_dim, hidden_dims[-1], hidden_dims[:-1], activation)
@@ -214,6 +220,10 @@ class MLPActor(nn.Module):
         self.dist_fn = lambda mu, log_std: Normal(mu, log_std.exp())
         self.log_std_min = -20
         self.log_std_max = 2
+
+        if action_scale is None:
+            action_scale = torch.ones(act_dim)
+        self.register_buffer("action_scale", action_scale)
 
     def forward(self, obs, deterministic=False, with_logprob=True):
         net_out = self.net(obs)
@@ -232,6 +242,7 @@ class MLPActor(nn.Module):
             logp -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(
                 axis=1, keepdim=True
             )
+            logp -= torch.log(self.action_scale).sum()
         else:
             logp = None
 
@@ -269,6 +280,7 @@ class MLPActorCritic(nn.Module):
         low, high = act_space.low, act_space.high
         low = torch.FloatTensor(low)
         high = torch.FloatTensor(high)
+        action_scale = 0.5 * (high - low)
 
         def unscale_fn(x):  # Rescale action from [-1, 1] to [low, high]
             return low.to(x.device) + (
@@ -276,7 +288,12 @@ class MLPActorCritic(nn.Module):
             )
 
         self.actor = MLPActor(
-            obs_dim, act_dim, hidden_dims, activation, postprocess_fn=unscale_fn
+            obs_dim,
+            act_dim,
+            hidden_dims,
+            activation,
+            postprocess_fn=unscale_fn,
+            action_scale=action_scale,
         )
 
         # Q functions

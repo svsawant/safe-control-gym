@@ -27,19 +27,19 @@ algo_config:
   init_temperature: 0.01
   use_entropy_tuning: True
   train_interval: 100
-  train_batch_size: 64
+  train_batch_size: 32
   actor_lr: 0.0003
   critic_lr: 0.0003
   entropy_lr: 0.0003
   update_freq: 10
-  exploration_init: -1.0
-  target_entropy: -3.0
+  exploration_init: -0.0
+  target_entropy: -4.0
   tanh_squash: True
   sigma_network: False
 
   # runner args
   max_env_steps: 360000
-  warm_up_steps: 1800
+  warm_up_steps: 1000
   rollout_batch_size: 10
   max_buffer_size: 108000
   eval_batch_size: 10
