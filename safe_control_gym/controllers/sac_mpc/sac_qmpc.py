@@ -85,6 +85,8 @@ class SAC_QMPC(BaseController):
             update_freq=self.update_freq,
             sigma_network=self.sigma_network,
             tanh_squash=self.tanh_squash,
+            rollout_batch_size=self.rollout_batch_size,
+            train_batch_size=self.train_batch_size,
         )
         self.agent.to(self.device)
 

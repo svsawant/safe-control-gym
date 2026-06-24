@@ -84,6 +84,7 @@ class PPO_VMPC(BaseController):
             actor_lr=self.actor_lr,
             critic_lr=self.critic_lr,
             opt_epochs=self.opt_epochs,
+            rollout_batch_size=self.rollout_batch_size,
             mini_batch_size=self.mini_batch_size,
         )
         self.agent.to(self.device)

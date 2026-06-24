@@ -14,8 +14,7 @@ algo_config:
     mpc_config:
       horizon: 10
       warmstart: True
-      n_parallel_solver: 10
-      n_train_solver: 32
+      cs_workers: 32
       jit: True
       jit_options:
         # compiler: "clang"  # gcc, ccache gcc, clang
@@ -26,13 +25,13 @@ algo_config:
   tau: 0.005
   init_temperature: 0.01
   use_entropy_tuning: True
-  train_interval: 50
-  train_batch_size: 32
-  actor_lr: 0.0003
-  critic_lr: 0.0003
-  entropy_lr: 0.0003
-  update_freq: 1
-  exploration_init: -0.0
+  train_interval: 100
+  train_batch_size: 64
+  actor_lr: 0.0001
+  critic_lr: 0.0001
+  entropy_lr: 0.0001
+  update_freq: 2
+  exploration_init: -0.5
   target_entropy: -4.0
   tanh_squash: True
   sigma_network: False

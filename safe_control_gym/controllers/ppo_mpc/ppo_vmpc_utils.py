@@ -41,7 +41,8 @@ class PPO_VMPC_Agent:
         actor_lr=0.001,
         critic_lr=0.001,
         opt_epochs=10,
-        mini_batch_size=64,
+        rollout_batch_size=10,
+        mini_batch_size=32,
         **kwargs,
     ):
 
@@ -56,6 +57,7 @@ class PPO_VMPC_Agent:
         self.exploration_init = exploration_init
         self.value_loss_coef = value_loss_coef
         self.opt_epochs = opt_epochs
+        self.rollout_batch_size = rollout_batch_size
         self.mini_batch_size = mini_batch_size
         self.activation = activation
 
@@ -70,6 +72,8 @@ class PPO_VMPC_Agent:
             exploration_init=self.exploration_init,
             activation=self.activation,
             actor_config=actor_config,
+            rollout_batch_size=self.rollout_batch_size,
+            mini_batch_size=self.mini_batch_size,
         )
 
         # Optimizers.
@@ -172,10 +176,10 @@ class PPO_VMPC_Agent:
         )
         # assert if num_mini_batch is 0
         assert num_mini_batch != 0, "num_mini_batch is 0"
-        n_actor_updates = 0
+
         for _ in range(self.opt_epochs):
             p_loss_epoch, e_loss_epoch, kl_epoch = 0, 0, 0
-            v_loss_epoch, theta_loss_epoch = 0, 0
+            v_loss_epoch, theta_loss_epoch, n_updates = 0, 0, 0
             Av, bv = [], []
             for batch, batch_th in rollouts.sampler(self.mini_batch_size, device):
                 (
@@ -234,7 +238,7 @@ class PPO_VMPC_Agent:
                     theta_loss_epoch += theta_loss.item()
                     # ref_loss_epoch += ref_loss.sum().item()
                     # v_theta_loss_epoch += v_theta_loss.item()
-                    n_actor_updates += 1
+                    n_updates += 1
                 else:
                     break
 
@@ -245,12 +249,11 @@ class PPO_VMPC_Agent:
                 # self.critic_opt.step()
                 # v_loss_epoch += value_loss.item()
 
-            results["policy_loss"].append(p_loss_epoch / max(n_actor_updates, 1))
-            results["entropy_loss"].append(e_loss_epoch / max(n_actor_updates, 1))
-            results["approx_kl"].append(kl_epoch / max(n_actor_updates, 1))
-            results["theta_loss"].append(theta_loss_epoch / max(n_actor_updates, 1))
-            # results["v_theta_loss"].append(v_theta_loss_epoch / num_mini_batch)
-            results["value_loss"].append(v_loss_epoch / num_mini_batch)
+            results["policy_loss"].append(p_loss_epoch / max(n_updates, 1))
+            results["entropy_loss"].append(e_loss_epoch / max(n_updates, 1))
+            results["approx_kl"].append(kl_epoch / max(n_updates, 1))
+            results["theta_loss"].append(theta_loss_epoch / max(n_updates, 1))
+            results["value_loss"].append(v_loss_epoch / max(n_updates, 1))
 
         # Linear Critic update
         Av, bv = [], []
@@ -323,6 +326,8 @@ class MLPActorCritic(nn.Module):
         exploration_init=-1.0,
         activation="tanh",
         actor_config=None,
+        rollout_batch_size=10,
+        mini_batch_size=32,
     ):
         super().__init__()
         obs_dim = obs_space.shape[0]
@@ -343,6 +348,8 @@ class MLPActorCritic(nn.Module):
             model,
             exploration_init,
             actor_config,
+            rollout_batch_size=rollout_batch_size,
+            mini_batch_size=mini_batch_size,
         )
         # Value function.
         mpc_param = self.actor._build_mpc_param()
@@ -414,10 +421,19 @@ class MPCActor(nn.Module):
         model,
         exploration_init,
         actor_config,
+        rollout_batch_size=10,
+        mini_batch_size=32,
     ):
         super().__init__()
         # mpc actor
-        self.mpc = MPCPolicyFunction(env, gamma, model, **actor_config["mpc_config"])
+        self.mpc = MPCPolicyFunction(
+            env,
+            gamma,
+            model,
+            **actor_config["mpc_config"],
+            n_rollout_solver=rollout_batch_size,
+            n_train_solver=mini_batch_size,
+        )
 
         # Parameters
         self.q_init = actor_config["q_mpc"]
@@ -549,10 +565,11 @@ class MPCPolicyFunction(MPCFunction):
         soft_constraints: bool = True,
         constraint_tol: float = 1e-6,
         additional_constraints: list = None,
-        n_parallel_solver: int = 1,
-        n_train_solver: int = 1,
+        cs_workers: int = 1,
         jit: bool = False,
         jit_options: dict = None,
+        n_rollout_solver: int = 1,
+        n_train_solver: int = 1,
     ):
         super().__init__(
             env_fun,
@@ -566,16 +583,17 @@ class MPCPolicyFunction(MPCFunction):
             jit=jit,
             jit_options=jit_options,
         )
-        self.n_parallel_solver = n_parallel_solver
+        self.cs_workers = cs_workers
+        self.n_parallel_solver = n_rollout_solver
         self.n_train_solver = n_train_solver
         self.infos = [None] * self.n_parallel_solver
 
         # Parallel solvers
         self.pi_solvers, self.rkkt_norm_fns, _, self.all_solvers2 = (
-            self.get_parallel_solver(self.n_parallel_solver)
+            self.get_parallel_solver(self.n_parallel_solver, self.cs_workers)
         )
         self.pi_solvers_train, _, self.all_solvers_train, self.all_solvers2_train = (
-            self.get_parallel_solver(self.n_train_solver)
+            self.get_parallel_solver(self.n_train_solver, self.cs_workers)
         )
 
     def setup_optimizer(self):
@@ -679,7 +697,7 @@ class MPCPolicyFunction(MPCFunction):
                 "horizon_states": deepcopy(x_prev),
                 "horizon_inputs": deepcopy(u_prev),
                 "horizon_slacks": deepcopy(sigma_prev),
-                "horizon_u0_slacks": deepcopy(sigma_u0_prev),
+                "horizon_slack_u0": deepcopy(sigma_u0_prev),
                 "goal_states": deepcopy(ref_p[:, i]),
             }
             # results_dict['t_wall'].append(opti.stats()['t_wall_total'])
@@ -815,15 +833,16 @@ class MPCPolicyFunction(MPCFunction):
             optimal_batch,
         )
 
-    def get_parallel_solver(self, n_solvers):
-        pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread")
+    def get_parallel_solver(self, n_solvers, cs_workers):
+        n_workers = min(n_solvers, cs_workers)
+        pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread", n_workers)
         rkkt_norm_solvers = self.pi_sensitivity_dict["rkkt_norm_fn"].map(
-            n_solvers, "thread"
+            n_solvers, "thread", n_workers
         )
         all_fn = self.pi_sensitivity_dict["all_fn"]
-        all_solvers = all_fn.map(n_solvers, "thread")
+        all_solvers = all_fn.map(n_solvers, "thread", n_workers)
         all_fn2 = self.v_sensitivities_dict["all_fn"]
-        all_solvers2 = all_fn2.map(n_solvers, "thread")
+        all_solvers2 = all_fn2.map(n_solvers, "thread", n_workers)
         return pi_solvers, rkkt_norm_solvers, all_solvers, all_solvers2
 
 

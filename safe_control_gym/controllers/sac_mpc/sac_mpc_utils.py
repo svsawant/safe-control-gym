@@ -41,6 +41,8 @@ class SAC_MPC_Agent:
         sigma_network=False,
         tanh_squash=False,
         update_freq=1,
+        rollout_batch_size=10,
+        train_batch_size=32,
         **kwargs,
     ):
 
@@ -53,6 +55,8 @@ class SAC_MPC_Agent:
         self.tau = tau
         self.use_entropy_tuning = use_entropy_tuning
         self.activation = activation
+        self.rollout_batch_size = rollout_batch_size
+        self.train_batch_size = train_batch_size
 
         # Model.
         self.ac = MLPActorCritic(
@@ -67,6 +71,8 @@ class SAC_MPC_Agent:
             actor_config=actor_config,
             sigma_network=sigma_network,
             tanh_squash=tanh_squash,
+            rollout_batch_size=self.rollout_batch_size,
+            train_batch_size=self.train_batch_size,
         )
         self.log_alpha = torch.tensor(np.log(init_temperature))
 
@@ -220,7 +226,7 @@ class SAC_MPC_Agent:
             # traj_ref = self.ac.actor.get_ref_param(batch['info'])
             # ref_loss = action_th.grad.unsqueeze(1) @ nabla_pi_ref @ traj_ref.unsqueeze(2)
             theta_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.ac.actor.parameters(), max_norm=10.0)
+            # torch.nn.utils.clip_grad_norm_(self.ac.actor.parameters(), max_norm=10.0)
             self.actor_opt.step()
             with torch.no_grad():
                 self.ac.actor.q_param.clamp_(1e-5, 100.0)
@@ -279,6 +285,8 @@ class MLPActorCritic(nn.Module):
         actor_config=None,
         sigma_network=False,
         tanh_squash=False,
+        rollout_batch_size=10,
+        train_batch_size=32,
     ):
         super().__init__()
         obs_dim = obs_space.shape[0]
@@ -302,6 +310,8 @@ class MLPActorCritic(nn.Module):
             actor_config,
             sigma_network=sigma_network,
             tanh_squash=tanh_squash,
+            rollout_batch_size=rollout_batch_size,
+            train_batch_size=train_batch_size,
         )
         # Q functions
         self.q1 = MLPQFunction(obs_dim, act_dim, hidden_dims, activation)
@@ -346,10 +356,19 @@ class MPCActor(nn.Module):
         actor_config,
         sigma_network=False,
         tanh_squash=False,
+        rollout_batch_size=10,
+        train_batch_size=32,
     ):
         super().__init__()
         # mpc actor
-        self.mpc = MPCPolicyFunction(env, gamma, model, **actor_config["mpc_config"])
+        self.mpc = MPCPolicyFunction(
+            env,
+            gamma,
+            model,
+            **actor_config["mpc_config"],
+            n_rollout_solver=rollout_batch_size,
+            n_train_solver=train_batch_size,
+        )
 
         # Parameters
         self.q_init = actor_config["q_mpc"]
@@ -495,7 +514,7 @@ class MPCActor(nn.Module):
     def inverse_squashing(self, y):
         """Inverse of tanh squashing function."""
         y = (y - self.action_bias) / self.action_scale
-        return torch.atanh(torch.clamp(y, -1.0 + 1e-4, 1.0 - 1e-4))
+        return torch.atanh(torch.clamp(y, -1.0 + 1e-3, 1.0 - 1e-3))
 
     def reset(self, idx=None):
         self.mpc.reset(idx)
@@ -555,10 +574,11 @@ class MPCPolicyFunction(MPCFunction):
         soft_constraints: bool = True,
         constraint_tol: float = 1e-6,
         additional_constraints: list = None,
-        n_parallel_solver: int = 1,
-        n_train_solver: int = 1,
+        cs_workers: int = 1,
         jit: bool = False,
         jit_options: dict = None,
+        n_rollout_solver: int = 1,
+        n_train_solver: int = 1,
     ):
         super().__init__(
             env_fun,
@@ -572,16 +592,17 @@ class MPCPolicyFunction(MPCFunction):
             jit=jit,
             jit_options=jit_options,
         )
-        self.n_parallel_solver = n_parallel_solver
+        self.cs_workers = cs_workers
+        self.n_parallel_solver = n_rollout_solver
         self.n_train_solver = n_train_solver
         self.infos = [None] * self.n_parallel_solver
 
         # Parallel solvers
         self.pi_solvers, self.rkkt_norm_fns, _ = self.get_parallel_solver(
-            self.n_parallel_solver
+            self.n_parallel_solver, self.cs_workers
         )
         self.pi_solvers_train, self.rkkt_norm_fns_train, self.all_solvers_train = (
-            self.get_parallel_solver(self.n_train_solver)
+            self.get_parallel_solver(self.n_train_solver, self.cs_workers)
         )
 
     def reset(self, idx=None):
@@ -768,12 +789,13 @@ class MPCPolicyFunction(MPCFunction):
             optimal_batch,
         )
 
-    def get_parallel_solver(self, n_solvers):
-        pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread")
+    def get_parallel_solver(self, n_solvers, cs_workers):
+        n_workers = min(n_solvers, cs_workers)
+        pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread", n_workers)
         rkkt_norm_fns = self.pi_sensitivity_dict["rkkt_norm_fn"].map(
-            n_solvers, "thread"
+            n_solvers, "thread", n_workers
         )
-        all_fns = self.pi_sensitivity_dict["all_fn"].map(n_solvers, "thread")
+        all_fns = self.pi_sensitivity_dict["all_fn"].map(n_solvers, "thread", n_workers)
         return pi_solvers, rkkt_norm_fns, all_fns
 
 

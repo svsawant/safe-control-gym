@@ -37,7 +37,8 @@ class PPO_MPC_Agent:
         actor_lr=0.001,
         critic_lr=0.001,
         opt_epochs=10,
-        mini_batch_size=64,
+        rollout_batch_size=10,
+        mini_batch_size=32,
         **kwargs,
     ):
 
@@ -51,8 +52,9 @@ class PPO_MPC_Agent:
         self.entropy_coef = entropy_coef
         self.exploration_init = exploration_init
         self.opt_epochs = opt_epochs
-        self.mini_batch_size = mini_batch_size
         self.activation = activation
+        self.rollout_batch_size = rollout_batch_size
+        self.mini_batch_size = mini_batch_size
 
         # Model.
         self.ac = MLPActorCritic(
@@ -65,6 +67,8 @@ class PPO_MPC_Agent:
             exploration_init=self.exploration_init,
             activation=self.activation,
             actor_config=actor_config,
+            rollout_batch_size=self.rollout_batch_size,
+            mini_batch_size=self.mini_batch_size,
         )
 
         # Optimizers.
@@ -159,8 +163,8 @@ class PPO_MPC_Agent:
         assert num_mini_batch != 0, "num_mini_batch is 0"
 
         for _ in range(self.opt_epochs):
-            p_loss_epoch, e_loss_epoch, kl_epoch, n_updates = 0, 0, 0, 0
-            v_loss_epoch, theta_loss_epoch = 0, 0
+            p_loss_epoch, e_loss_epoch, kl_epoch = 0, 0, 0
+            v_loss_epoch, theta_loss_epoch, n_updates = 0, 0, 0
             for batch, batch_th in rollouts.sampler(self.mini_batch_size, device):
                 # Actor update.
                 (
@@ -249,6 +253,8 @@ class MLPActorCritic(nn.Module):
         exploration_init=-1.0,
         activation="tanh",
         actor_config=None,
+        rollout_batch_size=10,
+        mini_batch_size=32,
     ):
         super().__init__()
         obs_dim = obs_space.shape[0]
@@ -269,6 +275,8 @@ class MLPActorCritic(nn.Module):
             model,
             exploration_init,
             actor_config,
+            rollout_batch_size=rollout_batch_size,
+            mini_batch_size=mini_batch_size,
         )
         # Value function.
         self.critic = MLPCritic(obs_dim, hidden_dims, activation)
@@ -323,10 +331,19 @@ class MPCActor(nn.Module):
         model,
         exploration_init,
         actor_config,
+        rollout_batch_size=10,
+        mini_batch_size=32,
     ):
         super().__init__()
         # mpc actor
-        self.mpc = MPCPolicyFunction(env, gamma, model, **actor_config["mpc_config"])
+        self.mpc = MPCPolicyFunction(
+            env,
+            gamma,
+            model,
+            **actor_config["mpc_config"],
+            n_rollout_solver=rollout_batch_size,
+            n_train_solver=mini_batch_size,
+        )
 
         # Parameters
         self.q_init = actor_config["q_mpc"]
@@ -444,10 +461,11 @@ class MPCPolicyFunction(MPCFunction):
         soft_constraints: bool = True,
         constraint_tol: float = 1e-6,
         additional_constraints: list = None,
-        n_parallel_solver: int = 1,
-        n_train_solver: int = 1,
+        cs_workers: int = 1,
         jit: bool = False,
         jit_options: dict = None,
+        n_rollout_solver: int = 1,
+        n_train_solver: int = 1,
     ):
         super().__init__(
             env_fun,
@@ -461,16 +479,17 @@ class MPCPolicyFunction(MPCFunction):
             jit=jit,
             jit_options=jit_options,
         )
-        self.n_parallel_solver = n_parallel_solver
+        self.cs_workers = cs_workers
+        self.n_parallel_solver = n_rollout_solver
         self.n_train_solver = n_train_solver
         self.infos = [None] * self.n_parallel_solver
 
         # Parallel solvers
         self.pi_solvers, self.rkkt_norm_fns, _ = self.get_parallel_solver(
-            self.n_parallel_solver
+            self.n_parallel_solver, self.cs_workers
         )
         self.pi_solvers_train, _, self.all_solvers_train = self.get_parallel_solver(
-            self.n_train_solver
+            self.n_train_solver, self.cs_workers
         )
 
     def reset(self, idx=None):
@@ -621,13 +640,16 @@ class MPCPolicyFunction(MPCFunction):
         optimal_batch = torch.FloatTensor(np.array(optimal_batch)).T
         return action_batch, nabla_pi_ref_batch, nabla_pi_theta_batch, optimal_batch
 
-    def get_parallel_solver(self, n_solvers):
-        pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread")
+    def get_parallel_solver(self, n_solvers, cs_workers):
+        n_workers = min(n_solvers, cs_workers)
+        pi_solvers = self.solver_dict["solver"].map(n_solvers, "thread", n_workers)
         rkkt_norm_solvers = self.pi_sensitivity_dict["rkkt_norm_fn"].map(
-            n_solvers, "thread"
+            n_solvers, "thread", n_workers
         )
-        # dpi_solvers = self.pi_sensitivity_dict["dpi_fn"].map(n_solvers, "thread")
-        all_solvers = self.pi_sensitivity_dict["all_fn"].map(n_solvers, "thread")
+        # dpi_solvers = self.pi_sensitivity_dict["dpi_fn"].map(n_solvers, "thread", n_workers)
+        all_solvers = self.pi_sensitivity_dict["all_fn"].map(
+            n_solvers, "thread", n_workers
+        )
         return pi_solvers, rkkt_norm_solvers, all_solvers
 
 
