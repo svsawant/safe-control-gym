@@ -548,22 +548,23 @@ class MPCPolicyFunction(MPCFunction):
         z = cs.vertcat(soln_batch["x"], soln_batch["lam_g"])
         rkkt_norm_batch = self.rkkt_norm_fns(z, fixed_p, ref_p, theta.T)
         optimal_batch = rkkt_norm_batch.full() < 1e-3
+        soln_x = soln_batch["x"].full()
 
         # Post-processing the solution
         action_batch, results_dict_batch, info_batch = [], [], []
         for i, obs in enumerate(obs_batch):
-            opt_vars = soln_batch["x"].full()[:, i]
+            opt_vars = soln_x[:, i]
             x_val, u_val, sigma_val, sigma_u0_val = xus_fn(opt_vars)
             x_prev = x_val.full()
             u_prev = u_val.full()
             sigma_prev = sigma_val.full()
             sigma_u0_prev = sigma_u0_val.full()
             results_dict = {
-                "horizon_states": deepcopy(x_prev),
-                "horizon_inputs": deepcopy(u_prev),
-                "horizon_slacks": deepcopy(sigma_prev),
-                "horizon_u0_slacks": deepcopy(sigma_u0_prev),
-                "goal_states": deepcopy(ref_p[:, i]),
+                "horizon_states": x_prev.copy(),
+                "horizon_inputs": u_prev.copy(),
+                "horizon_slacks": sigma_prev.copy(),
+                "horizon_u0_slacks": sigma_u0_prev.copy(),
+                "goal_states": ref_p[:, i].copy(),
             }
             # results_dict['t_wall'].append(opti.stats()['t_wall_total'])
 
@@ -577,18 +578,18 @@ class MPCPolicyFunction(MPCFunction):
             info = {
                 "success": optimal_batch[0, i],
                 "opt_var": opt_vars,
-                "fixed_param": deepcopy(fixed_p[:, i]),
-                "ref_param": deepcopy(ref_p[:, i]),
-                "theta_param": deepcopy(theta[i, :]),
-                "traj_step": deepcopy(agent_info[i]["current_step"]),
-                "x_ref": deepcopy(agent_info[i]["x_ref"]),
+                "fixed_param": fixed_p[:, i].copy(),
+                "ref_param": ref_p[:, i].copy(),
+                "theta_param": theta[i, :].copy(),
+                "traj_step": agent_info[i]["current_step"],
+                "x_ref": agent_info[i]["x_ref"].copy(),
             }
 
             # result batch
             action_batch.append(action)
             results_dict_batch.append(results_dict)
             info_batch.append(info)
-        self.infos = deepcopy(info_batch)
+        self.infos = [info.copy() for info in info_batch]
         return action_batch, info_batch, results_dict_batch, optimal_batch
 
     def select_action_batch_train(self, obs_batch, theta, info_batch):
@@ -616,8 +617,10 @@ class MPCPolicyFunction(MPCFunction):
 
         # Forward pass through solver
         soln_batch = self.pi_solvers_train(x0=x0, p=p, lbg=lbg, ubg=ubg)
-        z = cs.vertcat(soln_batch["x"], soln_batch["lam_g"])
-        action_batch = opt_act_fn(soln_batch["x"]).full().T
+        soln_x_cs = soln_batch["x"]
+        z = cs.vertcat(soln_x_cs, soln_batch["lam_g"])
+        soln_x = soln_x_cs.full()
+        action_batch = opt_act_fn(soln_x).full().T
 
         # Post-processing the solution
         rkkt_norm_batch, dpi_cs = self.all_solvers_train(z, fixed_p, ref_p, theta.T)
@@ -711,7 +714,7 @@ class PPOBuffer(object):
 
             shape = self.scheme[k]["vshape"][1:]
             dtype = self.scheme[k].get("dtype", np.float32)
-            v_ = np.asarray(deepcopy(v), dtype=dtype).reshape(shape)
+            v_ = np.asarray(v, dtype=dtype).reshape(shape)
             self.__dict__[k][self.t] = v_
         self.t += 1
         assert (
@@ -800,6 +803,6 @@ def compute_returns_and_advantages(
         else:
             td_error = rews[i] + gamma * masks[i] * vals[i + 1] - vals[i]
             adv = adv * gae_lambda * gamma * masks[i] + td_error
-        rets[i] = deepcopy(ret)
-        advs[i] = deepcopy(adv)
+        rets[i] = ret.copy()
+        advs[i] = adv.copy()
     return rets, advs

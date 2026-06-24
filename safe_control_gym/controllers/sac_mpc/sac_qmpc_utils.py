@@ -86,9 +86,6 @@ class SAC_QMPC_Agent:
 
         # Optimizers.
         self.actor_opt = torch.optim.Adam(self.ac.actor.parameters(), actor_lr)
-        # self.critic_opt = torch.optim.Adam(
-        #     list(self.ac.q1.parameters()) + list(self.ac.q2.parameters()), critic_lr
-        # )
         if self.use_entropy_tuning:
             self.log_alpha.requires_grad = True
             self.alpha_opt = torch.optim.Adam([self.log_alpha], entropy_lr)
@@ -131,7 +128,6 @@ class SAC_QMPC_Agent:
             "log_alpha": self.log_alpha,
             "ac_targ": self.ac_targ.state_dict(),
             "actor_opt": self.actor_opt.state_dict(),
-            # "critic_opt": self.critic_opt.state_dict(),
             "alpha_opt": self.alpha_opt.state_dict(),
         }
 
@@ -141,7 +137,6 @@ class SAC_QMPC_Agent:
         self.log_alpha = self.log_alpha.to(next(self.ac.parameters()).device)
         self.ac_targ.load_state_dict(state_dict["ac_targ"], strict=strict)
         self.actor_opt.load_state_dict(state_dict["actor_opt"])
-        # self.critic_opt.load_state_dict(state_dict["critic_opt"])
         self.alpha_opt.load_state_dict(state_dict["alpha_opt"])
 
     def compute_q_loss(
@@ -149,7 +144,6 @@ class SAC_QMPC_Agent:
         batch,
         new_mpc_act,
         q_mpc,
-        nabla_q_act,
         nabla_q_theta,
         nabla_q_act_theta,
         nabla_q_act_act,
@@ -169,7 +163,6 @@ class SAC_QMPC_Agent:
             _,
             next_q_mpc,
             _,
-            nabla_q_act_next,
             nabla_q_theta_next,
             nabla_q_act_theta_next,
             nabla_q_act_act_next,
@@ -183,14 +176,13 @@ class SAC_QMPC_Agent:
                 da1 = act[i] - new_mpc_act[i].detach().cpu().numpy()
                 da2 = (next_act[i] - next_mpc_act[i]).detach().cpu().numpy()
                 nabla_q_aa = nabla_q_act_act[i].copy()
-                nalba_q_aa = np.diag(np.diagonal(nabla_q_aa))
+                nabla_q_aa = np.diag(np.diagonal(nabla_q_aa))
                 nabla_q_aa_next = nabla_q_act_act_next[i].copy()
                 nabla_q_aa_next = np.diag(np.diagonal(nabla_q_aa_next))
 
                 # Q target
                 q_targ = rew[i] + self.gamma * mask[i] * (
                     -next_q_mpc[i]
-                    # - nabla_q_act_next[i] @ da2
                     # - nabla_q_theta_next[i] @ self.ac_targ.q1.weights[:-nu].detach().cpu().numpy()
                     # - da2[None, :] @ nabla_q_act_theta_next[i] @ self.ac_targ.q1.weights[:-nu].detach().cpu().numpy()
                     # - 0.5 * (sigma_sq * hessian_diag_next)[None, :] @ self.ac_targ.q1.weights[-nu:].detach().cpu().numpy()
@@ -210,8 +202,6 @@ class SAC_QMPC_Agent:
                 A2 = -da1 @ nabla_q_act_theta[i] + mask[i] * self.gamma * (
                     da2 @ nabla_q_act_theta_next[i]
                 )
-                # A2 = - nabla_q_act[i] @ da1 + mask[i] * self.gamma * (nabla_q_act_next[i] @ da2)
-                # A3 = -nabla_q_act[i][0, :] * da1 + mask[i] * self.gamma * (nabla_q_act_next[i][0, :] * da2)
                 A4 = (
                     -0.5 * da1[None, :] @ nabla_q_aa * da1
                     + mask[i]
@@ -219,9 +209,7 @@ class SAC_QMPC_Agent:
                     * (0.5 * da2[None, :] @ nabla_q_aa_next * da2)
                 )[0, :]
                 A = np.concatenate([A1, A2, A4], axis=0)
-                b = (
-                    q_targ + q_mpc[i]
-                )  # + 0.5 * da1[None, :] @ nabla_q_aa @ da1  #+ nabla_q_act[i] @ da1
+                b = q_targ + q_mpc[i]  # + 0.5 * da1[None, :] @ nabla_q_aa @ da1
                 Aq.append(A)
                 bq.append(b)
 
@@ -264,7 +252,6 @@ class SAC_QMPC_Agent:
             nabla_pi_theta,
             q_mpc,
             _,
-            nabla_q_act,
             nabla_q_theta,
             nabla_q_act_theta,
             nabla_q_act_act,
@@ -277,7 +264,6 @@ class SAC_QMPC_Agent:
             batch,
             new_mpc_act,
             q_mpc,
-            nabla_q_act,
             nabla_q_theta,
             nabla_q_act_theta,
             nabla_q_act_act,
@@ -290,7 +276,6 @@ class SAC_QMPC_Agent:
         if self.count % self.update_freq == 0:
             # compute policy loss and gradients
             q_m = torch.FloatTensor(q_mpc)
-            nabla_q_a = torch.FloatTensor(np.array(nabla_q_act))
             nabla_q_t = torch.FloatTensor(np.array(nabla_q_theta))
             nabla_q_at = torch.FloatTensor(np.array(nabla_q_act_theta))
             nabla_q_aa = torch.FloatTensor(np.array(nabla_q_act_act))
@@ -306,7 +291,6 @@ class SAC_QMPC_Agent:
                 new_act,
                 new_mpc_act.detach(),
                 q_m,
-                nabla_q_a,
                 nabla_q_t,
                 nabla_q_at,
                 nabla_q_aa,
@@ -451,7 +435,6 @@ class Critic(nn.Module):
         act,
         mpc_act,
         q_mpc,
-        nabla_q_act,
         nabla_q_theta,
         nabla_q_act_theta,
         nabla_q_act_act,
@@ -646,7 +629,6 @@ class MPCActor(nn.Module):
             nabla_pi_theta,
             q_mpc,
             sensitivities_info["nabla_q_ref"],
-            sensitivities_info["nabla_q_act"],
             sensitivities_info["nabla_q_theta"],
             sensitivities_info["nabla_q_act_theta"],
             sensitivities_info["nabla_q_act_act"],
@@ -766,7 +748,7 @@ class MPCPolicyFunction(MPCFunction):
         ref_param = self.solver_dict["ref_param"]
         theta = self.solver_dict["theta_param"]
         jit_opts = self.solver_dict["jit_options"]
-        dQda = self.q_sensitivity_dict["dQda"]
+        # dQda = self.q_sensitivity_dict["dQda"]
         dQdtheta = self.q_sensitivity_dict["dQdtheta"]
         dQdaa = self.q_sensitivity_dict["dqdaa"]
         dQdaP = self.q_sensitivity_dict["dqdaP"]
@@ -776,7 +758,7 @@ class MPCPolicyFunction(MPCFunction):
         all_fn = cs.Function(
             "all_fn",
             [qz, fixed_param, ref_param, theta],
-            [dQda, dQdtheta, dQdaa, dQdaP],
+            [dQdtheta, dQdaa, dQdaP],
             jit_opts,
         )
         # all_fn.save("all_fn.casadi")
@@ -836,22 +818,23 @@ class MPCPolicyFunction(MPCFunction):
         z = cs.vertcat(soln_batch["x"], soln_batch["lam_g"])
         rkkt_norm_batch = self.rkkt_norm_fns(z, fixed_p, ref_p, theta.T)
         optimal_batch = rkkt_norm_batch.full() < 1e-3
+        soln_x = soln_batch["x"].full()
 
         # Post-processing the solution
         action_batch, results_dict_batch, info_batch = [], [], []
         for i, obs in enumerate(obs_batch):
-            opt_vars = soln_batch["x"].full()[:, i]
+            opt_vars = soln_x[:, i]
             x_val, u_val, sigma_val, sigma_u0_val = xus_fn(opt_vars)
             x_prev = x_val.full()
             u_prev = u_val.full()
             sigma_prev = sigma_val.full()
             sigma_u0_prev = sigma_u0_val.full()
             results_dict = {
-                "horizon_states": deepcopy(x_prev),
-                "horizon_inputs": deepcopy(u_prev),
-                "horizon_slacks": deepcopy(sigma_prev),
-                "horizon_u0_slacks": deepcopy(sigma_u0_prev),
-                "goal_states": deepcopy(ref_p[:, i]),
+                "horizon_states": x_prev.copy(),
+                "horizon_inputs": u_prev.copy(),
+                "horizon_slacks": sigma_prev.copy(),
+                "horizon_u0_slacks": sigma_u0_prev.copy(),
+                "goal_states": ref_p[:, i].copy(),
             }
             # results_dict['t_wall'].append(opti.stats()['t_wall_total'])
 
@@ -865,18 +848,18 @@ class MPCPolicyFunction(MPCFunction):
             info = {
                 "success": optimal_batch[0, i],
                 "opt_var": opt_vars,
-                "fixed_param": deepcopy(fixed_p[:, i]),
-                "ref_param": deepcopy(ref_p[:, i]),
-                "theta_param": deepcopy(theta[i, :]),
-                "traj_step": deepcopy(agent_info[i]["current_step"]),
-                "x_ref": deepcopy(agent_info[i]["x_ref"]),
+                "fixed_param": fixed_p[:, i].copy(),
+                "ref_param": ref_p[:, i].copy(),
+                "theta_param": theta[i, :].copy(),
+                "traj_step": agent_info[i]["current_step"],
+                "x_ref": agent_info[i]["x_ref"].copy(),
             }
 
             # result batch
             action_batch.append(action)
             results_dict_batch.append(results_dict)
             info_batch.append(info)
-        self.infos = deepcopy(info_batch)
+        self.infos = [info.copy() for info in info_batch]
         return action_batch, info_batch, results_dict_batch, optimal_batch
 
     def select_action_batch_train(
@@ -938,13 +921,15 @@ class MPCPolicyFunction(MPCFunction):
 
         # Forward pass through solver
         soln_batch = self.pi_solvers_train(x0=x0, p=p, lbg=lbg, ubg=ubg)
-        z = cs.vertcat(soln_batch["x"], soln_batch["lam_g"])
-        action_batch = opt_act_fn(soln_batch["x"]).full().T
+        soln_x_cs = soln_batch["x"]
+        z = cs.vertcat(soln_x_cs, soln_batch["lam_g"])
+        soln_x = soln_x_cs.full()
+        action_batch = opt_act_fn(soln_x).full().T
 
         # Forward pass for Q solver
         qfixed_p = fixed_p.copy()
         qfixed_p[self.model.nx :, :] = action_batch.T
-        qx0 = soln_batch["x"].full()
+        qx0 = soln_x
         qp = np.concatenate((qfixed_p, ref_p, theta.T), axis=0)
         qsoln_batch = self.q_solver_train(x0=qx0, p=qp, lbg=qlbg, ubg=qubg)
         qz = cs.vertcat(qsoln_batch["x"], qsoln_batch["lam_g"])
@@ -952,23 +937,22 @@ class MPCPolicyFunction(MPCFunction):
 
         # Post-processing the solution
         nabla_pi_ref_batch, nabla_pi_theta_batch, optimal_batch = [], [], []
-        nabla_q_ref_batch, nabla_q_theta_batch, nabla_q_act_theta_batch = [], [], []
-        nabla_q_act_batch, nabla_q_act_act_batch = [], []
-        dqa_cs, dqt_cs, dqdaa_cs, dqdat_cs = self.q_all_solvers_train(
+        (
+            nabla_q_ref_batch,
+            nabla_q_theta_batch,
+        ) = (
+            [],
+            [],
+        )
+        nabla_q_act_theta_batch, nabla_q_act_act_batch = [], []
+        dqt_cs, dqdaa_cs, dqdat_cs = self.q_all_solvers_train(
             qz, qfixed_p, ref_p, theta.T
         )
-        dqa_cs = dqa_cs.full()
         dqt_cs = dqt_cs.full()
         dqdaa_cs = dqdaa_cs.full()
         dqdat_cs = dqdat_cs.full()
         for i in range(obs_batch.shape[0]):
             # nabla_q_ref_batch.append(dq_cs[:, npl * i : npl * i + self.model.nx])
-            nabla_q_act_batch.append(
-                dqa_cs[
-                    :,
-                    nu * i : nu * (i + 1),
-                ]
-            )
             nabla_q_act_act_batch.append(
                 dqdaa_cs[
                     :,
@@ -1003,11 +987,10 @@ class MPCPolicyFunction(MPCFunction):
             rkkt_norm_batch = self.rkkt_norm_fns_train(z, fixed_p, ref_p, theta.T)
             optimal_batch = rkkt_norm_batch.full() < 1e-3
         sensitivities_info_batch = {
-            "x0": soln_batch["x"].full(),
+            "x0": soln_x,
             "nabla_pi_ref": nabla_pi_ref_batch,
             "nabla_pi_theta": nabla_pi_theta_batch,
             "nabla_q_ref": nabla_q_ref_batch,
-            "nabla_q_act": nabla_q_act_batch,
             "nabla_q_theta": nabla_q_theta_batch,
             "nabla_q_act_theta": nabla_q_act_theta_batch,
             "nabla_q_act_act": nabla_q_act_act_batch,
@@ -1164,20 +1147,3 @@ class SACBuffer(object):
         #     if k not in ['info', 'results_dict']:
         #         batch_th[k] = torch.as_tensor(np.array(v), dtype=torch.float32, device=device)
         return batch, batch_th
-
-
-# -----------------------------------------------------------------------------------
-#                   Misc
-# -----------------------------------------------------------------------------------
-
-
-def soft_update(source, target, tau):
-    """Synchronizes target networks with exponential moving average."""
-    for target_param, param in zip(target.parameters(), source.parameters()):
-        target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
-
-
-def hard_update(source, target):
-    """Synchronizes target networks by copying over parameters directly."""
-    for target_param, param in zip(target.parameters(), source.parameters()):
-        target_param.data.copy_(param.data)

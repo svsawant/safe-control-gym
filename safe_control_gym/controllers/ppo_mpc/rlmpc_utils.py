@@ -79,10 +79,10 @@ def _create_semi_definite_matrix(n):
 
 def update_initial_guess(x_prev, u_prev, sigma_prev, sigma_u0, opt_vars_fn):
     # shift previous solutions by 1 step
-    u_guess = deepcopy(u_prev)
-    x_guess = deepcopy(x_prev)
-    sigma_guess = deepcopy(sigma_prev)
-    sigma_u0_guess = deepcopy(sigma_u0)
+    u_guess = u_prev.copy()
+    x_guess = x_prev.copy()
+    sigma_guess = sigma_prev.copy()
+    sigma_u0_guess = sigma_u0.copy()
     u_guess[:, :-1] = u_guess[:, 1:]
     x_guess[:, :-1] = x_guess[:, 1:]
     sigma_guess[:, :-1] = sigma_guess[:, 1:]
@@ -164,6 +164,7 @@ class MPCFunction:
         self.u_prev = None
         self.x_prev = None
         self.sigma_prev = None
+        self.sigma_u0_prev = None
         self.x_goal = None
         self.mode = None
         self.traj = None
@@ -186,6 +187,7 @@ class MPCFunction:
         self.u_prev = None
         self.x_prev = None
         self.sigma_prev = None
+        self.sigma_u0_prev = None
         self.x_goal = None
         self.traj = None
 
@@ -850,7 +852,11 @@ class MPCFunction:
         if self.warmstart and self.x_prev is not None and self.u_prev is not None:
             # shift previous solutions by 1 step
             opt_vars_init = update_initial_guess(
-                self.x_prev, self.u_prev, self.sigma_prev, opt_vars_fn
+                self.x_prev,
+                self.u_prev,
+                self.sigma_prev,
+                self.sigma_u0_prev,
+                opt_vars_fn,
             )
 
         # Solve the optimization problem.
@@ -864,14 +870,17 @@ class MPCFunction:
 
         # Post-processing the solution
         opt_vars = soln["x"].full()
-        x_val, u_val, sigma_val = xus_fn(opt_vars)
+        x_val, u_val, sigma_val, sigma_u0_val = xus_fn(opt_vars)
         self.x_prev = x_val.full()
         self.u_prev = u_val.full()
         self.sigma_prev = sigma_val.full()
+        self.sigma_u0_prev = sigma_u0_val.full()
         results_dict = {
-            "horizon_states": deepcopy(self.x_prev),
-            "horizon_inputs": deepcopy(self.u_prev),
-            "goal_states": deepcopy(ref_param),
+            "horizon_states": self.x_prev.copy(),
+            "horizon_inputs": self.u_prev.copy(),
+            "horizon_sigma": self.sigma_prev.copy(),
+            "horizon_sigma_u0": self.sigma_u0_prev.copy(),
+            "goal_states": ref_param.copy(),
             "t_wall": solver.stats()["t_wall_total"],
         }
 
@@ -884,9 +893,9 @@ class MPCFunction:
         # additional info
         info = {
             "success": optimal,
-            "soln": deepcopy(soln),
-            "fixed_param": deepcopy(fixed_param),
-            "ref_param": deepcopy(ref_param),
-            "theta_param": deepcopy(theta),
+            "soln": soln.copy(),
+            "fixed_param": fixed_param.copy(),
+            "ref_param": ref_param.copy(),
+            "theta_param": theta.copy(),
         }
         return action, info, results_dict, optimal
